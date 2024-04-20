@@ -1,2 +1,2 @@
 # rulego-components-iot
-RuleGo IoT related components
+The IoT components of RuleGo
