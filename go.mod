@@ -2,12 +2,10 @@ module github.com/rulego/rulego-components-iot
 
 go 1.22.0
 
-replace github.com/rulego/rulego => ../rulego
-
 require (
 	github.com/gopcua/opcua v0.6.1
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/rulego/rulego v0.0.0-00010101000000-000000000000
+	github.com/rulego/rulego v0.20.0-alpha.1
 )
 
 require (
@@ -30,3 +28,5 @@ require (
 	golang.org/x/sys v0.19.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 )
+
+//replace github.com/rulego/rulego => ../rulego
