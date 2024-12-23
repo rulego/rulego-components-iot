@@ -6,6 +6,13 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/textproto"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/errors"
 	uatest "github.com/gopcua/opcua/tests/python"
@@ -17,15 +24,10 @@ import (
 	"github.com/rulego/rulego/endpoint"
 	"github.com/rulego/rulego/endpoint/impl"
 	"github.com/rulego/rulego/utils/maps"
-	"log"
-	"net/textproto"
-	"os"
-	"strconv"
-	"strings"
-	"time"
 )
 
 const Type = types.EndpointTypePrefix + "opcua"
+const MsgType = "OPC_UA_DATA"
 
 // Endpoint 别名
 type Endpoint = OpcUa
@@ -87,7 +89,7 @@ func (r *RequestMessage) SetMsg(msg *types.RuleMsg) {
 func (r *RequestMessage) GetMsg() *types.RuleMsg {
 	if r.msg == nil {
 		//默认指定是JSON格式，如果不是该类型，请在process函数中修改
-		ruleMsg := types.NewMsg(0, r.From(), types.JSON, types.NewMetadata(), string(r.Body()))
+		ruleMsg := types.NewMsg(0, MsgType, types.JSON, types.NewMetadata(), string(r.Body()))
 		//ruleMsg.Metadata.PutValue(KeyRequestTopic, r.From())
 		r.msg = &ruleMsg
 	}
@@ -150,7 +152,7 @@ func (r *ResponseMessage) SetMsg(msg *types.RuleMsg) {
 func (r *ResponseMessage) GetMsg() *types.RuleMsg {
 	if r.msg == nil {
 		//默认指定是JSON格式，如果不是该类型，请在process函数中修改
-		ruleMsg := types.NewMsg(0, r.From(), types.JSON, types.NewMetadata(), string(r.Body()))
+		ruleMsg := types.NewMsg(0, MsgType, types.JSON, types.NewMetadata(), string(r.Body()))
 		//ruleMsg.Metadata.PutValue(KeyRequestTopic, r.From())
 		r.msg = &ruleMsg
 	}
@@ -191,7 +193,7 @@ type OpcUaConfig struct {
 	Username string
 	Password string
 
-	Interval time.Duration
+	Interval string
 	NodeIds  []string
 }
 
@@ -201,7 +203,8 @@ type OpcUa struct {
 	RuleConfig types.Config
 	Config     OpcUaConfig
 	client     *opcua.Client
-	tasks      map[string]*cron.Cron
+	tasks      map[string]cron.EntryID
+	CronTask   *cron.Cron
 }
 
 // Type 组件类型
@@ -210,9 +213,12 @@ func (x *OpcUa) Type() string {
 }
 
 func (x *OpcUa) New() types.Node {
-	return &OpcUa{Config: OpcUaConfig{
-		Server: "127.0.0.1:1883",
-	}}
+	return &OpcUa{
+		Config: OpcUaConfig{
+			Server: "127.0.0.1:1883",
+		},
+		CronTask: cron.New(
+			cron.WithChain(cron.Recover(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))}
 }
 
 // Init 初始化
@@ -231,12 +237,16 @@ func (x *OpcUa) Destroy() {
 }
 
 func (x *OpcUa) Close() error {
+	if x.tasks != nil {
+		for routeId, taskId := range x.tasks {
+			delete(x.tasks, routeId)
+			x.CronTask.Remove(taskId)
+		}
+		x.tasks = nil
+	}
 	if x.client != nil {
-		ctx, cancel := context.WithTimeout(context.TODO(), 4*time.Second)
-		defer func() {
-			cancel()
-		}()
-		return x.client.Close(ctx)
+		x.client.Close(context.Background())
+		x.client = nil
 	}
 	return nil
 }
@@ -254,37 +264,49 @@ func (x *OpcUa) AddRouter(router endpointApi.Router, params ...interface{}) (str
 		routerId = router.GetFrom().ToString()
 		router.SetId(routerId)
 	}
+	if x.tasks == nil {
+		x.tasks = make(map[string]cron.EntryID)
+	}
 	x.Lock()
 	defer x.Unlock()
 	task := cron.New(
 		cron.WithChain(cron.Recover(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))
-	task.AddFunc(fmt.Sprintf("@every %s", x.Config.Interval), func() {
+	eid, err := task.AddFunc(fmt.Sprintf("@every %s", x.Config.Interval), func() {
 		x.readNodes(router)
 	})
+	if err != nil {
+		return "", err
+	}
 	task.Start()
-	x.tasks[routerId] = task
+	x.tasks[routerId] = eid
 	return router.GetId(), nil
 }
 
-func (x *OpcUa) readNodes(router endpointApi.Router) {
-	ctx, cancel := context.WithTimeout(context.TODO(), 4*time.Second)
+func (x *OpcUa) readNodes(router endpointApi.Router) error {
+	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Second)
 	defer func() {
 		cancel()
 	}()
 	allIds := make([]*ua.ReadValueID, 0)
-
 	data := make([]Data, 0)
+	client, err := x.SharedNode.Get()
+	if err != nil {
+		x.Printf("get shared client error %v ", err)
+		return err
+	}
 	for _, nodeId := range x.Config.NodeIds {
 		id, err := ua.ParseNodeID(nodeId)
 		if err != nil {
 			x.Printf("parse node id error %v ", err)
+			return err
 		} else {
 			allIds = append(allIds, &ua.ReadValueID{NodeID: id})
 		}
-		n := x.client.Node(id)
+		n := client.Node(id)
 		lt, err := n.DisplayName(ctx)
 		if err != nil {
-			x.Printf("fetch node displayname error : %v ", err)
+			x.Printf("fetch node displayname error : %v ,nodeid : %v  ", err, nodeId)
+			return err
 		}
 		data = append(data, Data{NodeId: id.String(), DisplayName: lt.Text})
 	}
@@ -295,9 +317,10 @@ func (x *OpcUa) readNodes(router endpointApi.Router) {
 		TimestampsToReturn: ua.TimestampsToReturnBoth,
 	}
 	var resp *ua.ReadResponse
-	resp, err := x.client.Read(ctx, req)
+	resp, err = client.Read(ctx, req)
 	if err != nil {
 		x.Printf("point read error", err)
+		return err
 	} else {
 		for i, result := range resp.Results {
 			if result != nil && result.Status != ua.StatusOK {
@@ -310,6 +333,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) {
 					SourceTime:  result.SourceTimestamp,
 					Value:       result.Value.Value(),
 					Quality:     uint32(result.Status),
+					Timestamp:   time.Now(),
 				}
 				d.ParseValue()
 				data[i] = d
@@ -322,6 +346,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) {
 			data: data,
 		}}
 	x.DoProcess(ctx, router, exchange)
+	return nil
 }
 
 func (d *Data) ParseValue() (*Data, error) {
@@ -378,7 +403,7 @@ func (x *OpcUa) RemoveRouter(routerId string, params ...interface{}) error {
 	if x.tasks != nil {
 		if task, ok := x.tasks[routerId]; ok {
 			delete(x.tasks, routerId)
-			task.Start()
+			x.CronTask.Remove(task)
 		} else {
 			return fmt.Errorf("router: %s not found", routerId)
 		}
