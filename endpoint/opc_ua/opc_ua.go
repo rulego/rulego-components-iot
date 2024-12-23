@@ -180,21 +180,27 @@ func (r *ResponseMessage) GetError() error {
 }
 
 type OpcUaConfig struct {
-	Server      string
-	CertFile    string
+	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
+	Server string
+	//OPC UA Server CertFile Path
+	CertFile string
+	//OPC UA Server CertKeyFile Path
 	CertKeyFile string
-	GenCert     bool
-	AppUri      string
-
+	//Need to generate cert & key files ,if GenCert is true
+	GenCert bool
+	AppUri  string
+	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
 	Policy string
-	Mode   string
-
+	//Security Mode: one of None, Sign, SignAndEncrypt
+	Mode string
+	//Authentication Mode: one of Anonymous, UserName, Certificate
 	Auth     string
 	Username string
 	Password string
-
+	//Task interval, eg. 1s, 1m, 1h
 	Interval string
-	NodeIds  []string
+	//NodeIds to read, eg. ns=2;s=Channel1.Device1.Tag1
+	NodeIds []string
 }
 
 type OpcUa struct {
@@ -280,6 +286,35 @@ func (x *OpcUa) AddRouter(router endpointApi.Router, params ...interface{}) (str
 	task.Start()
 	x.tasks[routerId] = eid
 	return router.GetId(), nil
+}
+
+func (x *OpcUa) RemoveRouter(routerId string, params ...interface{}) error {
+	x.Lock()
+	defer x.Unlock()
+	if x.tasks != nil {
+		if task, ok := x.tasks[routerId]; ok {
+			delete(x.tasks, routerId)
+			x.CronTask.Remove(task)
+		} else {
+			return fmt.Errorf("router: %s not found", routerId)
+		}
+	}
+	return nil
+}
+
+func (x *OpcUa) Start() error {
+	if !x.SharedNode.IsInit() {
+		return x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
+			return x.initClient()
+		})
+	}
+	return nil
+}
+
+func (x *OpcUa) Printf(format string, v ...interface{}) {
+	if x.RuleConfig.Logger != nil {
+		x.RuleConfig.Logger.Printf(format, v...)
+	}
 }
 
 func (x *OpcUa) readNodes(router endpointApi.Router) error {
@@ -395,35 +430,6 @@ func (d *Data) ParseValue() (*Data, error) {
 		return d, err
 	}
 	return d, nil
-}
-
-func (x *OpcUa) RemoveRouter(routerId string, params ...interface{}) error {
-	x.Lock()
-	defer x.Unlock()
-	if x.tasks != nil {
-		if task, ok := x.tasks[routerId]; ok {
-			delete(x.tasks, routerId)
-			x.CronTask.Remove(task)
-		} else {
-			return fmt.Errorf("router: %s not found", routerId)
-		}
-	}
-	return nil
-}
-
-func (x *OpcUa) Start() error {
-	if !x.SharedNode.IsInit() {
-		return x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
-			return x.initClient()
-		})
-	}
-	return nil
-}
-
-func (x *OpcUa) Printf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Printf(format, v...)
-	}
 }
 
 // initClient 初始化客户端
