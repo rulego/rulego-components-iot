@@ -1,4 +1,4 @@
-package opc_ua
+package opcua
 
 import (
 	"context"
