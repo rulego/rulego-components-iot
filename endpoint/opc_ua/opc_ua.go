@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log"
 	"net/textproto"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/errors"
+	uatest "github.com/gopcua/opcua/tests/python"
 	"github.com/gopcua/opcua/ua"
 	"github.com/robfig/cron/v3"
 	"github.com/rulego/rulego/api/types"
@@ -180,10 +182,13 @@ func (r *ResponseMessage) GetError() error {
 type OpcUaConfig struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string
-	//Task interval, eg. @every 1s, @every 1m, @every 1h,* */1 * * * *
-	Interval string
-	//NodeIds to read, eg. ns=2;s=Channel1.Device1.Tag1
-	NodeIds []string
+	//OPC UA Server CertFile Path
+	CertFile string
+	//OPC UA Server CertKeyFile Path
+	CertKeyFile string
+	//Need to generate cert & key files ,if GenCert is true
+	GenCert bool
+	AppUri  string
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
 	Policy string
 	//Security Mode: one of None, Sign, SignAndEncrypt
@@ -192,14 +197,10 @@ type OpcUaConfig struct {
 	Auth     string
 	Username string
 	Password string
-	//OPC UA Server CertFile Path
-	CertFile string
-	//OPC UA Server CertKeyFile Path
-	CertKeyFile string
-
-	////Need to generate cert & key files ,if GenCert is true
-	//GenCert bool
-	//AppUri  string
+	//Task interval, eg. 1s, 1m, 1h
+	Interval string
+	//NodeIds to read, eg. ns=2;s=Channel1.Device1.Tag1
+	NodeIds []string
 }
 
 type OpcUa struct {
@@ -207,10 +208,9 @@ type OpcUa struct {
 	base.SharedNode[*opcua.Client]
 	RuleConfig types.Config
 	Config     OpcUaConfig
-	Router     endpointApi.Router
 	client     *opcua.Client
-	cronTask   *cron.Cron
-	taskId     cron.EntryID
+	tasks      map[string]cron.EntryID
+	CronTask   *cron.Cron
 }
 
 // Type 组件类型
@@ -221,13 +221,10 @@ func (x *OpcUa) Type() string {
 func (x *OpcUa) New() types.Node {
 	return &OpcUa{
 		Config: OpcUaConfig{
-			Server:   "opc.tcp://localhost:4840",
-			Interval: "@every 1m",
-			Policy:   "none",
-			Mode:     "none",
-			Auth:     "anonymous",
+			Server: "127.0.0.1:1883",
 		},
-	}
+		CronTask: cron.New(
+			cron.WithChain(cron.Recover(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))}
 }
 
 // Init 初始化
@@ -246,14 +243,15 @@ func (x *OpcUa) Destroy() {
 }
 
 func (x *OpcUa) Close() error {
-	if x.taskId != 0 && x.cronTask != nil {
-		x.cronTask.Remove(x.taskId)
-	}
-	if x.cronTask != nil {
-		x.cronTask.Stop()
+	if x.tasks != nil {
+		for routeId, taskId := range x.tasks {
+			delete(x.tasks, routeId)
+			x.CronTask.Remove(taskId)
+		}
+		x.tasks = nil
 	}
 	if x.client != nil {
-		_ = x.client.Close(context.Background())
+		x.client.Close(context.Background())
 		x.client = nil
 	}
 	return nil
@@ -267,39 +265,50 @@ func (x *OpcUa) AddRouter(router endpointApi.Router, params ...interface{}) (str
 	if router == nil {
 		return "", errors.New("router cannot be nil")
 	}
-	if x.Router != nil {
-		return "", errors.New("duplicate router")
+	routerId := router.GetId()
+	if routerId == "" {
+		routerId = router.GetFrom().ToString()
+		router.SetId(routerId)
 	}
-	x.Router = router
+	if x.tasks == nil {
+		x.tasks = make(map[string]cron.EntryID)
+	}
+	x.Lock()
+	defer x.Unlock()
+	task := cron.New(
+		cron.WithChain(cron.Recover(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))
+	eid, err := task.AddFunc(fmt.Sprintf("@every %s", x.Config.Interval), func() {
+		x.readNodes(router)
+	})
+	if err != nil {
+		return "", err
+	}
+	task.Start()
+	x.tasks[routerId] = eid
 	return router.GetId(), nil
 }
 
 func (x *OpcUa) RemoveRouter(routerId string, params ...interface{}) error {
 	x.Lock()
 	defer x.Unlock()
-	x.Router = nil
+	if x.tasks != nil {
+		if task, ok := x.tasks[routerId]; ok {
+			delete(x.tasks, routerId)
+			x.CronTask.Remove(task)
+		} else {
+			return fmt.Errorf("router: %s not found", routerId)
+		}
+	}
 	return nil
 }
 
 func (x *OpcUa) Start() error {
-	var err error
 	if !x.SharedNode.IsInit() {
-		err = x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
+		return x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
 			return x.initClient()
 		})
 	}
-	if x.cronTask != nil {
-		x.cronTask.Stop()
-	}
-	x.cronTask = cron.New(cron.WithChain(cron.Recover(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))
-	eid, err := x.cronTask.AddFunc(x.Config.Interval, func() {
-		if x.Router != nil {
-			_ = x.readNodes(x.Router)
-		}
-	})
-	x.taskId = eid
-	x.cronTask.Start()
-	return err
+	return nil
 }
 
 func (x *OpcUa) Printf(format string, v ...interface{}) {
@@ -331,7 +340,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 		n := client.Node(id)
 		lt, err := n.DisplayName(ctx)
 		if err != nil {
-			x.Printf("fetch node displayName error : %v ,nodeId : %v  ", err, nodeId)
+			x.Printf("fetch node displayname error : %v ,nodeid : %v  ", err, nodeId)
 			return err
 		}
 		data = append(data, Data{NodeId: id.String(), DisplayName: lt.Text})
@@ -361,7 +370,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 					Quality:     uint32(result.Status),
 					Timestamp:   time.Now(),
 				}
-				_, _ = d.ParseValue()
+				d.ParseValue()
 				data[i] = d
 			}
 		}
@@ -469,26 +478,26 @@ func (x *OpcUa) createOptions(endpoints []*ua.EndpointDescription) []opcua.Optio
 
 	opts := []opcua.Option{}
 
-	//// ApplicationURI is automatically read from the cert so is not required if a cert if provided
-	//if x.Config.CertFile == "" && !x.Config.GenCert {
-	//	opts = append(opts, opcua.ApplicationURI(x.Config.AppUri))
-	//}
+	// ApplicationURI is automatically read from the cert so is not required if a cert if provided
+	if x.Config.CertFile == "" && !x.Config.GenCert {
+		opts = append(opts, opcua.ApplicationURI(x.Config.AppUri))
+	}
 
 	var cert []byte
 	var privateKey *rsa.PrivateKey
-	if x.Config.CertFile != "" && x.Config.CertKeyFile != "" {
-		//if x.Config.GenCert {
-		//	certPEM, keyPEM, err := uatest.GenerateCert(x.Config.AppUri, 2048, 365*24*time.Hour)
-		//	if err != nil {
-		//		x.Printf("failed to generate cert: %v", err)
-		//	}
-		//	if err := os.WriteFile(x.Config.CertFile, certPEM, 0644); err != nil {
-		//		x.Printf("failed to write %s: %v", err)
-		//	}
-		//	if err := os.WriteFile(x.Config.CertKeyFile, keyPEM, 0644); err != nil {
-		//		x.Printf("failed to write %s: %v", err)
-		//	}
-		//}
+	if x.Config.GenCert || (x.Config.CertFile != "" && x.Config.CertKeyFile != "") {
+		if x.Config.GenCert {
+			certPEM, keyPEM, err := uatest.GenerateCert(x.Config.AppUri, 2048, 365*24*time.Hour)
+			if err != nil {
+				x.Printf("failed to generate cert: %v", err)
+			}
+			if err := os.WriteFile(x.Config.CertFile, certPEM, 0644); err != nil {
+				x.Printf("failed to write %s: %v", err)
+			}
+			if err := os.WriteFile(x.Config.CertKeyFile, keyPEM, 0644); err != nil {
+				x.Printf("failed to write %s: %v", err)
+			}
+		}
 		x.Printf("Loading cert/key from %s/%s", x.Config.CertFile, x.Config.CertKeyFile)
 		c, err := tls.LoadX509KeyPair(x.Config.CertFile, x.Config.CertKeyFile)
 		if err != nil {
