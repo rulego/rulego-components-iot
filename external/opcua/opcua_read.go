@@ -63,6 +63,24 @@ func (c Configuration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
 
+// ReadNode opcua读取节点
+// 查询消息负荷 msg.Data 中节点列表点位数据
+// 节点列表格式：["ns=3;i=1003","ns=3;i=1005"]
+// 查询结果会重新赋值到msg.Data，通过`Success`链传给下一个节点
+// 结果格式：
+// [
+//
+//	 {
+//	   "displayName": "ns=3;i=1003",
+//	   "floatValue": 0,
+//	   "nodeId": "ns=3;i=1003",
+//	   "quality": 0,
+//	   "recordTime": "0001-01-01T00:00:00Z",
+//	   "sourceTime": "0001-01-01T00:00:00Z",
+//	   "timestamp": "0001-01-01T00:00:00Z",
+//	}
+//
+// ]
 type ReadNode struct {
 	base.SharedNode[*opcua.Client]
 	//节点配置
@@ -116,11 +134,13 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 	succ := false
-	errs := make([]string, 0)
+	errs := make([]string, 10)
 	for i, result := range resp.Results {
 		if result != nil && result.Status != ua.StatusOK {
-			x.RuleConfig.Logger.Printf("Error reading node %s: %s", data[i].NodeId, result.Status.Error())
-			errs = append(errs, result.Status.Error())
+			if len(errs) < 10 {
+				//防止查询结果过多
+				errs = append(errs, result.Status.Error())
+			}
 		} else {
 			d := opcuaClient.Data{
 				DisplayName: data[i].DisplayName,
@@ -136,14 +156,13 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			succ = true
 		}
 	}
-	dbyte, err := json.Marshal(data)
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
-	msg.Data = string(dbyte)
 	if succ {
-		ctx.TellSuccess(msg)
+		if dbyte, err := json.Marshal(data); err != nil {
+			ctx.TellFailure(msg, err)
+		} else {
+			msg.Data = string(dbyte)
+			ctx.TellSuccess(msg)
+		}
 	} else {
 		ctx.TellFailure(msg, fmt.Errorf("read failed: %q ", errs))
 	}

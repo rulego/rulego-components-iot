@@ -63,6 +63,22 @@ func (c WriteNodeConfiguration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
 
+// WriteNode opcua写入节点
+// 把消息负荷 msg.Data 点位数据写入到opcua服务器，格式为：
+//
+//	[
+//	  {
+//	    "nodeId": "ns=3;i=1009",
+//	    "value": 1
+//	  },
+//	  {
+//	    "nodeId": "ns=3;i=1010",
+//	    "value": 2
+//	  }
+//	]
+//
+// 写入成功，流转到`Success`链
+// 否则流程转到`Failure`链
 type WriteNode struct {
 	base.SharedNode[*opcua.Client]
 	//节点配置
@@ -142,12 +158,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 	succ := false
-	errs := make([]string, 0)
+	errs := make([]string, 10)
 	if resp != nil {
 		for _, result := range resp.Results {
 			if result == ua.StatusOK {
 				succ = true
-			} else {
+			} else if len(errs) < 10 { //防止结果过多
 				errs = append(errs, result.Error())
 			}
 		}
