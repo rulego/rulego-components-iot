@@ -12,7 +12,7 @@ import (
 func TestWriteNode(t *testing.T) {
 	Registry := &types.SafeComponentSlice{}
 	Registry.Add(&WriteNode{})
-	var writeNodeType = "x/opcUaWrite"
+	var writeNodeType = "x/opcuaWrite"
 
 	t.Run("NewNode", func(t *testing.T) {
 		test.NodeNew(t, writeNodeType, &WriteNode{}, types.Configuration{

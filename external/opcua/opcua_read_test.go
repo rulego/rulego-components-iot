@@ -13,7 +13,7 @@ import (
 func TestReadNode(t *testing.T) {
 	Registry := &types.SafeComponentSlice{}
 	Registry.Add(&ReadNode{})
-	var nodeType = "x/opcUaRead"
+	var nodeType = "x/opcuaRead"
 
 	// t.Run("NewNode", func(t *testing.T) {
 	// 	test.NodeNew(t, nodeType, &ReadNode{}, types.Configuration{
@@ -28,14 +28,15 @@ func TestReadNode(t *testing.T) {
 	nodeIds = append(nodeIds, "ns=3;i=1009")
 	d, _ := json.Marshal(nodeIds)
 
-	meta := types.BuildMetadata(make(map[string]string))
-	meta.PutValue("nodeIds", string(d))
+	// meta := types.BuildMetadata(make(map[string]string))
+	// meta.PutValue("nodeIds", string(d))
 
 	msgList := []test.Msg{
 		{
-			MetaData: meta,
+			MetaData: nil,
 			DataType: types.JSON,
 			MsgType:  opcuaClient.OPC_UA_DATA_MSG_TYPE,
+			Data:     string(d),
 		},
 	}
 

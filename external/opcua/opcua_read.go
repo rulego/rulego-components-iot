@@ -83,7 +83,7 @@ func (x *ReadNode) New() types.Node {
 
 // Type 返回组件类型
 func (x *ReadNode) Type() string {
-	return "x/opcUaRead"
+	return "x/opcuaRead"
 }
 
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
@@ -108,7 +108,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 	nodeIds := make([]string, 0)
-	err = json.Unmarshal([]byte(msg.Metadata.GetValue("nodeIds")), &nodeIds)
+	err = json.Unmarshal([]byte(msg.Data), &nodeIds)
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return

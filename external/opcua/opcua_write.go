@@ -83,7 +83,7 @@ func (x *WriteNode) New() types.Node {
 
 // Type 返回组件类型
 func (x *WriteNode) Type() string {
-	return "x/opcUaWrite"
+	return "x/opcuaWrite"
 }
 
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
