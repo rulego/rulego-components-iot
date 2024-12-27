@@ -3,7 +3,7 @@ package opcua
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gopcua/opcua"
@@ -20,7 +20,7 @@ func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 }
 
-// 节点配置
+// Configuration 节点配置
 type Configuration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string
@@ -103,10 +103,6 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-	if msg.Type != opcuaClient.OPC_UA_DATA_MSG_TYPE && msg.DataType != types.JSON {
-		ctx.TellFailure(msg, errors.New("only support event msg"))
-		return
-	}
 	nodeIds := make([]string, 0)
 	err = json.Unmarshal([]byte(msg.Data), &nodeIds)
 	if err != nil {
@@ -120,11 +116,11 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 	succ := false
-
+	errs := make([]string, 0)
 	for i, result := range resp.Results {
 		if result != nil && result.Status != ua.StatusOK {
-			x.RuleConfig.Logger.Printf("Error reading node %s: %s", data[i].NodeId, result.Status)
-			succ = false
+			x.RuleConfig.Logger.Printf("Error reading node %s: %s", data[i].NodeId, result.Status.Error())
+			errs = append(errs, result.Status.Error())
 		} else {
 			d := opcuaClient.Data{
 				DisplayName: data[i].DisplayName,
@@ -149,7 +145,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	if succ {
 		ctx.TellSuccess(msg)
 	} else {
-		ctx.TellFailure(msg, errors.New("read failed"))
+		ctx.TellFailure(msg, fmt.Errorf("read failed: %q ", errs))
 	}
 }
 

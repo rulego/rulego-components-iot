@@ -19,6 +19,7 @@ const OPC_UA_DATA_MSG_TYPE = "OPC_UA_DATA"
 
 var logger = types.DefaultLogger()
 
+// Data OPC数据封装结构体
 type Data struct {
 	DisplayName string      `json:"displayName"`
 	NodeId      string      `json:"nodeId"`
@@ -30,6 +31,7 @@ type Data struct {
 	Timestamp   time.Time   `json:"timestamp"`
 }
 
+// ParseValue 解析数据FloatValue
 func (d *Data) ParseValue() (*Data, error) {
 	var err error
 	if d != nil && d.Value != nil {
@@ -78,27 +80,42 @@ func (d *Data) ParseValue() (*Data, error) {
 	return d, nil
 }
 
+// ConfigProp 统一OPCUA客户端初始化参数接口
 type ConfigProp interface {
+	// GetServer 获取OPCUA服务地址
 	GetServer() string
+	// GetPolicy 获取OPCUA安全策略
 	GetPolicy() string
+	// GetMode 获取OPCUA安全模式
 	GetMode() string
+	// GetAuth 获取OPCUA认证方式
 	GetAuth() string
+	// GetUsername 获取OPCUA认证用户名
 	GetUsername() string
+	// GetPassword 获取OPCUA认证密码
 	GetPassword() string
+	// GetCertFile 获取OPCUA证书文件
 	GetCertFile() string
+	// GetCertKeyFile 获取OPCUA证书私钥文件
 	GetCertKeyFile() string
 }
 
+// OpcUaClientHolder OPCUA客户端相关配置
 type OpcUaClientHolder struct {
+	// Config OPC客户端配置
 	Config ConfigProp
-	Ctx    context.Context
+	// Ctx 上下文
+	Ctx context.Context
+	// Logger 日志
 	Logger types.Logger
 }
 
+// Printf 日志输出
 func (x *OpcUaClientHolder) Printf(format string, v ...interface{}) {
 	x.Logger.Printf(format, v...)
 }
 
+// DefaultHolder 默认配置
 func DefaultHolder(c ConfigProp) *OpcUaClientHolder {
 	return &OpcUaClientHolder{
 		Config: c,
@@ -107,6 +124,7 @@ func DefaultHolder(c ConfigProp) *OpcUaClientHolder {
 	}
 }
 
+// NewOpcUaClient 创建OPCUA客户端
 func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	// Get a list of the endpoints for our target server
 	endpoints, err := opcua.GetEndpoints(x.Ctx, x.Config.GetServer())
@@ -129,6 +147,7 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	return c, nil
 }
 
+// createOptions 构建Options
 func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) []opcua.Option {
 
 	opts := []opcua.Option{}
@@ -317,6 +336,7 @@ func (x *OpcUaClientHolder) printEndpointOptions(endpoints []*ua.EndpointDescrip
 	}
 }
 
+// Read 读取点位数据
 func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, error) {
 	ctx := context.Background()
 	allIds := make([]*ua.ReadValueID, 0)

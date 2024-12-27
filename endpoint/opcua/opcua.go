@@ -162,6 +162,7 @@ func (r *ResponseMessage) GetError() error {
 	return r.err
 }
 
+// OpcUaConfig OPC UA Server配置
 type OpcUaConfig struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string
@@ -212,11 +213,15 @@ type OpcUa struct {
 	impl.BaseEndpoint
 	base.SharedNode[*opcua.Client]
 	RuleConfig types.Config
-	Config     OpcUaConfig
-	Router     endpointApi.Router
-	client     *opcua.Client
-	cronTask   *cron.Cron
-	taskId     cron.EntryID
+	// opcua client相关配置
+	Config OpcUaConfig
+	Router endpointApi.Router
+	// opcua client实例
+	client *opcua.Client
+	// 定时任务实例
+	cronTask *cron.Cron
+	// 定时任务id
+	taskId cron.EntryID
 }
 
 // Type 组件类型
@@ -224,6 +229,7 @@ func (x *OpcUa) Type() string {
 	return Type
 }
 
+// New 创建组件实例
 func (x *OpcUa) New() types.Node {
 	return &OpcUa{
 		Config: OpcUaConfig{

@@ -3,7 +3,7 @@ package opcua
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/gopcua/opcua"
@@ -20,7 +20,7 @@ func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// 节点配置
+// WriteNodeConfiguration  节点配置
 type WriteNodeConfiguration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string
@@ -103,10 +103,6 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-	if msg.Type != opcuaClient.OPC_UA_DATA_MSG_TYPE && msg.DataType != types.JSON {
-		ctx.TellFailure(msg, errors.New("only support event msg"))
-		return
-	}
 	data := make([]opcuaClient.Data, 0)
 	err = json.Unmarshal([]byte(msg.Data), &data)
 	if err != nil {
@@ -135,10 +131,6 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			},
 		})
 	}
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 
 	req := &ua.WriteRequest{
 		NodesToWrite: nodesToWrite,
@@ -150,18 +142,20 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 	succ := false
+	errs := make([]string, 0)
 	if resp != nil {
 		for _, result := range resp.Results {
 			if result == ua.StatusOK {
 				succ = true
-				break
+			} else {
+				errs = append(errs, result.Error())
 			}
 		}
 	}
 	if succ {
 		ctx.TellSuccess(msg)
 	} else {
-		ctx.TellFailure(msg, errors.New("write failed"))
+		ctx.TellFailure(msg, fmt.Errorf("read failed: %q ", errs))
 	}
 }
 

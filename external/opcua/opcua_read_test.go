@@ -24,8 +24,8 @@ func TestReadNode(t *testing.T) {
 	// 	}, Registry)
 	// })
 	nodeIds := make([]string, 0)
-	nodeIds = append(nodeIds, "ns=3;i=1001")
-	nodeIds = append(nodeIds, "ns=3;i=1009")
+	nodeIds = append(nodeIds, "ns=3;i=1101")
+	nodeIds = append(nodeIds, "ns=3;i=1109")
 	d, _ := json.Marshal(nodeIds)
 
 	// meta := types.BuildMetadata(make(map[string]string))
