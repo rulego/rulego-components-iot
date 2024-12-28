@@ -89,7 +89,6 @@ func (r *RequestMessage) GetMsg() *types.RuleMsg {
 	if r.msg == nil {
 		//默认指定是JSON格式，如果不是该类型，请在process函数中修改
 		ruleMsg := types.NewMsg(0, OPC_UA_DATA_MSG_TYPE, types.JSON, types.NewMetadata(), string(r.Body()))
-		//ruleMsg.Metadata.PutValue(KeyRequestTopic, r.From())
 		r.msg = &ruleMsg
 	}
 	return r.msg
@@ -152,7 +151,6 @@ func (r *ResponseMessage) GetMsg() *types.RuleMsg {
 	if r.msg == nil {
 		//默认指定是JSON格式，如果不是该类型，请在process函数中修改
 		ruleMsg := types.NewMsg(0, OPC_UA_DATA_MSG_TYPE, types.JSON, types.NewMetadata(), string(r.Body()))
-		//ruleMsg.Metadata.PutValue(KeyRequestTopic, r.From())
 		r.msg = &ruleMsg
 	}
 	return r.msg
@@ -182,20 +180,23 @@ func (r *ResponseMessage) GetError() error {
 type OpcUaConfig struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string
-
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
 	Policy string
 	//Security Mode: one of None, Sign, SignAndEncrypt
 	Mode string
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth     string
+	Auth string
+	//Authentication Username
 	Username string
+	//Authentication Password
 	Password string
 	//OPC UA Server CertFile Path
 	CertFile string
 	//OPC UA Server CertKeyFile Path
 	CertKeyFile string
-	Interval    string
+	//Interval to read, supports cron expressions
+	//example: @every 1m (every 1 minute) 0 0 0 * * * (triggers at midnight)
+	Interval string
 	//NodeIds to read, eg. ns=2;s=Channel1.Device1.Tag1
 	NodeIds []string
 }
@@ -231,6 +232,7 @@ type OpcUa struct {
 	RuleConfig types.Config
 	// opcua client相关配置
 	Config OpcUaConfig
+	// 路由实例
 	Router endpointApi.Router
 	// opcua client实例
 	client *opcua.Client
