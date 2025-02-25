@@ -233,7 +233,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadCoil":
-		boolVal, err := x.conn.ReadCoil(params.Address)
+		boolVal, err = x.conn.ReadCoil(params.Address)
 		if err == nil {
 			boolVals = append(boolVals, boolVal)
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
@@ -316,39 +316,75 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 	case "WriteCoil":
 		boolVal, err = byteToBool(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteCoil(params.Address, boolVal)
 	case "WriteCoils":
 		boolVals, err = byteToBools(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteCoils(params.Address, boolVals)
 	case "WriteRegister":
-		ui16, _ = byteToUint16(params.Value)
+		ui16, err = byteToUint16(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteRegister(params.Address, ui16)
 	case "WriteRegisters":
-		ui16s, _ = byteToUint16s(params.Value)
+		ui16s, err = byteToUint16s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteRegisters(params.Address, ui16s)
 	case "WriteUint32":
-		ui32, _ = byteToUint32(params.Value)
+		ui32, err = byteToUint32(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteUint32(params.Address, ui32)
 	case "WriteUint32s":
-		ui32s, _ = byteToUint32s(params.Value)
+		ui32s, err = byteToUint32s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteUint32s(params.Address, ui32s)
 	case "WriteFloat32":
-		f32, _ = byteToFloat32(params.Value)
+		f32, err = byteToFloat32(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteFloat32(params.Address, f32)
 	case "WriteFloat32s":
-		f32s, _ = byteToFloat32s(params.Value)
+		f32s, err = byteToFloat32s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteFloat32s(params.Address, f32s)
 	case "WriteUint64":
-		ui64, _ = byteToUint64(params.Value)
+		ui64, err = byteToUint64(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteUint64(params.Address, ui64)
 	case "WriteUint64s":
-		ui64s, _ = byteToUint64s(params.Value)
+		ui64s, err = byteToUint64s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteUint64s(params.Address, ui64s)
 	case "WriteFloat64":
-		f64, _ = byteToFloat64(params.Value)
+		f64, err = byteToFloat64(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteFloat64(params.Address, f64)
 	case "WriteFloat64s":
-		f64s, _ = byteToFloat64s(params.Value)
+		f64s, err = byteToFloat64s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		}
 		err = x.conn.WriteFloat64s(params.Address, f64s)
 	case "WriteBytes":
 		err = x.conn.WriteBytes(params.Address, params.Value)
