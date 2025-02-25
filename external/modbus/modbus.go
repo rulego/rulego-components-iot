@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -112,9 +113,11 @@ type Params struct {
 	RegType  modbus.RegType `json:"regType" `
 }
 
-type ModbusData struct {
-	Params *Params `json:"params" `
-	Data   any     `json:"data" `
+type ModbusValue struct {
+	UnitId  uint8  `json:"unitId"`
+	Type    string `json:"type" `
+	Address uint16 `json:"address"`
+	Value   any    `json:"value" `
 }
 
 // Type 返回组件类型
@@ -157,13 +160,46 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 	return err
 }
 
+func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | byte](data []T, initAddr uint16, step uint16, unitId uint8) []ModbusValue {
+	addVals := make([]ModbusValue, 0)
+	// Get the reflect.Value of the slice
+	sliceValue := reflect.ValueOf(data)
+	// Get the type of the slice
+	sliceType := sliceValue.Type()
+	// Get the element type of the slice
+	elemType := sliceType.Elem()
+	if elemType == reflect.TypeOf(byte(0)) {
+		step = 1
+		for i, _ := range data {
+			if i%2 == 0 {
+				addVals = append(addVals, ModbusValue{
+					UnitId:  unitId,
+					Address: initAddr + uint16(i)*step,
+					Value:   data[i : i+1],
+					Type:    elemType.Name(),
+				})
+			}
+		}
+
+	} else {
+		for i, v := range data {
+			addVals = append(addVals, ModbusValue{
+				UnitId:  unitId,
+				Address: initAddr + uint16(i)*step,
+				Value:   v,
+				Type:    elemType.Name(),
+			})
+		}
+	}
+	return addVals
+}
+
 // OnMsg 处理消息
 func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	// x.Locker.Lock()
 	// defer x.Locker.Unlock()
 	var (
 		err      error
-		data     any
 		params   *Params
 		boolVals []bool
 		boolVal  bool
@@ -177,7 +213,8 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ui64s    []uint64
 		f32s     []float32
 		f64s     []float64
-		result   ModbusData = ModbusData{}
+		bts      []byte
+		data     []ModbusValue = make([]ModbusValue, 0)
 	)
 	x.conn, err = x.SharedNode.Get()
 	if err != nil {
@@ -189,41 +226,94 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	result.Params = params
-
 	switch x.Config.Cmd {
 	case "ReadCoils":
-		data, err = x.conn.ReadCoils(params.Address, params.Quantity)
+		boolVals, err = x.conn.ReadCoils(params.Address, params.Quantity)
+		if err == nil {
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadCoil":
-		data, err = x.conn.ReadCoil(params.Address)
+		boolVal, err := x.conn.ReadCoil(params.Address)
+		if err == nil {
+			boolVals = append(boolVals, boolVal)
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadDiscreteInputs":
-		data, err = x.conn.ReadDiscreteInputs(params.Address, params.Quantity)
+		boolVals, err = x.conn.ReadDiscreteInputs(params.Address, params.Quantity)
+		if err == nil {
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadDiscreteInput":
-		data, err = x.conn.ReadDiscreteInput(params.Address)
+		boolVal, err = x.conn.ReadDiscreteInput(params.Address)
+		if err == nil {
+			boolVals = append(boolVals, boolVal)
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadRegisters":
-		data, err = x.conn.ReadRegisters(params.Address, params.Quantity, params.RegType)
+		ui16s, err = x.conn.ReadRegisters(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadRegister":
-		data, err = x.conn.ReadRegister(params.Address, params.RegType)
+		ui16, err = x.conn.ReadRegister(params.Address, params.RegType)
+		if err == nil {
+			ui16s = append(ui16s, ui16)
+			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadUint32s":
-		data, err = x.conn.ReadUint32s(params.Address, params.Quantity, params.RegType)
+		ui32s, err = x.conn.ReadUint32s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadUint32":
-		data, err = x.conn.ReadUint32(params.Address, params.RegType)
+		ui32, err = x.conn.ReadUint32(params.Address, params.RegType)
+		if err == nil {
+			ui32s = append(ui32s, ui32)
+			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadFloat32s":
-		data, err = x.conn.ReadFloat32s(params.Address, params.Quantity, params.RegType)
+		f32s, err = x.conn.ReadFloat32s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadFloat32":
-		data, err = x.conn.ReadFloat32(params.Address, params.RegType)
+		f32, err = x.conn.ReadFloat32(params.Address, params.RegType)
+		if err == nil {
+			f32s = append(f32s, f32)
+			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadUint64s":
-		data, err = x.conn.ReadUint64s(params.Address, params.Quantity, params.RegType)
+		ui64s, err = x.conn.ReadUint64s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadUint64":
-		data, err = x.conn.ReadUint64(params.Address, params.RegType)
+		ui64, err = x.conn.ReadUint64(params.Address, params.RegType)
+		if err == nil {
+			ui64s = append(ui64s, ui64)
+			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadFloat64s":
-		data, err = x.conn.ReadFloat64s(params.Address, params.Quantity, params.RegType)
+		f64s, err = x.conn.ReadFloat64s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadFloat64":
-		data, err = x.conn.ReadFloat64(params.Address, params.RegType)
+		f64, err = x.conn.ReadFloat64(params.Address, params.RegType)
+		if err == nil {
+			f64s = append(f64s, f64)
+			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadBytes":
-		data, err = x.conn.ReadBytes(params.Address, params.Quantity, params.RegType)
+		bts, err = x.conn.ReadBytes(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
+		}
 	case "ReadRawBytes":
-		data, err = x.conn.ReadRawBytes(params.Address, params.Quantity, params.RegType)
+		bts, err = x.conn.ReadRawBytes(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
+		}
 	case "WriteCoil":
 		boolVal, err = byteToBool(params.Value)
 		err = x.conn.WriteCoil(params.Address, boolVal)
@@ -270,8 +360,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	if err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
-		result.Data = data
-		bytes, err := json.Marshal(result)
+		bytes, err := json.Marshal(data)
 		if err != nil {
 			ctx.TellFailure(msg, err)
 			return
