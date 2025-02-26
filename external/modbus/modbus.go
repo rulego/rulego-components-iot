@@ -56,6 +56,8 @@ type ModbusConfiguration struct {
 	Server string
 	// Modbus 方法名称
 	Cmd string
+	// UnitId unit/slave id to use
+	UnitId uint8
 	// address 寄存器地址:允许使用 ${} 占位符变量
 	Address string
 	// quantity 寄存器数量:允许使用 ${} 占位符变量
@@ -64,15 +66,30 @@ type ModbusConfiguration struct {
 	Value string
 	// RegType 寄存器类型：  允许使用 ${} 占位符变量
 	RegType string
-	// UnitId unit/slave id to use
-	UnitId uint8
-	// Timeout sets the request timeout value,单位秒
-	Timeout int64
+	TcpConfig
+	RtuConfig
+	EncodingConfig
+}
+
+type EncodingConfig struct {
 	// Endianness register endianness <little|big>
 	Endianness modbus.Endianness
 	// WordOrder word ordering for 32-bit registers <highfirst|hf|lowfirst|lf>
 	WordOrder modbus.WordOrder
+}
 
+type TcpConfig struct {
+	// Timeout sets the request timeout value,单位秒
+	Timeout int64
+	// CertPath
+	CertPath string
+	// KeyPath
+	KeyPath string
+	// CaPath
+	CaPath string
+}
+
+type RtuConfig struct {
 	// Speed sets the serial link speed (in bps, rtu only)
 	Speed uint
 	// DataBits sets the number of bits per serial character (rtu only)
@@ -81,13 +98,6 @@ type ModbusConfiguration struct {
 	Parity uint
 	// StopBits sets the number of serial stop bits (rtu only)
 	StopBits uint
-
-	// CertPath
-	CertPath string
-	// KeyPath
-	KeyPath string
-	// CaPath
-	CaPath string
 }
 
 // ModbusNode 客户端节点，
@@ -129,16 +139,22 @@ func (x *ModbusNode) Type() string {
 func (x *ModbusNode) New() types.Node {
 	return &ModbusNode{
 		Config: ModbusConfiguration{
-			Server:     DefaultServer,
-			Cmd:        "ReadCoils",
-			Timeout:    5,
-			UnitId:     DefaultUnitId,
-			Endianness: DefaultEndianness,
-			WordOrder:  DefaultWordOrder,
-			Speed:      DefaultSpeed,
-			DataBits:   DefaultDataBits,
-			Parity:     DefaultParity,
-			StopBits:   2,
+			Server: DefaultServer,
+			Cmd:    "ReadCoils",
+			UnitId: DefaultUnitId,
+			TcpConfig: TcpConfig{
+				Timeout: 5,
+			},
+			EncodingConfig: EncodingConfig{
+				Endianness: DefaultEndianness,
+				WordOrder:  DefaultWordOrder,
+			},
+			RtuConfig: RtuConfig{
+				Speed:    DefaultSpeed,
+				DataBits: DefaultDataBits,
+				Parity:   DefaultParity,
+				StopBits: 2,
+			},
 		},
 	}
 }
