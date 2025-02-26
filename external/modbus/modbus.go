@@ -19,6 +19,7 @@ package modbus
 import (
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -56,15 +57,15 @@ type ModbusConfiguration struct {
 	Server string `json:"server"`
 	// Modbus 方法名称
 	Cmd string `json:"cmd"`
-	// UnitId unit/slave id to use
+	// UnitId 从机编号
 	UnitId uint8 `json:"unitId"`
-	// address 寄存器地址:允许使用 ${} 占位符变量
+	// address 寄存器地址 允许使用 ${} 占位符变量，示例：50或者0x32
 	Address string `json:"address"`
-	// quantity 寄存器数量:允许使用 ${} 占位符变量
+	// quantity 寄存器数量 允许使用 ${} 占位符变量
 	Quantity string `json:"quantity"`
-	// value 寄存器值:  允许使用 ${} 占位符变量
+	// value 寄存器值 允许使用 ${} 占位符变量。。读则不需要提供，如果写入多个与逗号隔开，例如：0x1,0x1 true 51,52
 	Value string `json:"value"`
-	// RegType 寄存器类型：  允许使用 ${} 占位符变量
+	// RegType 寄存器类型：  允许使用 ${} 占位符变量，0:保持寄存器(功能码0x3)，1:输入寄存器(功能码:0x4)
 	RegType        string         `json:"regType"`
 	TcpConfig      TcpConfig      `json:"tcpConfig"`
 	RtuConfig      RtuConfig      `json:"rtuConfig"`
@@ -72,32 +73,32 @@ type ModbusConfiguration struct {
 }
 
 type EncodingConfig struct {
-	// Endianness register endianness <little|big>
-	Endianness uint
-	// WordOrder word ordering for 32-bit registers <highfirst|hf|lowfirst|lf>
-	WordOrder uint
+	// Endianness register endianness 1:大端序 2:小端序
+	Endianness uint `json:"endianness"`
+	// WordOrder word ordering for 32-bit registers 1:高字在前 2:低字在前
+	WordOrder uint `json:"wordorder"`
 }
 
 type TcpConfig struct {
 	// Timeout sets the request timeout value,单位秒
-	Timeout int64
+	Timeout int64 `json:"timeout"`
 	// CertPath
-	CertPath string
+	CertPath string `json:"certPath"`
 	// KeyPath
-	KeyPath string
+	KeyPath string `json:"keyPath"`
 	// CaPath
-	CaPath string
+	CaPath string `json:"caPath"`
 }
 
 type RtuConfig struct {
 	// Speed sets the serial link speed (in bps, rtu only)
-	Speed uint
+	Speed uint `json:"speed"`
 	// DataBits sets the number of bits per serial character (rtu only)
-	DataBits uint
+	DataBits uint `json:"dataBits"`
 	// Parity sets the serial link parity mode (rtu only)
-	Parity uint
+	Parity uint `json:"parity"`
 	// StopBits sets the number of serial stop bits (rtu only)
-	StopBits uint
+	StopBits uint `json:"stopBits"`
 }
 
 // ModbusNode 客户端节点，
@@ -106,20 +107,19 @@ type RtuConfig struct {
 type ModbusNode struct {
 	base.SharedNode[*modbus.ModbusClient]
 	//节点配置
-	Config            ModbusConfiguration
-	conn              *modbus.ModbusClient
-	addressTemplate   str.Template
-	quanitityTemplate str.Template
-	valueTemplate     str.Template
-	regTypeTemplate   str.Template
+	Config           ModbusConfiguration
+	conn             *modbus.ModbusClient
+	addressTemplate  str.Template
+	quantityTemplate str.Template
+	valueTemplate    str.Template
+	regTypeTemplate  str.Template
 }
 
 type Params struct {
 	Cmd      string         `json:"cmd" `
 	Address  uint16         `json:"address" `
 	Quantity uint16         `json:"quantity" `
-	Value    []byte         `json:"-" `
-	Val      string         `json:"value" `
+	Value    string         `json:"value" `
 	RegType  modbus.RegType `json:"regType" `
 }
 
@@ -139,9 +139,13 @@ func (x *ModbusNode) Type() string {
 func (x *ModbusNode) New() types.Node {
 	return &ModbusNode{
 		Config: ModbusConfiguration{
-			Server: DefaultServer,
-			Cmd:    "ReadCoils",
-			UnitId: DefaultUnitId,
+			Server:   DefaultServer,
+			Cmd:      "ReadCoils",
+			UnitId:   DefaultUnitId,
+			Address:  "50",
+			Quantity: "1",
+			Value:    "1",
+			RegType:  "0",
 			TcpConfig: TcpConfig{
 				Timeout: 5,
 			},
@@ -164,13 +168,13 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
 		//初始化客户端
-		err = x.SharedNode.Init(ruleConfig, x.Type(), x.Config.Server, true, func() (*modbus.ModbusClient, error) {
+		err = x.SharedNode.Init(ruleConfig, x.Type(), x.Config.Server, false, func() (*modbus.ModbusClient, error) {
 			return x.initClient()
 		})
 	}
 	//初始化模板
 	x.addressTemplate = str.NewTemplate(x.Config.Address)
-	x.quanitityTemplate = str.NewTemplate(x.Config.Quantity)
+	x.quantityTemplate = str.NewTemplate(x.Config.Quantity)
 	x.valueTemplate = str.NewTemplate(x.Config.Value)
 	x.regTypeTemplate = str.NewTemplate(x.Config.RegType)
 	return err
@@ -186,7 +190,7 @@ func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | by
 	elemType := sliceType.Elem()
 	if elemType == reflect.TypeOf(byte(0)) {
 		step = 1
-		for i, _ := range data {
+		for i := range data {
 			if i%2 == 0 {
 				addVals = append(addVals, ModbusValue{
 					UnitId:  unitId,
@@ -403,21 +407,23 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 		err = x.conn.WriteFloat64s(params.Address, f64s)
 	case "WriteBytes":
-		err = x.conn.WriteBytes(params.Address, params.Value)
+		err = x.conn.WriteBytes(params.Address, []byte(params.Value))
 	case "WriteRawBytes":
-		err = x.conn.WriteRawBytes(params.Address, params.Value)
+		err = x.conn.WriteRawBytes(params.Address, []byte(params.Value))
 	default:
 		err = fmt.Errorf("unknown command：%s", x.Config.Cmd)
 	}
 	if err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
-		bytes, err := json.Marshal(data)
-		if err != nil {
-			ctx.TellFailure(msg, err)
-			return
+		if len(data) > 0 {
+			bytes, err := json.Marshal(data)
+			if err != nil {
+				ctx.TellFailure(msg, err)
+				return
+			}
+			msg.Data = str.ToString(bytes)
 		}
-		msg.Data = str.ToString(bytes)
 		ctx.TellSuccess(msg)
 	}
 }
@@ -430,52 +436,37 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 		address   uint16
 		quanitity uint16
 		val       string
-		value     []byte
 		regType   modbus.RegType = modbus.HOLDING_REGISTER
 		params                   = Params{}
 	)
 	evn := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
 	// 获取address
-	if !x.addressTemplate.IsNotVar() {
-		tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 10, 16)
-		address = uint16(tmp)
-	} else if len(x.Config.Address) > 0 {
-		tmp, err = strconv.ParseUint(x.Config.Address, 10, 16)
-		address = uint16(tmp)
-	}
-	// 获取quantity
-	if !x.quanitityTemplate.IsNotVar() {
-		tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 10, 16)
-		quanitity = uint16(tmp)
-	} else if len(x.Config.Quantity) > 0 {
-		tmp, err = strconv.ParseUint(x.Config.Quantity, 10, 16)
-		quanitity = uint16(tmp)
-	}
-	// 获取regType
-	if !x.regTypeTemplate.IsNotVar() {
-		tmp, err = strconv.ParseUint(x.regTypeTemplate.Execute(evn), 10, 16)
-		regType = modbus.RegType(tmp)
-	} else if len(x.Config.RegType) > 0 {
-		tmp, err = strconv.ParseUint(x.Config.RegType, 10, 16)
-		regType = modbus.RegType(tmp)
-	}
-	// 获取value
-	if !x.valueTemplate.IsNotVar() {
-		val = x.valueTemplate.Execute(evn)
-		value = []byte(val)
-	} else if len(x.Config.Value) > 0 {
-		val = x.Config.Value
-		value = []byte(val)
-	}
+	tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
 	if err != nil {
 		return nil, err
 	}
+	address = uint16(tmp)
+
+	// 获取quantity
+	tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
+	if err != nil {
+		return nil, err
+	}
+	quanitity = uint16(tmp)
+
+	// 获取regType
+	tmp, err = strconv.ParseUint(x.regTypeTemplate.Execute(evn), 0, 64)
+	if err != nil {
+		return nil, err
+	}
+	regType = modbus.RegType(tmp)
+	val = x.valueTemplate.Execute(evn)
+	//value = []byte(val)
 	// 更新参数
 	params.Cmd = x.Config.Cmd
 	params.Address = address
 	params.Quantity = quanitity
-	params.Value = value
-	params.Val = val
+	params.Value = val
 	params.RegType = regType
 	return &params, nil
 }
@@ -541,74 +532,150 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 	}
 }
 
-func byteToBool(data []byte) (bool, error) {
-	var value bool
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToBool 将string转换为bool，支持,01,true,false
+func byteToBool(data string) (bool, error) {
+	switch strings.ToLower(data) {
+	case "0", "false":
+		return false, nil
+	case "1", "true":
+		return true, nil
+	default:
+		return false, errors.New("invalid boolean value")
+	}
 }
 
-func byteToBools(data []byte) ([]bool, error) {
-	var value []bool
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToBools 将string转换为bool列表，支持"[0,1]","[true,false]","true,false"
+func byteToBools(data string) ([]bool, error) {
+	data = strings.Trim(data, "[]")
+	parts := strings.Split(data, ",")
+	bools := make([]bool, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if b, err := byteToBool(part); err == nil {
+			bools = append(bools, b)
+		} else {
+			return nil, err
+		}
+	}
+	return bools, nil
 }
 
-func byteToUint64(data []byte) (uint64, error) {
-	var value uint64
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToUint64 将string转换为uint64，支持"0x32","50"
+func byteToUint64(data string) (uint64, error) {
+	return strconv.ParseUint(data, 0, 64)
 }
 
-func byteToUint64s(data []byte) ([]uint64, error) {
-	var value []uint64
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToUint64s 将string转换为uint64列表，支持"[0x32,50]","[32,50]","32,50"
+func byteToUint64s(data string) ([]uint64, error) {
+	data = strings.Trim(data, "[]")
+	parts := strings.Split(data, ",")
+	u64s := make([]uint64, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if u64, err := byteToUint64(part); err == nil {
+			u64s = append(u64s, u64)
+		} else {
+			return nil, err
+		}
+	}
+	return u64s, nil
 }
 
-func byteToUint32(data []byte) (uint32, error) {
-	var value uint32
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToUint32 将string转换为uint32，支持"0x32","50"
+func byteToUint32(data string) (uint32, error) {
+	if temp, err := strconv.ParseUint(data, 0, 32); err == nil {
+		return uint32(temp), nil
+	} else {
+		return 0, err
+	}
 }
 
-func byteToUint32s(data []byte) ([]uint32, error) {
-	var value []uint32
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToUint32s 将string转换为uint32列表，支持"[0x32,50]","[32,50]","32,50"
+func byteToUint32s(data string) ([]uint32, error) {
+	data = strings.Trim(data, "[]")
+	parts := strings.Split(data, ",")
+	u32s := make([]uint32, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if u32, err := byteToUint32(part); err == nil {
+			u32s = append(u32s, u32)
+		} else {
+			return nil, err
+		}
+	}
+	return u32s, nil
 }
 
-func byteToUint16(data []byte) (uint16, error) {
-	var value uint16
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToUint16 将string转换为uint16，支持"0x32","50"
+func byteToUint16(data string) (uint16, error) {
+	if temp, err := strconv.ParseUint(data, 0, 16); err == nil {
+		return uint16(temp), nil
+	} else {
+		return 0, err
+	}
 }
 
-func byteToUint16s(data []byte) ([]uint16, error) {
-	var value []uint16
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToUint16s 将string转换为uint16列表，支持"[0x32,50]","[32,50]","32,50"
+func byteToUint16s(data string) ([]uint16, error) {
+	data = strings.Trim(data, "[]")
+	parts := strings.Split(data, ",")
+	u16s := make([]uint16, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if u16, err := byteToUint16(part); err == nil {
+			u16s = append(u16s, u16)
+		} else {
+			return nil, err
+		}
+	}
+	return u16s, nil
 }
 
-func byteToFloat32(data []byte) (float32, error) {
-	var value float32
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToFloat32 将string转换为float32
+func byteToFloat32(data string) (float32, error) {
+	f64, err := strconv.ParseFloat(data, 32)
+	return float32(f64), err
 }
 
-func byteToFloat32s(data []byte) ([]float32, error) {
-	var value []float32
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToFloat32s 将string转换为float32列表，支持"[1.2,3.4]","1.2,3.4"
+func byteToFloat32s(data string) ([]float32, error) {
+	data = strings.Trim(data, "[]")
+	parts := strings.Split(data, ",")
+	f32s := make([]float32, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if f32, err := byteToFloat32(part); err == nil {
+			f32s = append(f32s, f32)
+		} else {
+			return nil, err
+		}
+	}
+	return f32s, nil
 }
 
-func byteToFloat64(data []byte) (float64, error) {
-	var value float64
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToFloat64 将string转换为float64
+func byteToFloat64(data string) (float64, error) {
+	return strconv.ParseFloat(data, 64)
 }
 
-func byteToFloat64s(data []byte) ([]float64, error) {
-	var value []float64
-	err := json.Unmarshal(data, &value)
-	return value, err
+// byteToFloat64s 将string转换为float64列表，支持"[1.2,3.4]","1.2,3.4"
+func byteToFloat64s(data string) ([]float64, error) {
+	data = strings.Trim(data, "[]")
+	parts := strings.Split(data, ",")
+	f64s := make([]float64, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if f64, err := byteToFloat64(part); err == nil {
+			f64s = append(f64s, f64)
+		} else {
+			return nil, err
+		}
+	}
+	return f64s, nil
 }
