@@ -441,7 +441,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 	)
 	evn := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
 	// 获取address
-	if strings.Trim(x.addressTemplate.Execute(evn), " ") != "" {
+	if strings.TrimSpace(x.addressTemplate.Execute(evn)) != "" {
 		tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
 		if err != nil {
 			return nil, err
@@ -449,7 +449,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 		address = uint16(tmp)
 	}
 	// 获取quantity
-	if strings.Trim(x.quantityTemplate.Execute(evn), " ") != "" {
+	if strings.TrimSpace(x.quantityTemplate.Execute(evn)) != "" {
 		tmp, err = strconv.ParseUint(x.quantityTemplate.Execute(evn), 0, 64)
 		if err != nil {
 			return nil, err
@@ -458,7 +458,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 	}
 
 	// 获取regType
-	if strings.Trim(x.regTypeTemplate.Execute(evn), " ") != "" {
+	if strings.TrimSpace(x.regTypeTemplate.Execute(evn)) != "" {
 		tmp, err = strconv.ParseUint(x.regTypeTemplate.Execute(evn), 0, 64)
 		if err != nil {
 			return nil, err
