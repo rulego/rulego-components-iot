@@ -6,6 +6,7 @@ require (
 	github.com/gopcua/opcua v0.6.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rulego/rulego v0.27.0
+	github.com/simonvetter/modbus v1.6.3
 )
 
 require (
@@ -16,6 +17,7 @@ require (
 	github.com/expr-lang/expr v1.16.9 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/goburrow/serial v0.1.0 // indirect
 	github.com/gofrs/uuid/v5 v5.0.0 // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
