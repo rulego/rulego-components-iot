@@ -53,29 +53,29 @@ func init() {
 // ModbusConfiguration 节点配置
 type ModbusConfiguration struct {
 	// 服务器地址
-	Server string
+	Server string `json:"server"`
 	// Modbus 方法名称
-	Cmd string
+	Cmd string `json:"cmd"`
 	// UnitId unit/slave id to use
-	UnitId uint8
+	UnitId uint8 `json:"unitId"`
 	// address 寄存器地址:允许使用 ${} 占位符变量
-	Address string
+	Address string `json:"address"`
 	// quantity 寄存器数量:允许使用 ${} 占位符变量
-	Quantity string
+	Quantity string `json:"quantity"`
 	// value 寄存器值:  允许使用 ${} 占位符变量
-	Value string
+	Value string `json:"value"`
 	// RegType 寄存器类型：  允许使用 ${} 占位符变量
-	RegType string
-	TcpConfig
-	RtuConfig
-	EncodingConfig
+	RegType        string         `json:"regType"`
+	TcpConfig      TcpConfig      `json:"tcpConfig"`
+	RtuConfig      RtuConfig      `json:"rtuConfig"`
+	EncodingConfig EncodingConfig `json:"encodingConfig"`
 }
 
 type EncodingConfig struct {
 	// Endianness register endianness <little|big>
-	Endianness modbus.Endianness
+	Endianness uint
 	// WordOrder word ordering for 32-bit registers <highfirst|hf|lowfirst|lf>
-	WordOrder modbus.WordOrder
+	WordOrder uint
 }
 
 type TcpConfig struct {
@@ -146,8 +146,8 @@ func (x *ModbusNode) New() types.Node {
 				Timeout: 5,
 			},
 			EncodingConfig: EncodingConfig{
-				Endianness: DefaultEndianness,
-				WordOrder:  DefaultWordOrder,
+				Endianness: uint(DefaultEndianness),
+				WordOrder:  uint(DefaultWordOrder),
 			},
 			RtuConfig: RtuConfig{
 				Speed:    DefaultSpeed,
@@ -508,22 +508,22 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 		var err error
 		config := &modbus.ClientConfiguration{
 			URL:      x.Config.Server,
-			Speed:    x.Config.Speed,
-			DataBits: x.Config.DataBits,
-			StopBits: x.Config.StopBits,
-			Timeout:  time.Duration(x.Config.Timeout) * time.Second,
-			Parity:   x.Config.Parity,
+			Speed:    x.Config.RtuConfig.Speed,
+			DataBits: x.Config.RtuConfig.DataBits,
+			StopBits: x.Config.RtuConfig.StopBits,
+			Timeout:  time.Duration(x.Config.TcpConfig.Timeout) * time.Second,
+			Parity:   x.Config.RtuConfig.Parity,
 		}
 		// handle TLS options
 		if strings.HasPrefix(x.Config.Server, "tcp+tls://") {
-			clientKeyPair, err := tls.LoadX509KeyPair(x.Config.CertPath, x.Config.KeyPath)
+			clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertPath, x.Config.TcpConfig.KeyPath)
 			if err != nil {
 				x.Printf("failed to load client tls key pair: %v\n", err)
 				return nil, err
 			}
 			config.TLSClientCert = &clientKeyPair
 
-			config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.CaPath)
+			config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CaPath)
 			if err != nil {
 				x.Printf("failed to load tls CA/server certificate: %v\n", err)
 				return nil, err
@@ -531,7 +531,7 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 		}
 
 		x.conn, err = modbus.NewClient(config)
-		x.conn.SetEncoding(x.Config.Endianness, x.Config.WordOrder)
+		x.conn.SetEncoding(modbus.Endianness(x.Config.EncodingConfig.Endianness), modbus.WordOrder(x.Config.EncodingConfig.WordOrder))
 		x.conn.SetUnitId(x.Config.UnitId)
 		if err != nil {
 			return nil, err
