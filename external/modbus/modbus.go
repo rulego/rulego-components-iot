@@ -441,25 +441,30 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 	)
 	evn := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
 	// 获取address
-	tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(x.addressTemplate.Execute(evn)) != "" {
+		tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
+		if err != nil {
+			return nil, err
+		}
+		address = uint16(tmp)
 	}
-	address = uint16(tmp)
-
 	// 获取quantity
-	tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(x.quantityTemplate.Execute(evn)) != "" {
+		tmp, err = strconv.ParseUint(x.quantityTemplate.Execute(evn), 0, 64)
+		if err != nil {
+			return nil, err
+		}
+		quanitity = uint16(tmp)
 	}
-	quanitity = uint16(tmp)
 
 	// 获取regType
-	tmp, err = strconv.ParseUint(x.regTypeTemplate.Execute(evn), 0, 64)
-	if err != nil {
-		return nil, err
+	if strings.TrimSpace(x.regTypeTemplate.Execute(evn)) != "" {
+		tmp, err = strconv.ParseUint(x.regTypeTemplate.Execute(evn), 0, 64)
+		if err != nil {
+			return nil, err
+		}
+		regType = modbus.RegType(tmp)
 	}
-	regType = modbus.RegType(tmp)
 	val = x.valueTemplate.Execute(evn)
 	//value = []byte(val)
 	// 更新参数
