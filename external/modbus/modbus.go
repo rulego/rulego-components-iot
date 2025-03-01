@@ -168,7 +168,7 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
 		//初始化客户端
-		err = x.SharedNode.Init(ruleConfig, x.Type(), x.Config.Server, false, func() (*modbus.ModbusClient, error) {
+		err = x.SharedNode.Init(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
 			return x.initClient()
 		})
 	}

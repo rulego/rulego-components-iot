@@ -5,7 +5,7 @@ go 1.22.0
 require (
 	github.com/gopcua/opcua v0.6.1
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/rulego/rulego v0.27.0
+	github.com/rulego/rulego v0.28.1-0.20250303030309-8a606a85b652
 	github.com/simonvetter/modbus v1.6.3
 )
 
