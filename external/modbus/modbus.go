@@ -422,7 +422,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, err)
 				return
 			}
-			msg.Data = str.ToString(bytes)
+			msg.SetData(str.ToString(bytes))
 		}
 		ctx.TellSuccess(msg)
 	}

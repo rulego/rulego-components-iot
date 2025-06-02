@@ -136,7 +136,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 
 	data := make([]opcuaClient.Data, 0)
-	err = json.Unmarshal([]byte(msg.Data), &data)
+	err = json.Unmarshal([]byte(msg.GetData()), &data)
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return

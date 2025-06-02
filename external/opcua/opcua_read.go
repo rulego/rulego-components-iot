@@ -138,7 +138,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 
 	nodeIds := make([]string, 0)
-	err = json.Unmarshal([]byte(msg.Data), &nodeIds)
+	err = json.Unmarshal([]byte(msg.GetData()), &nodeIds)
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
@@ -176,7 +176,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		if dbyte, err := json.Marshal(data); err != nil {
 			ctx.TellFailure(msg, err)
 		} else {
-			msg.Data = string(dbyte)
+			msg.SetData(string(dbyte))
 			ctx.TellSuccess(msg)
 		}
 	} else {
