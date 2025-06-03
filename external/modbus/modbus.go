@@ -237,7 +237,6 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		data     []ModbusValue = make([]ModbusValue, 0)
 	)
 
-	// 尝试获取连接
 	x.conn, err = x.SharedNode.Get()
 	if err != nil {
 		ctx.TellFailure(msg, err)
