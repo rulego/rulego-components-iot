@@ -219,31 +219,26 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	// x.Locker.Lock()
 	// defer x.Locker.Unlock()
 	var (
-		err      error
-		params   *Params
-		boolVals []bool
-		boolVal  bool
-		ui16     uint16
-		ui32     uint32
-		ui64     uint64
-		f32      float32
-		f64      float64
-		ui16s    []uint16
-		ui32s    []uint32
-		ui64s    []uint64
-		f32s     []float32
-		f64s     []float64
-		bts      []byte
-		data     []ModbusValue = make([]ModbusValue, 0)
+		err        error
+		params     *Params
+		boolVals   []bool
+		boolVal    bool
+		ui16       uint16
+		ui32       uint32
+		ui64       uint64
+		f32        float32
+		f64        float64
+		ui16s      []uint16
+		ui32s      []uint32
+		ui64s      []uint64
+		f32s       []float32
+		f64s       []float64
+		bts        []byte
+		data       []ModbusValue = make([]ModbusValue, 0)
+		retryCount int           = 0 // 重试计数器
 	)
 
 	x.conn, err = x.SharedNode.Get()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
-	//Fix connection issue for #66: rulego/rulego#66
-	err = x.conn.Open()
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
@@ -254,6 +249,8 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
+
+retry:
 	switch x.Config.Cmd {
 	case "ReadCoils":
 		boolVals, err = x.conn.ReadCoils(params.Address, params.Quantity)
@@ -421,6 +418,29 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	default:
 		err = fmt.Errorf("unknown command：%s", x.Config.Cmd)
 	}
+
+	// 如果出错且重试次数小于3次，则尝试重新打开连接并重试
+	if err != nil && retryCount < 3 {
+		x.Printf("Modbus operation failed: %s, retry count: %d, trying to reconnect...", err, retryCount)
+		retryCount++
+
+		// 关闭现有连接
+		if x.conn != nil {
+			_ = x.conn.Close()
+		}
+
+		// 重新打开连接
+		err = x.conn.Open()
+		if err != nil {
+			x.Printf("Failed to reopen connection: %s", err)
+			ctx.TellFailure(msg, err)
+			return
+		}
+
+		// 重试操作
+		goto retry
+	}
+
 	if err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
