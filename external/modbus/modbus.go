@@ -46,6 +46,27 @@ const (
 	DefaultUnitId     uint8             = 1
 )
 
+// 自定义错误类型
+type UnknownCommandErr struct {
+	Cmd string
+}
+
+func (e *UnknownCommandErr) Error() string {
+	return fmt.Sprintf("unknown command: %s", e.Cmd)
+}
+
+type ModbusConnErr struct {
+	Err error
+}
+
+func (e *ModbusConnErr) Error() string {
+	return fmt.Sprintf("modbus connection error: %s", e.Err.Error())
+}
+
+func (e *ModbusConnErr) Unwrap() error {
+	return e.Err
+}
+
 // 注册节点
 func init() {
 	_ = rulego.Registry.Register(&ModbusNode{})
@@ -240,7 +261,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 
 	x.conn, err = x.SharedNode.Get()
 	if err != nil {
-		ctx.TellFailure(msg, err)
+		ctx.TellFailure(msg, &ModbusConnErr{Err: err})
 		return
 	}
 
@@ -256,189 +277,278 @@ retry:
 		boolVals, err = x.conn.ReadCoils(params.Address, params.Quantity)
 		if err == nil {
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadCoil":
 		boolVal, err = x.conn.ReadCoil(params.Address)
 		if err == nil {
 			boolVals = append(boolVals, boolVal)
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadDiscreteInputs":
 		boolVals, err = x.conn.ReadDiscreteInputs(params.Address, params.Quantity)
 		if err == nil {
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadDiscreteInput":
 		boolVal, err = x.conn.ReadDiscreteInput(params.Address)
 		if err == nil {
 			boolVals = append(boolVals, boolVal)
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadRegisters":
 		ui16s, err = x.conn.ReadRegisters(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadRegister":
 		ui16, err = x.conn.ReadRegister(params.Address, params.RegType)
 		if err == nil {
 			ui16s = append(ui16s, ui16)
 			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadUint32s":
 		ui32s, err = x.conn.ReadUint32s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadUint32":
 		ui32, err = x.conn.ReadUint32(params.Address, params.RegType)
 		if err == nil {
 			ui32s = append(ui32s, ui32)
 			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadFloat32s":
 		f32s, err = x.conn.ReadFloat32s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadFloat32":
 		f32, err = x.conn.ReadFloat32(params.Address, params.RegType)
 		if err == nil {
 			f32s = append(f32s, f32)
 			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadUint64s":
 		ui64s, err = x.conn.ReadUint64s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadUint64":
 		ui64, err = x.conn.ReadUint64(params.Address, params.RegType)
 		if err == nil {
 			ui64s = append(ui64s, ui64)
 			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadFloat64s":
 		f64s, err = x.conn.ReadFloat64s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadFloat64":
 		f64, err = x.conn.ReadFloat64(params.Address, params.RegType)
 		if err == nil {
 			f64s = append(f64s, f64)
 			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadBytes":
 		bts, err = x.conn.ReadBytes(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "ReadRawBytes":
 		bts, err = x.conn.ReadRawBytes(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
+		} else {
+			err = &ModbusConnErr{Err: err}
 		}
 	case "WriteCoil":
 		boolVal, err = byteToBool(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteCoil(params.Address, boolVal)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteCoil(params.Address, boolVal)
 	case "WriteCoils":
 		boolVals, err = byteToBools(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteCoils(params.Address, boolVals)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteCoils(params.Address, boolVals)
 	case "WriteRegister":
 		ui16, err = byteToUint16(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteRegister(params.Address, ui16)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteRegister(params.Address, ui16)
 	case "WriteRegisters":
 		ui16s, err = byteToUint16s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteRegisters(params.Address, ui16s)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteRegisters(params.Address, ui16s)
 	case "WriteUint32":
 		ui32, err = byteToUint32(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteUint32(params.Address, ui32)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteUint32(params.Address, ui32)
 	case "WriteUint32s":
 		ui32s, err = byteToUint32s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteUint32s(params.Address, ui32s)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteUint32s(params.Address, ui32s)
 	case "WriteFloat32":
 		f32, err = byteToFloat32(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteFloat32(params.Address, f32)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteFloat32(params.Address, f32)
 	case "WriteFloat32s":
 		f32s, err = byteToFloat32s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteFloat32s(params.Address, f32s)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteFloat32s(params.Address, f32s)
 	case "WriteUint64":
 		ui64, err = byteToUint64(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteUint64(params.Address, ui64)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteUint64(params.Address, ui64)
 	case "WriteUint64s":
 		ui64s, err = byteToUint64s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteUint64s(params.Address, ui64s)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteUint64s(params.Address, ui64s)
 	case "WriteFloat64":
 		f64, err = byteToFloat64(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteFloat64(params.Address, f64)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteFloat64(params.Address, f64)
 	case "WriteFloat64s":
 		f64s, err = byteToFloat64s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.conn.WriteFloat64s(params.Address, f64s)
+			if err != nil {
+				err = &ModbusConnErr{Err: err}
+			}
 		}
-		err = x.conn.WriteFloat64s(params.Address, f64s)
 	case "WriteBytes":
 		err = x.conn.WriteBytes(params.Address, []byte(params.Value))
+		if err != nil {
+			err = &ModbusConnErr{Err: err}
+		}
 	case "WriteRawBytes":
 		err = x.conn.WriteRawBytes(params.Address, []byte(params.Value))
+		if err != nil {
+			err = &ModbusConnErr{Err: err}
+		}
 	default:
-		err = fmt.Errorf("unknown command：%s", x.Config.Cmd)
+		err = &UnknownCommandErr{Cmd: x.Config.Cmd}
 	}
 
-	// 如果出错且重试次数小于3次，则尝试重新打开连接并重试
-	if err != nil && retryCount < 3 {
-		x.Printf("Modbus operation failed: %s, retry count: %d, trying to reconnect...", err, retryCount)
-		retryCount++
+	// 如果是ModbusConnErr类型的错误且重试次数小于3次，则尝试重新打开连接并重试
+	if err != nil {
+		_, isModbusConnErr := err.(*ModbusConnErr)
+		if isModbusConnErr && retryCount < 3 {
+			x.Printf("Modbus connection error: %s, retry count: %d, trying to reconnect...", err, retryCount)
+			retryCount++
 
-		// 关闭现有连接
-		if x.conn != nil {
-			_ = x.conn.Close()
+			// 关闭现有连接
+			if x.conn != nil {
+				_ = x.conn.Close()
+			}
+
+			// 重新打开连接
+			openErr := x.conn.Open()
+			if openErr != nil {
+				x.Printf("Failed to reopen connection: %s", openErr)
+				ctx.TellFailure(msg, &ModbusConnErr{Err: openErr})
+				return
+			}
+
+			// 重试操作
+			goto retry
 		}
-
-		// 重新打开连接
-		err = x.conn.Open()
-		if err != nil {
-			x.Printf("Failed to reopen connection: %s", err)
-			ctx.TellFailure(msg, err)
-			return
-		}
-
-		// 重试操作
-		goto retry
 	}
 
 	if err != nil {
