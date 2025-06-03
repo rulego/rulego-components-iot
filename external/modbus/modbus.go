@@ -236,34 +236,20 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		bts      []byte
 		data     []ModbusValue = make([]ModbusValue, 0)
 	)
-	
+
 	// 尝试获取连接
 	x.conn, err = x.SharedNode.Get()
 	if err != nil {
-		// 连接获取失败，尝试重新初始化 fix bug for issues-66: https://github.com/rulego/rulego/issues/66
-		x.Printf("Connection error: %s, trying to reconnect...", err)
-		
-		// 关闭已有连接，防止资源泄露
-		x.Destroy()
-		
-		// 使用与Init相同的方式重新初始化
-		initErr := x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*modbus.ModbusClient, error) {
-			return x.initClient()
-		})
-		
-		if initErr != nil {
-			ctx.TellFailure(msg, fmt.Errorf("reconnection failed: %w", initErr))
-			return
-		}
-		
-		// 重新获取连接
-		x.conn, err = x.SharedNode.Get()
-		if err != nil {
-			ctx.TellFailure(msg, fmt.Errorf("still cannot get connection after reconnection: %w", err))
-			return
-		}
+		ctx.TellFailure(msg, err)
+		return
 	}
-	
+	//Fix connection issue for #66: rulego/rulego#66
+	err = x.conn.Open()
+	if err != nil {
+		ctx.TellFailure(msg, err)
+		return
+	}
+
 	params, err = x.getParams(ctx, msg)
 	if err != nil {
 		ctx.TellFailure(msg, err)
