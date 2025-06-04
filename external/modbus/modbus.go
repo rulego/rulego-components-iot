@@ -122,6 +122,382 @@ type RtuConfig struct {
 	StopBits uint `json:"stopBits"`
 }
 
+// RetryableModbusClient 带重试逻辑的Modbus客户端
+type RetryableModbusClient struct {
+	client     *modbus.ModbusClient
+	maxRetries int
+	logger     types.Logger
+}
+
+// NewRetryableModbusClient 创建一个新的带重试逻辑的Modbus客户端
+func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logger types.Logger) *RetryableModbusClient {
+	return &RetryableModbusClient{
+		client:     client,
+		maxRetries: maxRetries,
+		logger:     logger,
+	}
+}
+
+// executeWithRetry 执行操作并在连接错误时重试
+func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() error) error {
+	var err error
+	for retry := 0; retry <= r.maxRetries; retry++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+
+		// 判断是否为连接错误，并且重试次数未达上限
+		if retry < r.maxRetries {
+			r.logf("Modbus %s error: %s, retry count: %d, trying to reconnect...", operation, err, retry)
+
+			// 关闭现有连接
+			_ = r.client.Close()
+
+			// 重新打开连接
+			openErr := r.client.Open()
+			if openErr != nil {
+				r.logf("Failed to reopen connection: %s", openErr)
+				return &ModbusConnErr{Err: openErr}
+			}
+
+			continue
+		}
+	}
+	return &ModbusConnErr{Err: err}
+}
+
+// logf 记录日志
+func (r *RetryableModbusClient) logf(format string, v ...interface{}) {
+	if r.logger != nil {
+		r.logger.Printf(format, v...)
+	}
+}
+
+// ReadCoil 读取单个线圈状态
+func (r *RetryableModbusClient) ReadCoil(address uint16) (bool, error) {
+	var result bool
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadCoil(address)
+		return err
+	}
+	err = r.executeWithRetry("ReadCoil", fn)
+	return result, err
+}
+
+// ReadCoils 读取多个线圈状态
+func (r *RetryableModbusClient) ReadCoils(address uint16, quantity uint16) ([]bool, error) {
+	var result []bool
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadCoils(address, quantity)
+		return err
+	}
+	err = r.executeWithRetry("ReadCoils", fn)
+	return result, err
+}
+
+// ReadDiscreteInput 读取单个离散输入状态
+func (r *RetryableModbusClient) ReadDiscreteInput(address uint16) (bool, error) {
+	var result bool
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadDiscreteInput(address)
+		return err
+	}
+	err = r.executeWithRetry("ReadDiscreteInput", fn)
+	return result, err
+}
+
+// ReadDiscreteInputs 读取多个离散输入状态
+func (r *RetryableModbusClient) ReadDiscreteInputs(address uint16, quantity uint16) ([]bool, error) {
+	var result []bool
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadDiscreteInputs(address, quantity)
+		return err
+	}
+	err = r.executeWithRetry("ReadDiscreteInputs", fn)
+	return result, err
+}
+
+// ReadRegister 读取单个寄存器
+func (r *RetryableModbusClient) ReadRegister(address uint16, regType modbus.RegType) (uint16, error) {
+	var result uint16
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadRegister(address, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadRegister", fn)
+	return result, err
+}
+
+// ReadRegisters 读取多个寄存器
+func (r *RetryableModbusClient) ReadRegisters(address uint16, quantity uint16, regType modbus.RegType) ([]uint16, error) {
+	var result []uint16
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadRegisters(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadRegisters", fn)
+	return result, err
+}
+
+// ReadUint32 读取单个32位无符号整数
+func (r *RetryableModbusClient) ReadUint32(address uint16, regType modbus.RegType) (uint32, error) {
+	var result uint32
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadUint32(address, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadUint32", fn)
+	return result, err
+}
+
+// ReadUint32s 读取多个32位无符号整数
+func (r *RetryableModbusClient) ReadUint32s(address uint16, quantity uint16, regType modbus.RegType) ([]uint32, error) {
+	var result []uint32
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadUint32s(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadUint32s", fn)
+	return result, err
+}
+
+// ReadFloat32 读取单个32位浮点数
+func (r *RetryableModbusClient) ReadFloat32(address uint16, regType modbus.RegType) (float32, error) {
+	var result float32
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadFloat32(address, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadFloat32", fn)
+	return result, err
+}
+
+// ReadFloat32s 读取多个32位浮点数
+func (r *RetryableModbusClient) ReadFloat32s(address uint16, quantity uint16, regType modbus.RegType) ([]float32, error) {
+	var result []float32
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadFloat32s(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadFloat32s", fn)
+	return result, err
+}
+
+// ReadUint64 读取单个64位无符号整数
+func (r *RetryableModbusClient) ReadUint64(address uint16, regType modbus.RegType) (uint64, error) {
+	var result uint64
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadUint64(address, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadUint64", fn)
+	return result, err
+}
+
+// ReadUint64s 读取多个64位无符号整数
+func (r *RetryableModbusClient) ReadUint64s(address uint16, quantity uint16, regType modbus.RegType) ([]uint64, error) {
+	var result []uint64
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadUint64s(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadUint64s", fn)
+	return result, err
+}
+
+// ReadFloat64 读取单个64位浮点数
+func (r *RetryableModbusClient) ReadFloat64(address uint16, regType modbus.RegType) (float64, error) {
+	var result float64
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadFloat64(address, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadFloat64", fn)
+	return result, err
+}
+
+// ReadFloat64s 读取多个64位浮点数
+func (r *RetryableModbusClient) ReadFloat64s(address uint16, quantity uint16, regType modbus.RegType) ([]float64, error) {
+	var result []float64
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadFloat64s(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadFloat64s", fn)
+	return result, err
+}
+
+// ReadBytes 读取字节数组
+func (r *RetryableModbusClient) ReadBytes(address uint16, quantity uint16, regType modbus.RegType) ([]byte, error) {
+	var result []byte
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadBytes(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadBytes", fn)
+	return result, err
+}
+
+// ReadRawBytes 读取原始字节数组
+func (r *RetryableModbusClient) ReadRawBytes(address uint16, quantity uint16, regType modbus.RegType) ([]byte, error) {
+	var result []byte
+	var err error
+	fn := func() error {
+		result, err = r.client.ReadRawBytes(address, quantity, regType)
+		return err
+	}
+	err = r.executeWithRetry("ReadRawBytes", fn)
+	return result, err
+}
+
+// WriteCoil 写入单个线圈状态
+func (r *RetryableModbusClient) WriteCoil(address uint16, value bool) error {
+	fn := func() error {
+		return r.client.WriteCoil(address, value)
+	}
+	return r.executeWithRetry("WriteCoil", fn)
+}
+
+// WriteCoils 写入多个线圈状态
+func (r *RetryableModbusClient) WriteCoils(address uint16, values []bool) error {
+	fn := func() error {
+		return r.client.WriteCoils(address, values)
+	}
+	return r.executeWithRetry("WriteCoils", fn)
+}
+
+// WriteRegister 写入单个寄存器
+func (r *RetryableModbusClient) WriteRegister(address uint16, value uint16) error {
+	fn := func() error {
+		return r.client.WriteRegister(address, value)
+	}
+	return r.executeWithRetry("WriteRegister", fn)
+}
+
+// WriteRegisters 写入多个寄存器
+func (r *RetryableModbusClient) WriteRegisters(address uint16, values []uint16) error {
+	fn := func() error {
+		return r.client.WriteRegisters(address, values)
+	}
+	return r.executeWithRetry("WriteRegisters", fn)
+}
+
+// WriteUint32 写入单个32位无符号整数
+func (r *RetryableModbusClient) WriteUint32(address uint16, value uint32) error {
+	fn := func() error {
+		return r.client.WriteUint32(address, value)
+	}
+	return r.executeWithRetry("WriteUint32", fn)
+}
+
+// WriteUint32s 写入多个32位无符号整数
+func (r *RetryableModbusClient) WriteUint32s(address uint16, values []uint32) error {
+	fn := func() error {
+		return r.client.WriteUint32s(address, values)
+	}
+	return r.executeWithRetry("WriteUint32s", fn)
+}
+
+// WriteFloat32 写入单个32位浮点数
+func (r *RetryableModbusClient) WriteFloat32(address uint16, value float32) error {
+	fn := func() error {
+		return r.client.WriteFloat32(address, value)
+	}
+	return r.executeWithRetry("WriteFloat32", fn)
+}
+
+// WriteFloat32s 写入多个32位浮点数
+func (r *RetryableModbusClient) WriteFloat32s(address uint16, values []float32) error {
+	fn := func() error {
+		return r.client.WriteFloat32s(address, values)
+	}
+	return r.executeWithRetry("WriteFloat32s", fn)
+}
+
+// WriteUint64 写入单个64位无符号整数
+func (r *RetryableModbusClient) WriteUint64(address uint16, value uint64) error {
+	fn := func() error {
+		return r.client.WriteUint64(address, value)
+	}
+	return r.executeWithRetry("WriteUint64", fn)
+}
+
+// WriteUint64s 写入多个64位无符号整数
+func (r *RetryableModbusClient) WriteUint64s(address uint16, values []uint64) error {
+	fn := func() error {
+		return r.client.WriteUint64s(address, values)
+	}
+	return r.executeWithRetry("WriteUint64s", fn)
+}
+
+// WriteFloat64 写入单个64位浮点数
+func (r *RetryableModbusClient) WriteFloat64(address uint16, value float64) error {
+	fn := func() error {
+		return r.client.WriteFloat64(address, value)
+	}
+	return r.executeWithRetry("WriteFloat64", fn)
+}
+
+// WriteFloat64s 写入多个64位浮点数
+func (r *RetryableModbusClient) WriteFloat64s(address uint16, values []float64) error {
+	fn := func() error {
+		return r.client.WriteFloat64s(address, values)
+	}
+	return r.executeWithRetry("WriteFloat64s", fn)
+}
+
+// WriteBytes 写入字节数组
+func (r *RetryableModbusClient) WriteBytes(address uint16, values []byte) error {
+	fn := func() error {
+		return r.client.WriteBytes(address, values)
+	}
+	return r.executeWithRetry("WriteBytes", fn)
+}
+
+// WriteRawBytes 写入原始字节数组
+func (r *RetryableModbusClient) WriteRawBytes(address uint16, values []byte) error {
+	fn := func() error {
+		return r.client.WriteRawBytes(address, values)
+	}
+	return r.executeWithRetry("WriteRawBytes", fn)
+}
+
+// SetUnitId 设置从机编号
+func (r *RetryableModbusClient) SetUnitId(unitId uint8) {
+	r.client.SetUnitId(unitId)
+}
+
+// SetEncoding 设置编码
+func (r *RetryableModbusClient) SetEncoding(endianness modbus.Endianness, wordOrder modbus.WordOrder) {
+	r.client.SetEncoding(endianness, wordOrder)
+}
+
+// Close 关闭连接
+func (r *RetryableModbusClient) Close() error {
+	return r.client.Close()
+}
+
+// Open 打开连接
+func (r *RetryableModbusClient) Open() error {
+	return r.client.Open()
+}
+
 // ModbusNode 客户端节点，
 // 成功：转向Success链，发送消息执行结果存放在msg.Data
 // 失败：转向Failure链
@@ -130,6 +506,7 @@ type ModbusNode struct {
 	//节点配置
 	Config           ModbusConfiguration
 	conn             *modbus.ModbusClient
+	retryableClient  *RetryableModbusClient
 	addressTemplate  str.Template
 	quantityTemplate str.Template
 	valueTemplate    str.Template
@@ -237,31 +614,15 @@ func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | by
 
 // OnMsg 处理消息
 func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	// x.Locker.Lock()
-	// defer x.Locker.Unlock()
 	var (
-		err        error
-		params     *Params
-		boolVals   []bool
-		boolVal    bool
-		ui16       uint16
-		ui32       uint32
-		ui64       uint64
-		f32        float32
-		f64        float64
-		ui16s      []uint16
-		ui32s      []uint32
-		ui64s      []uint64
-		f32s       []float32
-		f64s       []float64
-		bts        []byte
-		data       []ModbusValue = make([]ModbusValue, 0)
-		retryCount int           = 0 // 重试计数器
+		err    error
+		params *Params
+		data   []ModbusValue = make([]ModbusValue, 0)
 	)
 
 	x.conn, err = x.SharedNode.Get()
 	if err != nil {
-		ctx.TellFailure(msg, &ModbusConnErr{Err: err})
+		ctx.TellFailure(msg, err)
 		return
 	}
 
@@ -271,285 +632,8 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-retry:
-	switch x.Config.Cmd {
-	case "ReadCoils":
-		boolVals, err = x.conn.ReadCoils(params.Address, params.Quantity)
-		if err == nil {
-			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadCoil":
-		boolVal, err = x.conn.ReadCoil(params.Address)
-		if err == nil {
-			boolVals = append(boolVals, boolVal)
-			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadDiscreteInputs":
-		boolVals, err = x.conn.ReadDiscreteInputs(params.Address, params.Quantity)
-		if err == nil {
-			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadDiscreteInput":
-		boolVal, err = x.conn.ReadDiscreteInput(params.Address)
-		if err == nil {
-			boolVals = append(boolVals, boolVal)
-			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadRegisters":
-		ui16s, err = x.conn.ReadRegisters(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadRegister":
-		ui16, err = x.conn.ReadRegister(params.Address, params.RegType)
-		if err == nil {
-			ui16s = append(ui16s, ui16)
-			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadUint32s":
-		ui32s, err = x.conn.ReadUint32s(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadUint32":
-		ui32, err = x.conn.ReadUint32(params.Address, params.RegType)
-		if err == nil {
-			ui32s = append(ui32s, ui32)
-			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadFloat32s":
-		f32s, err = x.conn.ReadFloat32s(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadFloat32":
-		f32, err = x.conn.ReadFloat32(params.Address, params.RegType)
-		if err == nil {
-			f32s = append(f32s, f32)
-			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadUint64s":
-		ui64s, err = x.conn.ReadUint64s(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadUint64":
-		ui64, err = x.conn.ReadUint64(params.Address, params.RegType)
-		if err == nil {
-			ui64s = append(ui64s, ui64)
-			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadFloat64s":
-		f64s, err = x.conn.ReadFloat64s(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadFloat64":
-		f64, err = x.conn.ReadFloat64(params.Address, params.RegType)
-		if err == nil {
-			f64s = append(f64s, f64)
-			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadBytes":
-		bts, err = x.conn.ReadBytes(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "ReadRawBytes":
-		bts, err = x.conn.ReadRawBytes(params.Address, params.Quantity, params.RegType)
-		if err == nil {
-			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
-		} else {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "WriteCoil":
-		boolVal, err = byteToBool(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteCoil(params.Address, boolVal)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteCoils":
-		boolVals, err = byteToBools(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteCoils(params.Address, boolVals)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteRegister":
-		ui16, err = byteToUint16(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteRegister(params.Address, ui16)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteRegisters":
-		ui16s, err = byteToUint16s(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteRegisters(params.Address, ui16s)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteUint32":
-		ui32, err = byteToUint32(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteUint32(params.Address, ui32)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteUint32s":
-		ui32s, err = byteToUint32s(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteUint32s(params.Address, ui32s)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteFloat32":
-		f32, err = byteToFloat32(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteFloat32(params.Address, f32)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteFloat32s":
-		f32s, err = byteToFloat32s(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteFloat32s(params.Address, f32s)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteUint64":
-		ui64, err = byteToUint64(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteUint64(params.Address, ui64)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteUint64s":
-		ui64s, err = byteToUint64s(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteUint64s(params.Address, ui64s)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteFloat64":
-		f64, err = byteToFloat64(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteFloat64(params.Address, f64)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteFloat64s":
-		f64s, err = byteToFloat64s(params.Value)
-		if err != nil {
-			x.Printf("convert value error:%s", err)
-		} else {
-			err = x.conn.WriteFloat64s(params.Address, f64s)
-			if err != nil {
-				err = &ModbusConnErr{Err: err}
-			}
-		}
-	case "WriteBytes":
-		err = x.conn.WriteBytes(params.Address, []byte(params.Value))
-		if err != nil {
-			err = &ModbusConnErr{Err: err}
-		}
-	case "WriteRawBytes":
-		err = x.conn.WriteRawBytes(params.Address, []byte(params.Value))
-		if err != nil {
-			err = &ModbusConnErr{Err: err}
-		}
-	default:
-		err = &UnknownCommandErr{Cmd: x.Config.Cmd}
-	}
-
-	// 如果是ModbusConnErr类型的错误且重试次数小于3次，则尝试重新打开连接并重试
-	if err != nil {
-		_, isModbusConnErr := err.(*ModbusConnErr)
-		if isModbusConnErr && retryCount < 3 {
-			x.Printf("Modbus connection error: %s, retry count: %d, trying to reconnect...", err, retryCount)
-			retryCount++
-
-			// 关闭现有连接
-			if x.conn != nil {
-				_ = x.conn.Close()
-			}
-
-			// 重新打开连接
-			openErr := x.conn.Open()
-			if openErr != nil {
-				x.Printf("Failed to reopen connection: %s", openErr)
-				ctx.TellFailure(msg, &ModbusConnErr{Err: openErr})
-				return
-			}
-
-			// 重试操作
-			goto retry
-		}
-	}
+	// 使用带重试功能的客户端执行操作
+	err, data = x.executeModbusCommand(params)
 
 	if err != nil {
 		ctx.TellFailure(msg, err)
@@ -564,6 +648,209 @@ retry:
 		}
 		ctx.TellSuccess(msg)
 	}
+}
+
+// executeModbusCommand 执行Modbus命令
+func (x *ModbusNode) executeModbusCommand(params *Params) (error, []ModbusValue) {
+	var (
+		err      error
+		boolVals []bool
+		boolVal  bool
+		ui16     uint16
+		ui32     uint32
+		ui64     uint64
+		f32      float32
+		f64      float64
+		ui16s    []uint16
+		ui32s    []uint32
+		ui64s    []uint64
+		f32s     []float32
+		f64s     []float64
+		bts      []byte
+		data     []ModbusValue = make([]ModbusValue, 0)
+	)
+
+	switch x.Config.Cmd {
+	case "ReadCoils":
+		boolVals, err = x.retryableClient.ReadCoils(params.Address, params.Quantity)
+		if err == nil {
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadCoil":
+		boolVal, err = x.retryableClient.ReadCoil(params.Address)
+		if err == nil {
+			boolVals = append(boolVals, boolVal)
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadDiscreteInputs":
+		boolVals, err = x.retryableClient.ReadDiscreteInputs(params.Address, params.Quantity)
+		if err == nil {
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadDiscreteInput":
+		boolVal, err = x.retryableClient.ReadDiscreteInput(params.Address)
+		if err == nil {
+			boolVals = append(boolVals, boolVal)
+			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadRegisters":
+		ui16s, err = x.retryableClient.ReadRegisters(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadRegister":
+		ui16, err = x.retryableClient.ReadRegister(params.Address, params.RegType)
+		if err == nil {
+			ui16s = append(ui16s, ui16)
+			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadUint32s":
+		ui32s, err = x.retryableClient.ReadUint32s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadUint32":
+		ui32, err = x.retryableClient.ReadUint32(params.Address, params.RegType)
+		if err == nil {
+			ui32s = append(ui32s, ui32)
+			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadFloat32s":
+		f32s, err = x.retryableClient.ReadFloat32s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadFloat32":
+		f32, err = x.retryableClient.ReadFloat32(params.Address, params.RegType)
+		if err == nil {
+			f32s = append(f32s, f32)
+			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadUint64s":
+		ui64s, err = x.retryableClient.ReadUint64s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadUint64":
+		ui64, err = x.retryableClient.ReadUint64(params.Address, params.RegType)
+		if err == nil {
+			ui64s = append(ui64s, ui64)
+			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadFloat64s":
+		f64s, err = x.retryableClient.ReadFloat64s(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadFloat64":
+		f64, err = x.retryableClient.ReadFloat64(params.Address, params.RegType)
+		if err == nil {
+			f64s = append(f64s, f64)
+			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadBytes":
+		bts, err = x.retryableClient.ReadBytes(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
+		}
+	case "ReadRawBytes":
+		bts, err = x.retryableClient.ReadRawBytes(params.Address, params.Quantity, params.RegType)
+		if err == nil {
+			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
+		}
+	case "WriteCoil":
+		boolVal, err = byteToBool(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteCoil(params.Address, boolVal)
+		}
+	case "WriteCoils":
+		boolVals, err = byteToBools(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteCoils(params.Address, boolVals)
+		}
+	case "WriteRegister":
+		ui16, err = byteToUint16(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteRegister(params.Address, ui16)
+		}
+	case "WriteRegisters":
+		ui16s, err = byteToUint16s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteRegisters(params.Address, ui16s)
+		}
+	case "WriteUint32":
+		ui32, err = byteToUint32(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteUint32(params.Address, ui32)
+		}
+	case "WriteUint32s":
+		ui32s, err = byteToUint32s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteUint32s(params.Address, ui32s)
+		}
+	case "WriteFloat32":
+		f32, err = byteToFloat32(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteFloat32(params.Address, f32)
+		}
+	case "WriteFloat32s":
+		f32s, err = byteToFloat32s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteFloat32s(params.Address, f32s)
+		}
+	case "WriteUint64":
+		ui64, err = byteToUint64(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteUint64(params.Address, ui64)
+		}
+	case "WriteUint64s":
+		ui64s, err = byteToUint64s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteUint64s(params.Address, ui64s)
+		}
+	case "WriteFloat64":
+		f64, err = byteToFloat64(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteFloat64(params.Address, f64)
+		}
+	case "WriteFloat64s":
+		f64s, err = byteToFloat64s(params.Value)
+		if err != nil {
+			x.Printf("convert value error:%s", err)
+		} else {
+			err = x.retryableClient.WriteFloat64s(params.Address, f64s)
+		}
+	case "WriteBytes":
+		err = x.retryableClient.WriteBytes(params.Address, []byte(params.Value))
+	case "WriteRawBytes":
+		err = x.retryableClient.WriteRawBytes(params.Address, []byte(params.Value))
+	default:
+		return &UnknownCommandErr{Cmd: x.Config.Cmd}, data
+	}
+
+	return err, data
 }
 
 // getParams 获取参数
@@ -665,11 +952,16 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 		}
 
 		x.conn, err = modbus.NewClient(config)
-		x.conn.SetEncoding(modbus.Endianness(x.Config.EncodingConfig.Endianness), modbus.WordOrder(x.Config.EncodingConfig.WordOrder))
-		x.conn.SetUnitId(x.Config.UnitId)
 		if err != nil {
 			return nil, err
 		}
+
+		x.conn.SetEncoding(modbus.Endianness(x.Config.EncodingConfig.Endianness), modbus.WordOrder(x.Config.EncodingConfig.WordOrder))
+		x.conn.SetUnitId(x.Config.UnitId)
+
+		// 创建带重试逻辑的客户端
+		x.retryableClient = NewRetryableModbusClient(x.conn, 3, x.RuleConfig.Logger)
+
 		err = x.conn.Open()
 		return x.conn, err
 	}
