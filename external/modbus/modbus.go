@@ -614,6 +614,16 @@ func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | by
 
 // OnMsg 处理消息
 func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
+	// 开始操作，增加活跃操作计数
+	x.SharedNode.BeginOp()
+	defer x.SharedNode.EndOp()
+
+	// 检查是否正在关闭
+	if x.SharedNode.IsShuttingDown() {
+		ctx.TellFailure(msg, fmt.Errorf("modbus client is shutting down"))
+		return
+	}
+
 	var (
 		err    error
 		params *Params
@@ -623,6 +633,12 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	x.conn, err = x.SharedNode.Get()
 	if err != nil {
 		ctx.TellFailure(msg, err)
+		return
+	}
+
+	// 再次检查是否正在关闭，防止在Get()之后被关闭
+	if x.SharedNode.IsShuttingDown() {
+		ctx.TellFailure(msg, fmt.Errorf("modbus client is shutting down"))
 		return
 	}
 
@@ -903,10 +919,14 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 
 // Destroy 销毁组件
 func (x *ModbusNode) Destroy() {
-	if x.conn != nil {
-		_ = x.conn.Close()
-		x.conn = nil
-	}
+	// 使用优雅关闭机制，等待活跃操作完成后再关闭资源
+	x.SharedNode.GracefulShutdown(0, func() {
+		// 只在非资源池模式下关闭本地资源
+		if x.conn != nil {
+			_ = x.conn.Close()
+			x.conn = nil
+		}
+	})
 }
 
 // Printf 打印日志

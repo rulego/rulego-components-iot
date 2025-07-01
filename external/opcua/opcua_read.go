@@ -131,9 +131,25 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 
 // OnMsg 实现 Node 接口，处理消息
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
+	// 开始操作，增加活跃操作计数
+	x.SharedNode.BeginOp()
+	defer x.SharedNode.EndOp()
+
+	// 检查是否正在关闭
+	if x.SharedNode.IsShuttingDown() {
+		ctx.TellFailure(msg, fmt.Errorf("opcua read client is shutting down"))
+		return
+	}
+
 	client, err := x.SharedNode.Get()
 	if err != nil {
 		ctx.TellFailure(msg, err)
+		return
+	}
+
+	// 再次检查是否正在关闭，防止在Get()之后被关闭
+	if x.SharedNode.IsShuttingDown() {
+		ctx.TellFailure(msg, fmt.Errorf("opcua read client is shutting down"))
 		return
 	}
 
@@ -186,10 +202,14 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 
 // Destroy 清理资源
 func (x *ReadNode) Destroy() {
-	if x.client != nil {
-		_ = x.client.Close(context.Background())
-		x.client = nil
-	}
+	// 使用优雅关闭机制，等待活跃操作完成后再关闭资源
+	x.SharedNode.GracefulShutdown(0, func() {
+		// 只在非资源池模式下关闭本地资源
+		if x.client != nil {
+			_ = x.client.Close(context.Background())
+			x.client = nil
+		}
+	})
 }
 
 func (x *ReadNode) initClient() (*opcua.Client, error) {

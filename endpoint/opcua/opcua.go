@@ -282,10 +282,15 @@ func (x *OpcUa) Close() error {
 	if x.cronTask != nil {
 		x.cronTask.Stop()
 	}
-	if x.client != nil {
-		_ = x.client.Close(context.Background())
-		x.client = nil
-	}
+
+	// 使用优雅关闭机制，等待活跃操作完成后再关闭资源
+	x.SharedNode.GracefulShutdown(0, func() {
+		// 只在非资源池模式下关闭本地资源
+		if x.client != nil {
+			_ = x.client.Close(context.Background())
+			x.client = nil
+		}
+	})
 	return nil
 }
 
@@ -339,6 +344,16 @@ func (x *OpcUa) Printf(format string, v ...interface{}) {
 }
 
 func (x *OpcUa) readNodes(router endpointApi.Router) error {
+	// 开始操作，增加活跃操作计数
+	x.SharedNode.BeginOp()
+	defer x.SharedNode.EndOp()
+
+	// 检查是否正在关闭
+	if x.SharedNode.IsShuttingDown() {
+		x.Printf("opcua endpoint is shutting down, skipping read operation")
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Second)
 	defer func() {
 		cancel()
@@ -348,12 +363,19 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 		x.Printf("get shared client error %v ", err)
 		return err
 	}
+
+	// 再次检查是否正在关闭，防止在Get()之后被关闭
+	if x.SharedNode.IsShuttingDown() {
+		x.Printf("opcua endpoint is shutting down, skipping read operation")
+		return nil
+	}
+
 	data, _, err := opcuaClient.Read(client, x.Config.NodeIds)
 	if err != nil {
 		x.Printf("read nodes error %v ", err)
 		return err
 	}
-	exchange := &endpoint.Exchange{
+	exchange := &endpointApi.Exchange{
 		In: &RequestMessage{data: data},
 		Out: &ResponseMessage{
 			data: data,
