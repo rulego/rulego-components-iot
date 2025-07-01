@@ -54,6 +54,8 @@ github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzG
 github.com/rogpeppe/go-internal v1.6.1/go.mod h1:xXDCJY+GAPziupqXw64V24skbSoqbTEfhy4qGm1nDQc=
 github.com/rulego/rulego v0.31.2-0.20250602155557-dd600e38f329 h1:WJboFTP/UCo9+zZnH+yf675G5qOwsvGA8Lz8lQvxuMQ=
 github.com/rulego/rulego v0.31.2-0.20250602155557-dd600e38f329/go.mod h1:5s8YeHGqy81chIXzYZNnQYt7nnxZTPLDVHGSRGHMIHo=
+github.com/rulego/rulego v0.32.0-alpha.1.0.20250701135557-841b15b50208 h1:pkD49/ZYj1TQtMKrXj83yJov+fnAggyAbms4CpTKmCI=
+github.com/rulego/rulego v0.32.0-alpha.1.0.20250701135557-841b15b50208/go.mod h1:rG+UAVIHH1I7UZkDoG3R6fbDoPGImvIHOFqb9V91Sqk=
 github.com/simonvetter/modbus v1.6.3 h1:kDzwVfIPczsM4Iz09il/Dij/bqlT4XiJVa0GYaOVA9w=
 github.com/simonvetter/modbus v1.6.3/go.mod h1:hh90ZaTaPLcK2REj6/fpTbiV0J6S7GWmd8q+GVRObPw=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
