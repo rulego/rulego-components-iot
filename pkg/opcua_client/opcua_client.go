@@ -124,11 +124,15 @@ type OpcUaClientHolder struct {
 	Ctx context.Context
 	// Logger 日志
 	Logger types.Logger
+	// endpointOptionsPrinted 跟踪是否已经打印过端点选项（避免重复打印）
+	endpointOptionsPrinted bool
 }
 
 // Printf 日志输出
 func (x *OpcUaClientHolder) Printf(format string, v ...interface{}) {
-	x.Logger.Printf(format, v...)
+	if x.Logger != nil {
+		x.Logger.Printf(format, v...)
+	}
 }
 
 // DefaultHolder 默认配置
@@ -142,10 +146,12 @@ func DefaultHolder(c ConfigProp) *OpcUaClientHolder {
 
 // NewOpcUaClient 创建OPCUA客户端
 func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
+	if x.Config == nil {
+		return nil, errors.New("config is nil")
+	}
 	// Get a list of the endpoints for our target server
 	endpoints, err := opcua.GetEndpoints(x.Ctx, x.Config.GetServer())
 	if err != nil {
-		x.Printf("opcua get endpoints error : %v ", err)
 		return nil, err
 	}
 	// Get the options to pass into the client based on the flags passed into the executable
@@ -153,11 +159,9 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	// Create a Client with the selected options
 	c, err := opcua.NewClient(x.Config.GetServer(), opts...)
 	if err != nil {
-		x.Printf("opcua new client error : %v ", err)
 		return nil, err
 	}
 	if err := c.Connect(x.Ctx); err != nil {
-		x.Printf("connect opcua client error : %v ", err)
 		return nil, err
 	}
 	return c, nil
@@ -165,36 +169,49 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 
 // createOptions 构建Options
 func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) []opcua.Option {
+	if x.Config == nil {
+		return []opcua.Option{}
+	}
+
+	if len(endpoints) == 0 {
+		return []opcua.Option{}
+	}
 
 	opts := []opcua.Option{}
 	var cert []byte
 	var privateKey *rsa.PrivateKey
 	if x.Config.GetCertFile() != "" && x.Config.GetCertKeyFile() != "" {
-		x.Printf("Loading cert/key from %s/%s", x.Config.GetCertFile, x.Config.GetCertKeyFile)
 		c, err := tls.LoadX509KeyPair(x.Config.GetCertFile(), x.Config.GetCertKeyFile())
-		if err != nil {
-			x.Printf("Failed to load certificate: %v", err)
-		} else {
-			pk, ok := c.PrivateKey.(*rsa.PrivateKey)
-			if !ok {
-				x.Printf("Invalid private key")
+		if err == nil {
+			if pk, ok := c.PrivateKey.(*rsa.PrivateKey); ok {
+				cert = c.Certificate[0]
+				privateKey = pk
+				opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert))
 			}
-			cert = c.Certificate[0]
-			privateKey = pk
-			opts = append(opts, opcua.PrivateKey(pk), opcua.Certificate(cert))
 		}
 	}
 
 	var secPolicy string
+	policyLower := strings.ToLower(x.Config.GetPolicy())
 	switch {
-	case x.Config.GetPolicy() == "auto":
+	case policyLower == "auto":
 		// set it later
 	case strings.HasPrefix(x.Config.GetPolicy(), ua.SecurityPolicyURIPrefix):
 		secPolicy = x.Config.GetPolicy()
-	case x.Config.GetPolicy() == "None" || x.Config.GetPolicy() == "Basic128Rsa15" || x.Config.GetPolicy() == "Basic256" || x.Config.GetPolicy() == "Basic256Sha256" || x.Config.GetPolicy() == "Aes128_Sha256_RsaOaep" || x.Config.GetPolicy() == "Aes256_Sha256_RsaPss":
-		secPolicy = ua.SecurityPolicyURIPrefix + x.Config.GetPolicy()
+	case policyLower == "none":
+		secPolicy = ua.SecurityPolicyURIPrefix + "None"
+	case policyLower == "basic128rsa15":
+		secPolicy = ua.SecurityPolicyURIPrefix + "Basic128Rsa15"
+	case policyLower == "basic256":
+		secPolicy = ua.SecurityPolicyURIPrefix + "Basic256"
+	case policyLower == "basic256sha256":
+		secPolicy = ua.SecurityPolicyURIPrefix + "Basic256Sha256"
+	case policyLower == "aes128_sha256_rsaoaep":
+		secPolicy = ua.SecurityPolicyURIPrefix + "Aes128_Sha256_RsaOaep"
+	case policyLower == "aes256_sha256_rsapss":
+		secPolicy = ua.SecurityPolicyURIPrefix + "Aes256_Sha256_RsaPss"
 	default:
-		x.Printf("Invalid security policy: %s", x.Config.GetPolicy())
+		// Invalid security policy, secPolicy remains empty
 	}
 
 	// Select the most appropriate authentication mode from server capabilities and user input
@@ -211,7 +228,7 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 	case "signandencrypt":
 		secMode = ua.MessageSecurityModeSignAndEncrypt
 	default:
-		x.Printf("Invalid security mode: %s", x.Config.GetMode)
+		// Invalid security mode, will use default
 	}
 
 	// Allow input of only one of sec-mode,sec-policy when choosing 'None'
@@ -254,9 +271,13 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 	}
 
 	if serverEndpoint == nil { // Didn't find an endpoint with matching policy and mode.
-		x.Printf("unable to find suitable server endpoint with selected sec-policy and sec-mode")
-		x.printEndpointOptions(endpoints)
-		x.Printf("quitting")
+		// 只在首次失败时打印端点选项，帮助用户了解正确配置
+		if !x.endpointOptionsPrinted && x.Logger != nil {
+			x.Printf("unable to find suitable server endpoint with selected sec-policy and sec-mode")
+			x.printEndpointOptions(endpoints)
+			x.endpointOptionsPrinted = true
+		}
+		return []opcua.Option{}
 	}
 
 	secPolicy = serverEndpoint.SecurityPolicyURI
@@ -265,16 +286,17 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 	// Check that the selected endpoint is a valid combo
 	err := x.validateEndpointConfig(endpoints, secPolicy, secMode, authMode)
 	if err != nil {
-		x.Printf("error validating input: %s", err)
+		return []opcua.Option{}
 	}
 
 	opts = append(opts, opcua.SecurityFromEndpoint(serverEndpoint, authMode))
-
-	x.Printf("Using config:\nEndpoint: %s\nSecurity mode: %s, %s\nAuth mode : %s\n", serverEndpoint.EndpointURL, serverEndpoint.SecurityPolicyURI, serverEndpoint.SecurityMode, authMode)
 	return opts
 }
 
 func (x *OpcUaClientHolder) authOption(cert []byte, pk *rsa.PrivateKey) (ua.UserTokenType, []opcua.Option) {
+	if x.Config == nil {
+		return ua.UserTokenTypeAnonymous, []opcua.Option{opcua.AuthAnonymous()}
+	}
 
 	var authMode ua.UserTokenType
 	var authOptions []opcua.Option
@@ -300,7 +322,7 @@ func (x *OpcUaClientHolder) authOption(cert []byte, pk *rsa.PrivateKey) (ua.User
 		authOptions = append(authOptions, opcua.AuthIssuedToken([]byte(nil)))
 
 	default:
-		x.Printf("unknown auth-mode, defaulting to Anonymous")
+		// Unknown auth-mode, default to Anonymous
 		authMode = ua.UserTokenTypeAnonymous
 		authOptions = append(authOptions, opcua.AuthAnonymous())
 
@@ -321,7 +343,14 @@ func (x *OpcUaClientHolder) validateEndpointConfig(endpoints []*ua.EndpointDescr
 	}
 
 	err := fmt.Errorf("server does not support an endpoint with security : %s , %s, %s", secPolicy, secMode, authMode)
-	x.printEndpointOptions(endpoints)
+
+	// 只在首次失败时打印端点选项，避免重复日志
+	if !x.endpointOptionsPrinted && x.Logger != nil {
+		x.Printf("OPC UA endpoint validation failed: %v", err)
+		x.printEndpointOptions(endpoints)
+		x.endpointOptionsPrinted = true
+	}
+
 	return err
 }
 
@@ -369,7 +398,6 @@ func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, err
 		n := client.Node(id)
 		lt, err := n.DisplayName(ctx)
 		if err != nil {
-			logger.Printf("fetch node displayName error : %v ,nodeId : %v  ", err, nodeId)
 			return nil, nil, err
 		}
 		data = append(data, Data{NodeId: id.String(), DisplayName: lt.Text})
@@ -383,13 +411,11 @@ func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, err
 	var resp *ua.ReadResponse
 	resp, err := client.Read(ctx, req)
 	if err != nil {
-		logger.Printf("point read error", err)
+		logger.Printf("point read error: %v", err)
 		return nil, nil, err
 	} else {
 		for i, result := range resp.Results {
-			if result != nil && result.Status != ua.StatusOK {
-				logger.Printf("read node with bad status : %v  ", result.Status)
-			} else {
+			if result != nil && result.Status == ua.StatusOK {
 				d := Data{
 					DisplayName: data[i].DisplayName,
 					NodeId:      data[i].NodeId,

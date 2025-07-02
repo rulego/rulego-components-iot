@@ -179,26 +179,26 @@ func (r *ResponseMessage) GetError() error {
 // OpcUaConfig OPC UA Server配置
 type OpcUaConfig struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
-	Server string
+	Server string `json:"server"`
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
-	Policy string
+	Policy string `json:"policy"`
 	//Security Mode: one of None, Sign, SignAndEncrypt
-	Mode string
+	Mode string `json:"mode"`
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth string
+	Auth string `json:"auth"`
 	//Authentication Username
-	Username string
+	Username string `json:"username"`
 	//Authentication Password
-	Password string
+	Password string `json:"password"`
 	//OPC UA Server CertFile Path
-	CertFile string
+	CertFile string `json:"certFile"`
 	//OPC UA Server CertKeyFile Path
-	CertKeyFile string
+	CertKeyFile string `json:"certKeyFile"`
 	//Interval to read, supports cron expressions
 	//example: @every 1m (every 1 minute) 0 0 0 * * * (triggers at midnight)
-	Interval string
+	Interval string `json:"interval"`
 	//NodeIds to read, eg. ns=2;s=Channel1.Device1.Tag1
-	NodeIds []string
+	NodeIds []string `json:"nodeIds"`
 }
 
 func (c OpcUaConfig) GetServer() string {
@@ -253,7 +253,7 @@ func (x *OpcUa) New() types.Node {
 		Config: OpcUaConfig{
 			Interval: "@every 1m",
 			Server:   "opc.tcp://localhost:4840",
-			Policy:   "none",
+			Policy:   "None",
 			Mode:     "none",
 			Auth:     "anonymous",
 		},

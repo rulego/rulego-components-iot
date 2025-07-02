@@ -39,19 +39,19 @@ func init() {
 // Configuration 节点配置
 type Configuration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
-	Server string
+	Server string `json:"server"`
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
-	Policy string
+	Policy string `json:"policy"`
 	//Security Mode: one of None, Sign, SignAndEncrypt
-	Mode string
+	Mode string `json:"mode"`
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth     string
-	Username string
-	Password string
+	Auth     string `json:"auth"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 	//OPC UA Server CertFile Path
-	CertFile string
+	CertFile string `json:"certFile"`
 	//OPC UA Server CertKeyFile Path
-	CertKeyFile string
+	CertKeyFile string `json:"certKeyFile"`
 }
 
 func (c Configuration) GetServer() string {
@@ -100,15 +100,15 @@ func (c Configuration) GetCertKeyFile() string {
 type ReadNode struct {
 	base.SharedNode[*opcua.Client]
 	//节点配置
-	Config WriteNodeConfiguration
+	Config Configuration
 	client *opcua.Client
 }
 
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
-		Config: WriteNodeConfiguration{
+		Config: Configuration{
 			Server: "opc.tcp://127.0.0.1:53530/OPCUA/SimulationServer",
-			Policy: "none",
+			Policy: "None",
 			Mode:   "none",
 			Auth:   "anonymous",
 		},
