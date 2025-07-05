@@ -101,7 +101,6 @@ type ReadNode struct {
 	base.SharedNode[*opcua.Client]
 	//节点配置
 	Config Configuration
-	client *opcua.Client
 }
 
 func (x *ReadNode) New() types.Node {
@@ -123,33 +122,19 @@ func (x *ReadNode) Type() string {
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
-	_ = x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*opcua.Client, error) {
+	_ = x.SharedNode.InitWithClose(x.RuleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*opcua.Client, error) {
 		return x.initClient()
+	}, func(client *opcua.Client) error {
+		return client.Close(context.Background())
 	})
 	return err
 }
 
 // OnMsg 实现 Node 接口，处理消息
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	// 开始操作，增加活跃操作计数
-	x.SharedNode.BeginOp()
-	defer x.SharedNode.EndOp()
-
-	// 检查是否正在关闭
-	if x.SharedNode.IsShuttingDown() {
-		ctx.TellFailure(msg, fmt.Errorf("opcua read client is shutting down"))
-		return
-	}
-
-	client, err := x.SharedNode.Get()
+	client, err := x.SharedNode.GetSafely()
 	if err != nil {
 		ctx.TellFailure(msg, err)
-		return
-	}
-
-	// 再次检查是否正在关闭，防止在Get()之后被关闭
-	if x.SharedNode.IsShuttingDown() {
-		ctx.TellFailure(msg, fmt.Errorf("opcua read client is shutting down"))
 		return
 	}
 
@@ -202,35 +187,10 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 
 // Destroy 清理资源
 func (x *ReadNode) Destroy() {
-	// 使用优雅关闭机制，等待活跃操作完成后再关闭资源
-	x.SharedNode.GracefulShutdown(0, func() {
-		// 只在非资源池模式下关闭本地资源
-		if x.client != nil {
-			_ = x.client.Close(context.Background())
-			x.client = nil
-		}
-	})
+	_ = x.SharedNode.Close()
 }
 
 func (x *ReadNode) initClient() (*opcua.Client, error) {
-	if x.client != nil {
-		return x.client, nil
-	} else {
-		_, cancel := context.WithTimeout(context.TODO(), 4*time.Second)
-		x.Locker.Lock()
-		defer func() {
-			cancel()
-			x.Locker.Unlock()
-		}()
-		if x.client != nil {
-			return x.client, nil
-		}
-
-		client, err := opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
-		if err != nil {
-			return nil, err
-		}
-		x.client = client
-		return x.client, err
-	}
+	client, err := opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
+	return client, err
 }

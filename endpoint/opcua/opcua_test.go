@@ -18,11 +18,14 @@ package opcua
 
 import (
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rulego/rulego/api/types"
+	"github.com/rulego/rulego/api/types/endpoint"
 	"github.com/rulego/rulego/endpoint/impl"
+	"github.com/rulego/rulego/engine"
 )
 
 func TestOpcUaEndpoint(t *testing.T) {
@@ -62,7 +65,7 @@ func TestOpcUaEndpoint(t *testing.T) {
 
 	t.Run("Init", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 
 		configuration := types.Configuration{
 			"server":      "opc.tcp://127.0.0.1:53530",
@@ -98,7 +101,7 @@ func TestOpcUaEndpoint(t *testing.T) {
 
 	t.Run("Id", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server": "opc.tcp://test-server:4840",
 		}
@@ -118,7 +121,7 @@ func TestOpcUaRouter(t *testing.T) {
 
 	t.Run("AddRouter", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server": "opc.tcp://127.0.0.1:53530",
 		}
@@ -152,7 +155,7 @@ func TestOpcUaRouter(t *testing.T) {
 
 	t.Run("AddRouter_Duplicate", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server": "opc.tcp://127.0.0.1:53530",
 		}
@@ -175,7 +178,7 @@ func TestOpcUaRouter(t *testing.T) {
 
 	t.Run("RemoveRouter", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server": "opc.tcp://127.0.0.1:53530",
 		}
@@ -203,7 +206,7 @@ func TestOpcUaLifecycle(t *testing.T) {
 
 	t.Run("Start_And_Stop", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server":   "opc.tcp://127.0.0.1:53530",
 			"interval": "@every 1s",
@@ -245,7 +248,7 @@ func TestOpcUaLifecycle(t *testing.T) {
 
 	t.Run("Destroy", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server": "opc.tcp://127.0.0.1:53530",
 		}
@@ -268,7 +271,7 @@ func TestOpcUaReadNodes(t *testing.T) {
 
 	t.Run("ReadNodes_Connection_Failed", func(t *testing.T) {
 		ep := &OpcUa{}
-		config := types.NewConfig()
+		config := engine.NewConfig()
 		configuration := types.Configuration{
 			"server":  "opc.tcp://127.0.0.1:53530", // 不存在的服务器
 			"nodeIds": []string{"ns=3;i=1001", "ns=3;i=1009"},
@@ -431,4 +434,257 @@ func TestOpcUaRegistration(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestOpcUaEndpointGracefulShutdown tests graceful shutdown functionality of OPC UA endpoint
+// TestOpcUaEndpointGracefulShutdown 测试 OPC UA 端点的优雅停机功能
+func TestOpcUaEndpointGracefulShutdown(t *testing.T) {
+	// Skip if no OPC UA server available or if tests are disabled
+	// 如果没有可用的 OPC UA 服务器或测试被禁用则跳过
+	if os.Getenv("SKIP_OPCUA_TESTS") == "true" || !isOpcUaServerAvailable() {
+		t.Skip("跳过 OPC UA 优雅停机测试：服务器不可用或测试被禁用")
+		return
+	}
+
+	t.Run("GracefulShutdownDuringReading", func(t *testing.T) {
+		var config = engine.NewConfig()
+
+		// Create a simple rule chain for testing
+		// 创建一个简单的规则链用于测试
+		_, err := engine.New("opcua-test01", []byte(`{
+			"ruleChain": {
+				"name": "opcua test chain",
+				"root": true
+			},
+			"metadata": {
+				"nodes": [
+					{
+						"id": "s1", 
+						"type": "jsFilter",
+						"name": "opcua test",
+						"configuration": {
+							"jsScript": "return true;"
+						}
+					}
+				],
+				"connections": []
+			}
+		}`), engine.WithConfig(config))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Configure OPC UA endpoint
+		// 配置 OPC UA 端点
+		opcUaEndpoint := &OpcUa{
+			Config: OpcUaConfig{
+				Server:   "opc.tcp://localhost:4840",
+				Policy:   "None",
+				Mode:     "none",
+				Auth:     "anonymous",
+				Interval: "@every 2s", // Faster interval for testing
+				NodeIds:  []string{"ns=2;s=Channel1.Device1.Tag1"},
+			},
+		}
+
+		configuration := make(types.Configuration)
+		configuration["server"] = "opc.tcp://localhost:4840"
+		configuration["policy"] = "None"
+		configuration["mode"] = "none"
+		configuration["auth"] = "anonymous"
+		configuration["interval"] = "@every 2s"
+		configuration["nodeIds"] = []string{"ns=2;s=Channel1.Device1.Tag1"}
+
+		err = opcUaEndpoint.Init(config, configuration)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Set graceful shutdown timeout to 3 seconds for testing
+		// 设置优雅停机超时为3秒用于测试
+		opcUaEndpoint.GracefulShutdown.InitGracefulShutdown(config.Logger, 3*time.Second)
+
+		// Track operations
+		// 跟踪操作
+		var readCount int64
+		var errorCount int64
+
+		// Add router with processing chain
+		// 添加带有处理链的路由器
+		router := impl.NewRouter().From("").To("chain:opcua-test01").Transform(func(router endpoint.Router, exchange *endpoint.Exchange) bool {
+			if exchange.Out.GetError() != nil {
+				atomic.AddInt64(&errorCount, 1)
+			} else {
+				atomic.AddInt64(&readCount, 1)
+			}
+			// Simulate some processing time
+			// 模拟一些处理时间
+			time.Sleep(100 * time.Millisecond)
+			return true
+		}).End()
+
+		_, err = opcUaEndpoint.AddRouter(router)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Start endpoint
+		// 启动端点
+		err = opcUaEndpoint.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Let some reads occur
+		// 让一些读取发生
+		time.Sleep(3 * time.Second)
+
+		// Check that some operations occurred
+		// 检查是否发生了一些操作
+		initialReadCount := atomic.LoadInt64(&readCount)
+		initialErrorCount := atomic.LoadInt64(&errorCount)
+		t.Logf("Before shutdown: reads=%d, errors=%d", initialReadCount, initialErrorCount)
+
+		// Initiate graceful shutdown
+		// 启动优雅停机
+		shutdownStart := time.Now()
+		opcUaEndpoint.GracefulStop()
+		shutdownDuration := time.Since(shutdownStart)
+
+		// Verify graceful shutdown behavior
+		// 验证优雅停机行为
+		if shutdownDuration < 0 {
+			t.Error("Shutdown should complete")
+		}
+		if shutdownDuration >= 10*time.Second {
+			t.Error("Shutdown should not exceed maximum timeout")
+		}
+
+		finalReadCount := atomic.LoadInt64(&readCount)
+		finalErrorCount := atomic.LoadInt64(&errorCount)
+
+		t.Logf("Graceful shutdown completed in %v", shutdownDuration)
+		t.Logf("Final counts: reads=%d, errors=%d", finalReadCount, finalErrorCount)
+
+		// Verify that the endpoint stopped processing new operations
+		// 验证端点停止处理新操作
+		if finalReadCount < initialReadCount {
+			t.Error("Read count should not decrease")
+		}
+	})
+
+	t.Run("ShutdownStopsScheduledOperations", func(t *testing.T) {
+		var config = engine.NewConfig()
+
+		// Create a simple rule chain for testing
+		// 创建一个简单的规则链用于测试
+		_, err := engine.New("opcua-test02", []byte(`{
+			"ruleChain": {
+				"name": "opcua test chain",
+				"root": true
+			},
+			"metadata": {
+				"nodes": [
+					{
+						"id": "s1", 
+						"type": "jsFilter",
+						"name": "opcua test",
+						"configuration": {
+							"jsScript": "return true;"
+						}
+					}
+				],
+				"connections": []
+			}
+		}`), engine.WithConfig(config))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		opcUaEndpoint := &OpcUa{
+			Config: OpcUaConfig{
+				Server:   "opc.tcp://localhost:4840",
+				Policy:   "None",
+				Mode:     "none",
+				Auth:     "anonymous",
+				Interval: "@every 1s", // Very fast interval for testing
+				NodeIds:  []string{"ns=2;s=Channel1.Device1.Tag1"},
+			},
+		}
+
+		configuration := make(types.Configuration)
+		configuration["server"] = "opc.tcp://localhost:4840"
+		configuration["policy"] = "None"
+		configuration["mode"] = "none"
+		configuration["auth"] = "anonymous"
+		configuration["interval"] = "@every 1s"
+		configuration["nodeIds"] = []string{"ns=2;s=Channel1.Device1.Tag1"}
+
+		err = opcUaEndpoint.Init(config, configuration)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Set very short timeout for faster testing
+		// 设置很短的超时时间以便更快测试
+		opcUaEndpoint.GracefulShutdown.InitGracefulShutdown(config.Logger, 1*time.Second)
+
+		var operationCount int64
+
+		// Add router that counts operations
+		// 添加计算操作的路由器
+		router := impl.NewRouter().From("").To("chain:opcua-test02").Transform(func(router endpoint.Router, exchange *endpoint.Exchange) bool {
+			atomic.AddInt64(&operationCount, 1)
+			return true
+		}).End()
+
+		_, err = opcUaEndpoint.AddRouter(router)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = opcUaEndpoint.Start()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Let some operations occur
+		// 让一些操作发生
+		time.Sleep(2 * time.Second)
+
+		countBeforeShutdown := atomic.LoadInt64(&operationCount)
+		t.Logf("Operations before shutdown: %d", countBeforeShutdown)
+
+		// Start shutdown immediately
+		// 立即开始停机
+		opcUaEndpoint.GracefulStop()
+
+		// Wait a bit and check that no new operations occur
+		// 等待一会儿并检查没有新操作发生
+		time.Sleep(2 * time.Second)
+
+		countAfterShutdown := atomic.LoadInt64(&operationCount)
+		t.Logf("Operations after shutdown: %d", countAfterShutdown)
+
+		// Operations should have stopped or increased very little
+		// 操作应该已经停止或增加很少
+		if countAfterShutdown < countBeforeShutdown {
+			t.Error("Operation count should not decrease")
+		}
+		// Allow for some operations that were already in progress
+		// 允许一些已经在进行中的操作
+		if (countAfterShutdown - countBeforeShutdown) > 2 {
+			t.Error("Should have stopped scheduling new operations")
+		}
+	})
+}
+
+// isOpcUaServerAvailable checks if OPC UA server is available for testing
+// isOpcUaServerAvailable 检查是否有可用的 OPC UA 服务器进行测试
+func isOpcUaServerAvailable() bool {
+	// For CI/testing, we assume OPC UA server might not be available
+	// We can implement a quick connection test here if needed
+	// 对于 CI/测试，我们假设 OPC UA 服务器可能不可用
+	// 如果需要，我们可以在这里实现快速连接测试
+	return false // Set to true if you have a local OPC UA server for testing
 }

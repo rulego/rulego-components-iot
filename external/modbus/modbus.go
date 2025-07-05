@@ -505,8 +505,6 @@ type ModbusNode struct {
 	base.SharedNode[*modbus.ModbusClient]
 	//节点配置
 	Config           ModbusConfiguration
-	conn             *modbus.ModbusClient
-	retryableClient  *RetryableModbusClient
 	addressTemplate  str.Template
 	quantityTemplate str.Template
 	valueTemplate    str.Template
@@ -566,8 +564,13 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
 		//初始化客户端
-		err = x.SharedNode.Init(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
+		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
 			return x.initClient()
+		}, func(client *modbus.ModbusClient) error {
+			if client != nil {
+				return client.Close()
+			}
+			return nil
 		})
 	}
 	//初始化模板
@@ -614,33 +617,20 @@ func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | by
 
 // OnMsg 处理消息
 func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	// 开始操作，增加活跃操作计数
-	x.SharedNode.BeginOp()
-	defer x.SharedNode.EndOp()
-
-	// 检查是否正在关闭
-	if x.SharedNode.IsShuttingDown() {
-		ctx.TellFailure(msg, fmt.Errorf("modbus client is shutting down"))
-		return
-	}
-
 	var (
 		err    error
 		params *Params
 		data   []ModbusValue = make([]ModbusValue, 0)
 	)
 
-	x.conn, err = x.SharedNode.Get()
+	conn, err := x.SharedNode.GetSafely()
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
 
-	// 再次检查是否正在关闭，防止在Get()之后被关闭
-	if x.SharedNode.IsShuttingDown() {
-		ctx.TellFailure(msg, fmt.Errorf("modbus client is shutting down"))
-		return
-	}
+	// 为此次请求创建临时的retryableClient
+	retryableClient := NewRetryableModbusClient(conn, 3, x.RuleConfig.Logger)
 
 	params, err = x.getParams(ctx, msg)
 	if err != nil {
@@ -649,7 +639,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 
 	// 使用带重试功能的客户端执行操作
-	err, data = x.executeModbusCommand(params)
+	err, data = x.executeModbusCommand(params, retryableClient)
 
 	if err != nil {
 		ctx.TellFailure(msg, err)
@@ -667,7 +657,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // executeModbusCommand 执行Modbus命令
-func (x *ModbusNode) executeModbusCommand(params *Params) (error, []ModbusValue) {
+func (x *ModbusNode) executeModbusCommand(params *Params, retryableClient *RetryableModbusClient) (error, []ModbusValue) {
 	var (
 		err      error
 		boolVals []bool
@@ -688,89 +678,89 @@ func (x *ModbusNode) executeModbusCommand(params *Params) (error, []ModbusValue)
 
 	switch x.Config.Cmd {
 	case "ReadCoils":
-		boolVals, err = x.retryableClient.ReadCoils(params.Address, params.Quantity)
+		boolVals, err = retryableClient.ReadCoils(params.Address, params.Quantity)
 		if err == nil {
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadCoil":
-		boolVal, err = x.retryableClient.ReadCoil(params.Address)
+		boolVal, err = retryableClient.ReadCoil(params.Address)
 		if err == nil {
 			boolVals = append(boolVals, boolVal)
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadDiscreteInputs":
-		boolVals, err = x.retryableClient.ReadDiscreteInputs(params.Address, params.Quantity)
+		boolVals, err = retryableClient.ReadDiscreteInputs(params.Address, params.Quantity)
 		if err == nil {
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadDiscreteInput":
-		boolVal, err = x.retryableClient.ReadDiscreteInput(params.Address)
+		boolVal, err = retryableClient.ReadDiscreteInput(params.Address)
 		if err == nil {
 			boolVals = append(boolVals, boolVal)
 			data = readModbusValues(boolVals, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadRegisters":
-		ui16s, err = x.retryableClient.ReadRegisters(params.Address, params.Quantity, params.RegType)
+		ui16s, err = retryableClient.ReadRegisters(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadRegister":
-		ui16, err = x.retryableClient.ReadRegister(params.Address, params.RegType)
+		ui16, err = retryableClient.ReadRegister(params.Address, params.RegType)
 		if err == nil {
 			ui16s = append(ui16s, ui16)
 			data = readModbusValues(ui16s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadUint32s":
-		ui32s, err = x.retryableClient.ReadUint32s(params.Address, params.Quantity, params.RegType)
+		ui32s, err = retryableClient.ReadUint32s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadUint32":
-		ui32, err = x.retryableClient.ReadUint32(params.Address, params.RegType)
+		ui32, err = retryableClient.ReadUint32(params.Address, params.RegType)
 		if err == nil {
 			ui32s = append(ui32s, ui32)
 			data = readModbusValues(ui32s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadFloat32s":
-		f32s, err = x.retryableClient.ReadFloat32s(params.Address, params.Quantity, params.RegType)
+		f32s, err = retryableClient.ReadFloat32s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadFloat32":
-		f32, err = x.retryableClient.ReadFloat32(params.Address, params.RegType)
+		f32, err = retryableClient.ReadFloat32(params.Address, params.RegType)
 		if err == nil {
 			f32s = append(f32s, f32)
 			data = readModbusValues(f32s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadUint64s":
-		ui64s, err = x.retryableClient.ReadUint64s(params.Address, params.Quantity, params.RegType)
+		ui64s, err = retryableClient.ReadUint64s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadUint64":
-		ui64, err = x.retryableClient.ReadUint64(params.Address, params.RegType)
+		ui64, err = retryableClient.ReadUint64(params.Address, params.RegType)
 		if err == nil {
 			ui64s = append(ui64s, ui64)
 			data = readModbusValues(ui64s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadFloat64s":
-		f64s, err = x.retryableClient.ReadFloat64s(params.Address, params.Quantity, params.RegType)
+		f64s, err = retryableClient.ReadFloat64s(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadFloat64":
-		f64, err = x.retryableClient.ReadFloat64(params.Address, params.RegType)
+		f64, err = retryableClient.ReadFloat64(params.Address, params.RegType)
 		if err == nil {
 			f64s = append(f64s, f64)
 			data = readModbusValues(f64s, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadBytes":
-		bts, err = x.retryableClient.ReadBytes(params.Address, params.Quantity, params.RegType)
+		bts, err = retryableClient.ReadBytes(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
 		}
 	case "ReadRawBytes":
-		bts, err = x.retryableClient.ReadRawBytes(params.Address, params.Quantity, params.RegType)
+		bts, err = retryableClient.ReadRawBytes(params.Address, params.Quantity, params.RegType)
 		if err == nil {
 			data = readModbusValues(bts, params.Address, 1, x.Config.UnitId)
 		}
@@ -779,89 +769,89 @@ func (x *ModbusNode) executeModbusCommand(params *Params) (error, []ModbusValue)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteCoil(params.Address, boolVal)
+			err = retryableClient.WriteCoil(params.Address, boolVal)
 		}
 	case "WriteCoils":
 		boolVals, err = byteToBools(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteCoils(params.Address, boolVals)
+			err = retryableClient.WriteCoils(params.Address, boolVals)
 		}
 	case "WriteRegister":
 		ui16, err = byteToUint16(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteRegister(params.Address, ui16)
+			err = retryableClient.WriteRegister(params.Address, ui16)
 		}
 	case "WriteRegisters":
 		ui16s, err = byteToUint16s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteRegisters(params.Address, ui16s)
+			err = retryableClient.WriteRegisters(params.Address, ui16s)
 		}
 	case "WriteUint32":
 		ui32, err = byteToUint32(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteUint32(params.Address, ui32)
+			err = retryableClient.WriteUint32(params.Address, ui32)
 		}
 	case "WriteUint32s":
 		ui32s, err = byteToUint32s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteUint32s(params.Address, ui32s)
+			err = retryableClient.WriteUint32s(params.Address, ui32s)
 		}
 	case "WriteFloat32":
 		f32, err = byteToFloat32(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteFloat32(params.Address, f32)
+			err = retryableClient.WriteFloat32(params.Address, f32)
 		}
 	case "WriteFloat32s":
 		f32s, err = byteToFloat32s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteFloat32s(params.Address, f32s)
+			err = retryableClient.WriteFloat32s(params.Address, f32s)
 		}
 	case "WriteUint64":
 		ui64, err = byteToUint64(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteUint64(params.Address, ui64)
+			err = retryableClient.WriteUint64(params.Address, ui64)
 		}
 	case "WriteUint64s":
 		ui64s, err = byteToUint64s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteUint64s(params.Address, ui64s)
+			err = retryableClient.WriteUint64s(params.Address, ui64s)
 		}
 	case "WriteFloat64":
 		f64, err = byteToFloat64(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteFloat64(params.Address, f64)
+			err = retryableClient.WriteFloat64(params.Address, f64)
 		}
 	case "WriteFloat64s":
 		f64s, err = byteToFloat64s(params.Value)
 		if err != nil {
 			x.Printf("convert value error:%s", err)
 		} else {
-			err = x.retryableClient.WriteFloat64s(params.Address, f64s)
+			err = retryableClient.WriteFloat64s(params.Address, f64s)
 		}
 	case "WriteBytes":
-		err = x.retryableClient.WriteBytes(params.Address, []byte(params.Value))
+		err = retryableClient.WriteBytes(params.Address, []byte(params.Value))
 	case "WriteRawBytes":
-		err = x.retryableClient.WriteRawBytes(params.Address, []byte(params.Value))
+		err = retryableClient.WriteRawBytes(params.Address, []byte(params.Value))
 	default:
 		return &UnknownCommandErr{Cmd: x.Config.Cmd}, data
 	}
@@ -919,14 +909,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 
 // Destroy 销毁组件
 func (x *ModbusNode) Destroy() {
-	// 使用优雅关闭机制，等待活跃操作完成后再关闭资源
-	x.SharedNode.GracefulShutdown(0, func() {
-		// 只在非资源池模式下关闭本地资源
-		if x.conn != nil {
-			_ = x.conn.Close()
-			x.conn = nil
-		}
-	})
+	_ = x.SharedNode.Close()
 }
 
 // Printf 打印日志
@@ -938,53 +921,39 @@ func (x *ModbusNode) Printf(format string, v ...interface{}) {
 
 // 初始化连接
 func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
-	if x.conn != nil {
-		return x.conn, nil
-	} else {
-		x.Locker.Lock()
-		defer x.Locker.Unlock()
-		if x.conn != nil {
-			return x.conn, nil
-		}
-		var err error
-		config := &modbus.ClientConfiguration{
-			URL:      x.Config.Server,
-			Speed:    x.Config.RtuConfig.Speed,
-			DataBits: x.Config.RtuConfig.DataBits,
-			StopBits: x.Config.RtuConfig.StopBits,
-			Timeout:  time.Duration(x.Config.TcpConfig.Timeout) * time.Second,
-			Parity:   x.Config.RtuConfig.Parity,
-		}
-		// handle TLS options
-		if strings.HasPrefix(x.Config.Server, "tcp+tls://") {
-			clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertPath, x.Config.TcpConfig.KeyPath)
-			if err != nil {
-				x.Printf("failed to load client tls key pair: %v\n", err)
-				return nil, err
-			}
-			config.TLSClientCert = &clientKeyPair
-
-			config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CaPath)
-			if err != nil {
-				x.Printf("failed to load tls CA/server certificate: %v\n", err)
-				return nil, err
-			}
-		}
-
-		x.conn, err = modbus.NewClient(config)
+	config := &modbus.ClientConfiguration{
+		URL:      x.Config.Server,
+		Speed:    x.Config.RtuConfig.Speed,
+		DataBits: x.Config.RtuConfig.DataBits,
+		StopBits: x.Config.RtuConfig.StopBits,
+		Timeout:  time.Duration(x.Config.TcpConfig.Timeout) * time.Second,
+		Parity:   x.Config.RtuConfig.Parity,
+	}
+	// handle TLS options
+	if strings.HasPrefix(x.Config.Server, "tcp+tls://") {
+		clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertPath, x.Config.TcpConfig.KeyPath)
 		if err != nil {
+			x.Printf("failed to load client tls key pair: %v\n", err)
 			return nil, err
 		}
+		config.TLSClientCert = &clientKeyPair
 
-		x.conn.SetEncoding(modbus.Endianness(x.Config.EncodingConfig.Endianness), modbus.WordOrder(x.Config.EncodingConfig.WordOrder))
-		x.conn.SetUnitId(x.Config.UnitId)
-
-		// 创建带重试逻辑的客户端
-		x.retryableClient = NewRetryableModbusClient(x.conn, 3, x.RuleConfig.Logger)
-
-		err = x.conn.Open()
-		return x.conn, err
+		config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CaPath)
+		if err != nil {
+			x.Printf("failed to load tls CA/server certificate: %v\n", err)
+			return nil, err
+		}
 	}
+
+	conn, err := modbus.NewClient(config)
+	if err != nil {
+		return nil, err
+	}
+	conn.SetEncoding(modbus.Endianness(x.Config.EncodingConfig.Endianness), modbus.WordOrder(x.Config.EncodingConfig.WordOrder))
+	conn.SetUnitId(x.Config.UnitId)
+
+	err = conn.Open()
+	return conn, err
 }
 
 // byteToBool 将string转换为bool，支持,01,true,false

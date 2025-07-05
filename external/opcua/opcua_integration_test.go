@@ -17,6 +17,7 @@
 package opcua
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -411,7 +412,7 @@ func testOpcuaReadMultipleNodesDSL(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaReadTest", dslConfig)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	wg.Add(1)
 
@@ -468,7 +469,7 @@ func testOpcuaWriteMultipleValuesDSL(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaWriteTest", dslConfig)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	wg.Add(1)
 
@@ -520,7 +521,7 @@ func testOpcuaReadWriteCombinationDSL(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaReadWriteTest", combinationDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	var wg sync.WaitGroup
 	var operationCompleted int32
@@ -565,7 +566,7 @@ func testOpcuaErrorHandlingDSL(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaErrorTest", errorDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	var wg sync.WaitGroup
 	var errorHandled int32
@@ -632,7 +633,7 @@ func testOpcuaHotReloadConfiguration(t *testing.T) {
 
 	// 启动DSL配置的服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaHotReloadTest", initialDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200) // 等待服务器启动
 
@@ -728,7 +729,7 @@ func testOpcuaHotReloadNodeList(t *testing.T) {
 	// 创建包含单个节点的完整规则链
 	fullDSL := createOpcuaReadDSL([]string{"ns=2;i=2"})
 	ruleEngine := startOpcuaDSLServer(t, "opcuaNodeListTest", fullDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
@@ -792,7 +793,7 @@ func testOpcuaHotReloadServerSettings(t *testing.T) {
 	// 启动初始配置
 	initialDSL := createServerSettingsDSL(30, 5)
 	ruleEngine := startOpcuaDSLServer(t, "opcuaServerSettingsTest", initialDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
@@ -855,7 +856,7 @@ func testOpcuaConcurrentReadOperations(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaConcurrentReadTest", dslConfig)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
@@ -915,7 +916,7 @@ func testOpcuaConcurrentWriteOperations(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaConcurrentWriteTest", dslConfig)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
@@ -967,7 +968,7 @@ func testOpcuaConcurrentMixedOperations(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "opcuaMixedOperationsTest", mixedDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
@@ -1034,7 +1035,7 @@ func testIndustrialMonitoringScenario(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "industrialMonitoringTest", industrialDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 300)
 
@@ -1089,7 +1090,7 @@ func testDataCollectionPipeline(t *testing.T) {
 
 	// 启动DSL服务器
 	ruleEngine := startOpcuaDSLServer(t, "dataCollectionTest", pipelineDSL)
-	defer ruleEngine.Stop()
+	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 300)
 

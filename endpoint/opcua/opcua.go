@@ -229,13 +229,14 @@ func (c OpcUaConfig) GetCertKeyFile() string {
 type OpcUa struct {
 	impl.BaseEndpoint
 	base.SharedNode[*opcua.Client]
+	// GracefulShutdown provides graceful shutdown capabilities
+	// GracefulShutdown 提供优雅停机功能
+	base.GracefulShutdown
 	RuleConfig types.Config
 	// opcua client相关配置
 	Config OpcUaConfig
 	// 路由实例
 	Router endpointApi.Router
-	// opcua client实例
-	client *opcua.Client
 	// 定时任务实例
 	cronTask *cron.Cron
 	// 定时任务id
@@ -264,15 +265,34 @@ func (x *OpcUa) New() types.Node {
 func (x *OpcUa) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
-	_ = x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
+
+	// 初始化优雅停机功能 - 使用合理的默认超时(10秒)
+	x.GracefulShutdown.InitGracefulShutdown(x.RuleConfig.Logger, 10*time.Second)
+
+	_ = x.SharedNode.InitWithClose(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
 		return x.initClient()
+	}, func(client *opcua.Client) error {
+		if client != nil {
+			return client.Close(context.Background())
+		}
+		return nil
 	})
 	return err
 }
 
 // Destroy 销毁
 func (x *OpcUa) Destroy() {
-	_ = x.Close()
+	x.GracefulShutdown.GracefulStop(func() {
+		_ = x.Close()
+	})
+}
+
+// GracefulStop provides graceful shutdown for the OPC UA endpoint
+// GracefulStop 为 OPC UA 端点提供优雅停机
+func (x *OpcUa) GracefulStop() {
+	x.GracefulShutdown.GracefulStop(func() {
+		_ = x.Close()
+	})
 }
 
 func (x *OpcUa) Close() error {
@@ -282,15 +302,9 @@ func (x *OpcUa) Close() error {
 	if x.cronTask != nil {
 		x.cronTask.Stop()
 	}
-
-	// 使用优雅关闭机制，等待活跃操作完成后再关闭资源
-	x.SharedNode.GracefulShutdown(0, func() {
-		// 只在非资源池模式下关闭本地资源
-		if x.client != nil {
-			_ = x.client.Close(context.Background())
-			x.client = nil
-		}
-	})
+	// SharedNode 会通过 InitWithClose 中的清理函数来管理客户端的关闭
+	// SharedNode manages client closure through the cleanup function in InitWithClose
+	_ = x.SharedNode.Close()
 	return nil
 }
 
@@ -319,8 +333,13 @@ func (x *OpcUa) RemoveRouter(routerId string, params ...interface{}) error {
 func (x *OpcUa) Start() error {
 	var err error
 	if !x.SharedNode.IsInit() {
-		err = x.SharedNode.Init(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
+		err = x.SharedNode.InitWithClose(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
 			return x.initClient()
+		}, func(client *opcua.Client) error {
+			if client != nil {
+				return client.Close(context.Background())
+			}
+			return nil
 		})
 	}
 	if x.cronTask != nil {
@@ -344,29 +363,25 @@ func (x *OpcUa) Printf(format string, v ...interface{}) {
 }
 
 func (x *OpcUa) readNodes(router endpointApi.Router) error {
-	// 开始操作，增加活跃操作计数
-	x.SharedNode.BeginOp()
-	defer x.SharedNode.EndOp()
-
-	// 检查是否正在关闭
-	if x.SharedNode.IsShuttingDown() {
-		x.Printf("opcua endpoint is shutting down, skipping read operation")
+	// 检查是否正在停机
+	if err := x.GracefulShutdown.CheckShutdownSignal(); err != nil {
+		x.Printf("opcua endpoint is shutting down, skipping read operation: %v", err)
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Second)
-	defer func() {
-		cancel()
-	}()
-	client, err := x.SharedNode.Get()
+	// 增加活跃操作计数
+	x.GracefulShutdown.IncrementActiveOperations()
+	defer x.GracefulShutdown.DecrementActiveOperations()
+
+	client, err := x.SharedNode.GetSafely()
 	if err != nil {
 		x.Printf("get shared client error %v ", err)
 		return err
 	}
 
 	// 再次检查是否正在关闭，防止在Get()之后被关闭
-	if x.SharedNode.IsShuttingDown() {
-		x.Printf("opcua endpoint is shutting down, skipping read operation")
+	if err := x.GracefulShutdown.CheckShutdownSignal(); err != nil {
+		x.Printf("opcua endpoint is shutting down after getting client: %v", err)
 		return nil
 	}
 
@@ -380,30 +395,13 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 		Out: &ResponseMessage{
 			data: data,
 		}}
-	x.DoProcess(ctx, router, exchange)
+
+	// 使用停机上下文处理消息
+	x.DoProcess(x.GracefulShutdown.GetShutdownContext(), router, exchange)
 	return nil
 }
 
 // initClient 初始化客户端
 func (x *OpcUa) initClient() (*opcua.Client, error) {
-	if x.client != nil {
-		return x.client, nil
-	} else {
-		_, cancel := context.WithTimeout(context.TODO(), 4*time.Second)
-		x.Lock()
-		defer func() {
-			cancel()
-			x.Unlock()
-		}()
-		if x.client != nil {
-			return x.client, nil
-		}
-
-		client, err := opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
-		if err != nil {
-			return nil, err
-		}
-		x.client = client
-		return x.client, err
-	}
+	return opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
 }
