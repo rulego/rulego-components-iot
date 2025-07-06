@@ -363,12 +363,6 @@ func (x *OpcUa) Printf(format string, v ...interface{}) {
 }
 
 func (x *OpcUa) readNodes(router endpointApi.Router) error {
-	// 检查是否正在停机
-	if err := x.GracefulShutdown.CheckShutdownSignal(); err != nil {
-		x.Printf("opcua endpoint is shutting down, skipping read operation: %v", err)
-		return nil
-	}
-
 	// 增加活跃操作计数
 	x.GracefulShutdown.IncrementActiveOperations()
 	defer x.GracefulShutdown.DecrementActiveOperations()
@@ -377,12 +371,6 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 	if err != nil {
 		x.Printf("get shared client error %v ", err)
 		return err
-	}
-
-	// 再次检查是否正在关闭，防止在Get()之后被关闭
-	if err := x.GracefulShutdown.CheckShutdownSignal(); err != nil {
-		x.Printf("opcua endpoint is shutting down after getting client: %v", err)
-		return nil
 	}
 
 	data, _, err := opcuaClient.Read(client, x.Config.NodeIds)
@@ -396,8 +384,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 			data: data,
 		}}
 
-	// 使用停机上下文处理消息
-	x.DoProcess(x.GracefulShutdown.GetShutdownContext(), router, exchange)
+	x.DoProcess(context.Background(), router, exchange)
 	return nil
 }
 
