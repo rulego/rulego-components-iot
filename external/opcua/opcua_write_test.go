@@ -56,13 +56,19 @@ func TestWriteNode(t *testing.T) {
 			MetaData: meta,
 			DataType: types.JSON,
 			MsgType:  opcuaClient.OPC_UA_DATA_MSG_TYPE,
-			Data:     data,
+			Data: `[
+			{"nodeId":"ns=3;s=test","value":123.456,"dataType":"Double"},
+			{"nodeId":"ns=3;s=test_add_int32","value":567,"dataType":"Int32"},
+			{"nodeId":"ns=3;s=test_add_bool","value":true,"dataType":"Boolean"},
+			{"nodeId":"ns=3;s=test_add_int64","value":6678888,"dataType":"Int64"},
+		    {"nodeId":"ns=3;s=test_add_double_array","value":[0.0,60,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"dataType":"Double"}
+			]`,
 		},
 	}
 
 	t.Run("NodeOnMsg", func(t *testing.T) {
 		node, _ := test.CreateAndInitNode(writeNodeType, types.Configuration{
-			"server":   "opc.tcp://127.0.0.1:53530",
+			"server":   "opc.tcp://test_user:53530/OPCUA/SimulationServer",
 			"policy":   "None",
 			"mode":     "None",
 			"auth":     "Anonymous",

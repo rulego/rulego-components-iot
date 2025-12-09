@@ -45,6 +45,7 @@ type Data struct {
 	Quality     uint32      `json:"quality"`
 	FloatValue  float64     `json:"floatValue"`
 	Timestamp   time.Time   `json:"timestamp"`
+	DataType    string      `json:"dataType"`
 }
 
 // ParseValue 解析数据FloatValue

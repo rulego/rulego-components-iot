@@ -45,8 +45,13 @@ func TestReadNode(t *testing.T) {
 	// 	}, Registry)
 	// })
 	nodeIds := make([]string, 0)
-	nodeIds = append(nodeIds, "ns=3;i=1101")
-	nodeIds = append(nodeIds, "ns=3;i=1109")
+	// 使用用户环境存在的 test 节点
+	nodeIds = append(nodeIds, "ns=3;s=test")
+	nodeIds = append(nodeIds, "ns=3;s=test_add_int32")
+	nodeIds = append(nodeIds, "ns=3;s=test_add_bool")
+	nodeIds = append(nodeIds, "ns=3;s=test_add_int64")
+	// 读取数组节点
+	nodeIds = append(nodeIds, "ns=3;s=test_add_double_array")
 	d, _ := json.Marshal(nodeIds)
 
 	// meta := types.BuildMetadata(make(map[string]string))
@@ -63,7 +68,7 @@ func TestReadNode(t *testing.T) {
 
 	t.Run("NodeOnMsg", func(t *testing.T) {
 		node, _ := test.CreateAndInitNode(nodeType, types.Configuration{
-			"server":   "opc.tcp://127.0.0.1:53530",
+			"server":   "opc.tcp://test_user:53530/OPCUA/SimulationServer",
 			"policy":   "None",
 			"mode":     "None",
 			"auth":     "Anonymous",
@@ -79,6 +84,7 @@ func TestReadNode(t *testing.T) {
 			passed   bool
 			relation string
 			errorMsg string
+			data     string
 		}, 1)
 
 		test.NodeOnMsg(t, node, msgList, func(msg types.RuleMsg, relationType string, err error) {
@@ -86,8 +92,10 @@ func TestReadNode(t *testing.T) {
 				passed   bool
 				relation string
 				errorMsg string
+				data     string
 			}{
 				relation: relationType,
+				data:     msg.GetData(),
 			}
 
 			// 在测试环境中，OPC UA 服务器可能不可用，所以我们接受 Success 或 Failure
@@ -133,7 +141,7 @@ func TestReadNode(t *testing.T) {
 					// 告警日志：测试环境中的失败情况
 					t.Logf("⚠️  OPC UA READ FAILURE ALERT: %s (Expected in test environment)", result.errorMsg)
 				} else if result.relation == types.Success {
-					t.Log("✅ OPC UA read operation succeeded")
+					t.Logf("✅ OPC UA read operation succeeded. Data: %s", result.data)
 				}
 			default:
 				t.Log("⚠️  No result received from OPC UA read operation")
