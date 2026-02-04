@@ -97,7 +97,7 @@ type EncodingConfig struct {
 	// Endianness register endianness 1:大端序 2:小端序
 	Endianness uint `json:"endianness"`
 	// WordOrder word ordering for 32-bit registers 1:高字在前 2:低字在前
-	WordOrder uint `json:"wordorder"`
+	WordOrder uint `json:"wordOrder"`
 }
 
 type TcpConfig struct {
