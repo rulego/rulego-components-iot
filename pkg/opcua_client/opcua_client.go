@@ -35,7 +35,7 @@ const OPC_UA_DATA_MSG_TYPE = "OPC_UA_DATA"
 
 var logger = types.DefaultLogger()
 
-// Data OPC数据封装结构体
+// Data OPC data encapsulation structure
 type Data struct {
 	DisplayName string      `json:"displayName"`
 	NodeId      string      `json:"nodeId"`
@@ -48,7 +48,7 @@ type Data struct {
 	DataType    string      `json:"dataType"`
 }
 
-// ParseValue 解析数据FloatValue
+// ParseValue parses data FloatValue
 func (d *Data) ParseValue() (*Data, error) {
 	var err error
 	if d != nil && d.Value != nil {
@@ -97,46 +97,46 @@ func (d *Data) ParseValue() (*Data, error) {
 	return d, nil
 }
 
-// ConfigProp 统一OPCUA客户端初始化参数接口
+// ConfigProp unifies the OPCUA client initialization parameter interface
 type ConfigProp interface {
-	// GetServer 获取OPCUA服务地址
+	// GetServer obtains the OPCUA service address
 	GetServer() string
-	// GetPolicy 获取OPCUA安全策略
+	// GetPolicy to obtain OPCUA security policies
 	GetPolicy() string
-	// GetMode 获取OPCUA安全模式
+	// GetMode Obtains OPCUA Safe Mode
 	GetMode() string
-	// GetAuth 获取OPCUA认证方式
+	// GetAuth Obtain OPCUA Certification Methods
 	GetAuth() string
-	// GetUsername 获取OPCUA认证用户名
+	// GetUsername obtains the OPCUA authentication username
 	GetUsername() string
-	// GetPassword 获取OPCUA认证密码
+	// GetPassword: Obtain the OPCUA authentication password
 	GetPassword() string
-	// GetCertFile 获取OPCUA证书文件
+	// GetCertFile to obtain the OPCUA certificate file
 	GetCertFile() string
-	// GetCertKeyFile 获取OPCUA证书私钥文件
+	// GetCertKeyFile to obtain the OPCUA certificate private key file
 	GetCertKeyFile() string
 }
 
-// OpcUaClientHolder OPCUA客户端相关配置
+// OpcUaClientHolder OPCUA client-related configuration
 type OpcUaClientHolder struct {
-	// Config OPC客户端配置
+	// Config OPC client configuration
 	Config ConfigProp
-	// Ctx 上下文
+	// CTX context
 	Ctx context.Context
-	// Logger 日志
+	// Logger log
 	Logger types.Logger
-	// endpointOptionsPrinted 跟踪是否已经打印过端点选项（避免重复打印）
+	// endpointOptionsPrinted tracks whether endpoint options have been printed (to avoid duplicate printing)
 	endpointOptionsPrinted bool
 }
 
-// Printf 日志输出
+// Printf log output
 func (x *OpcUaClientHolder) Printf(format string, v ...interface{}) {
 	if x.Logger != nil {
 		x.Logger.Printf(format, v...)
 	}
 }
 
-// DefaultHolder 默认配置
+// DefaultHolder is the default configuration
 func DefaultHolder(c ConfigProp) *OpcUaClientHolder {
 	return &OpcUaClientHolder{
 		Config: c,
@@ -145,7 +145,7 @@ func DefaultHolder(c ConfigProp) *OpcUaClientHolder {
 	}
 }
 
-// NewOpcUaClient 创建OPCUA客户端
+// NewOpcUaClient creates the OPCUA client
 func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	if x.Config == nil {
 		return nil, errors.New("config is nil")
@@ -168,7 +168,7 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	return c, nil
 }
 
-// createOptions 构建Options
+// createOptions
 func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) []opcua.Option {
 	if x.Config == nil {
 		return []opcua.Option{}
@@ -272,7 +272,7 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 	}
 
 	if serverEndpoint == nil { // Didn't find an endpoint with matching policy and mode.
-		// 只在首次失败时打印端点选项，帮助用户了解正确配置
+		// Print endpoint options only on the first failure, helping users understand the correct configuration
 		if !x.endpointOptionsPrinted && x.Logger != nil {
 			x.Printf("unable to find suitable server endpoint with selected sec-policy and sec-mode")
 			x.printEndpointOptions(endpoints)
@@ -345,7 +345,7 @@ func (x *OpcUaClientHolder) validateEndpointConfig(endpoints []*ua.EndpointDescr
 
 	err := fmt.Errorf("server does not support an endpoint with security : %s , %s, %s", secPolicy, secMode, authMode)
 
-	// 只在首次失败时打印端点选项，避免重复日志
+	// Endpoint options are only printed on the first failure to avoid duplicate logs
 	if !x.endpointOptionsPrinted && x.Logger != nil {
 		x.Printf("OPC UA endpoint validation failed: %v", err)
 		x.printEndpointOptions(endpoints)
@@ -382,7 +382,7 @@ func (x *OpcUaClientHolder) printEndpointOptions(endpoints []*ua.EndpointDescrip
 	}
 }
 
-// Read 读取点位数据
+// Read the point position data
 func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, error) {
 	ctx := context.Background()
 	allIds := make([]*ua.ReadValueID, 0)

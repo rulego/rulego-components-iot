@@ -25,10 +25,10 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestModbusNode 测试 Modbus 节点基本功能
+// TestModbusNode tests the basic functions of Modbus nodes
 func TestModbusNode(t *testing.T) {
 	if os.Getenv("SKIP_MODBUS_TESTS") == "true" {
-		t.Skip("跳过 Modbus 节点测试")
+		t.Skip("Skip Modbus node testing")
 	}
 
 	Registry := &types.SafeComponentSlice{}
@@ -37,17 +37,17 @@ func TestModbusNode(t *testing.T) {
 	node := &ModbusNode{}
 	assert.Equal(t, "x/modbus", node.Type())
 
-	// 创建新节点实例
+	// Create a new node instance
 	newNode := node.New()
 	assert.NotNil(t, newNode)
 
-	t.Log("Modbus 节点基本功能测试通过")
+	t.Log("Modbus Node basic function tests have passed")
 }
 
-// TestModbusConnectionConfig 测试 Modbus 连接配置
+// TestModbusConnectionConfig Tests the Modbus connection configuration
 func TestModbusConnectionConfig(t *testing.T) {
 	if os.Getenv("SKIP_MODBUS_TESTS") == "true" {
-		t.Skip("跳过 Modbus 连接配置测试")
+		t.Skip("Skip the Modbus connection configuration test")
 	}
 
 	host := os.Getenv("MODBUS_SERVER_HOST")
@@ -57,38 +57,38 @@ func TestModbusConnectionConfig(t *testing.T) {
 		host = "localhost"
 	}
 	if port == "" {
-		port = "1502" // techplex/modbus-sim 默认端口
+		port = "1502" // Techplex/Modbus-sim is the default port
 	}
 
-	t.Logf("测试 Modbus 连接配置 %s:%s", host, port)
+	t.Logf("Test Modbus connection configuration %s:%s", host, port)
 
-	// 验证环境变量设置
+	// Verify environment variable settings
 	assert.NotEqual(t, "", host)
 	assert.NotEqual(t, "", port)
-	assert.Equal(t, "1502", port) // 验证使用正确的端口
+	assert.Equal(t, "1502", port) // Verify that the correct port is used
 }
 
-// TestModbusBasicOperations 基本的 Modbus 操作测试框架
+// TestModbusBasicOperations is the basic Modbus operation testing framework
 func TestModbusBasicOperations(t *testing.T) {
 	if os.Getenv("SKIP_MODBUS_TESTS") == "true" {
-		t.Skip("跳过 Modbus 基础操作测试")
+		t.Skip("Skip the Modbus basic operations test")
 	}
 
-	// 模拟测试超时保护
+	// Simulated test timeout protection
 	timeout := time.After(10 * time.Second)
 	done := make(chan bool)
 
 	go func() {
-		// 模拟一些 Modbus 操作
+		// Simulates some Modbus operations
 		time.Sleep(200 * time.Millisecond)
-		t.Log("Modbus 基础操作模拟完成")
+		t.Log("Modbus Basic operation simulation completed")
 		done <- true
 	}()
 
 	select {
 	case <-timeout:
-		t.Fatal("Modbus 基础操作测试超时")
+		t.Fatal("Modbus Basic operation test timed out")
 	case <-done:
-		t.Log("Modbus 基础操作测试完成")
+		t.Log("Modbus Basic operation test completed")
 	}
 }

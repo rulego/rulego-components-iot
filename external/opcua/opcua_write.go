@@ -32,12 +32,12 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register the node
 func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// WriteNodeConfiguration  节点配置
+// WriteNodeConfiguration
 type WriteNodeConfiguration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
@@ -80,8 +80,8 @@ func (c WriteNodeConfiguration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
 
-// WriteNode opcua写入节点
-// 把消息负荷 msg.Data 点位数据写入到opcua服务器，格式为：
+// WriteNode opcua writes the node
+// Load the message to msg.Data: point data is written to the OPCUA server, format:
 //
 //	[
 //	  {
@@ -94,11 +94,11 @@ func (c WriteNodeConfiguration) GetCertKeyFile() string {
 //	  }
 //	]
 //
-// 写入成功，流转到`Success`链
-// 否则流程转到`Failure`链
+// Write `Success`fully, then flow to the 'Success' chain
+// Otherwise, the process moves to the `Failure` chain
 type WriteNode struct {
 	base.SharedNode[*opcua.Client]
-	//节点配置
+	//Node configuration
 	Config WriteNodeConfiguration
 }
 
@@ -113,7 +113,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Type 返回组件类型
+// Type returns the component type
 func (x *WriteNode) Type() string {
 	return "x/opcuaWrite"
 }
@@ -129,7 +129,7 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 	return err
 }
 
-// OnMsg 实现 Node 接口，处理消息
+// OnMsg implements the Node interface to process messages
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -178,7 +178,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 	succ := false
-	var errs []string // 移除预分配的大小，避免空字符串
+	var errs []string // Remove pre-allocated sizes to avoid empty strings
 	if resp != nil {
 		for _, result := range resp.Results {
 			if result == ua.StatusOK {
@@ -199,7 +199,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy to clean up resources
 func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -214,7 +214,7 @@ func (x *WriteNode) initClient() (*opcua.Client, error) {
 	return client, err
 }
 
-// castValue 尝试将 []interface{} 转换为特定类型的切片，以便 ua.NewVariant 可以正确处理
+// castValue attempts to convert []interface{} into a slice of a specific type so that ua.NewVariant can handle it correctly
 // castValue attempts to convert []interface{} to a slice of a specific type so that ua.NewVariant can handle it correctly
 func castValue(val interface{}, dataType string) interface{} {
 	if dataType != "" {
@@ -225,7 +225,7 @@ func castValue(val interface{}, dataType string) interface{} {
 		if len(v) == 0 {
 			return v
 		}
-		// 根据第一个元素的类型进行转换
+		// Conversion is based on the type of the first element
 		// Convert based on the type of the first element
 		switch v[0].(type) {
 		case float64:
@@ -234,7 +234,7 @@ func castValue(val interface{}, dataType string) interface{} {
 				if f, ok := e.(float64); ok {
 					arr[i] = f
 				} else {
-					return val // 如果类型不一致，返回原始值 | If types are inconsistent, return the original value
+					return val // If the types are inconsistent, return the original value | If types are inconsistent, return the original value
 				}
 			}
 			return arr
@@ -265,7 +265,7 @@ func castValue(val interface{}, dataType string) interface{} {
 
 func castValueByType(val interface{}, dataType string) interface{} {
 	dataType = strings.ToLower(dataType)
-	// 检查是否为数组类型
+	// Check if it is an array type
 	// Check if it is an array type
 	if v, ok := val.([]interface{}); ok {
 		switch dataType {
@@ -378,7 +378,7 @@ func castValueByType(val interface{}, dataType string) interface{} {
 		}
 	}
 
-	// 标量类型处理
+	// Scalar type processing
 	// Scalar type handling
 	switch dataType {
 	case "boolean":
@@ -437,8 +437,8 @@ func castValueByType(val interface{}, dataType string) interface{} {
 		}
 	case "guid":
 		if v, ok := val.(string); ok {
-			// 如果需要支持 GUID，需要实现 ParseGUID 或者使用第三方库
-			// 暂时移除 ParseGUID 调用，避免编译错误
+			// If GUID support is needed, ParseGUID must be implemented or third-party libraries used
+			// Temporarily remove ParseGUID calls to avoid compilation errors
 			// if id, err := ua.ParseGUID(v); err == nil {
 			// 	return *id
 			// }

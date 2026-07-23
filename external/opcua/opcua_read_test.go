@@ -29,7 +29,7 @@ import (
 
 func TestReadNode(t *testing.T) {
 	if os.Getenv("SKIP_OPCUA_TESTS") == "true" {
-		t.Skip("跳过 OPC UA 读取测试")
+		t.Skip("Skip OPC UA read test")
 	}
 
 	Registry := &types.SafeComponentSlice{}
@@ -45,12 +45,12 @@ func TestReadNode(t *testing.T) {
 	// 	}, Registry)
 	// })
 	nodeIds := make([]string, 0)
-	// 使用用户环境存在的 test 节点
+	// Use test nodes that exist in the user environment
 	nodeIds = append(nodeIds, "ns=3;s=test")
 	nodeIds = append(nodeIds, "ns=3;s=test_add_int32")
 	nodeIds = append(nodeIds, "ns=3;s=test_add_bool")
 	nodeIds = append(nodeIds, "ns=3;s=test_add_int64")
-	// 读取数组节点
+	// Read array nodes
 	nodeIds = append(nodeIds, "ns=3;s=test_add_double_array")
 	d, _ := json.Marshal(nodeIds)
 
@@ -74,11 +74,11 @@ func TestReadNode(t *testing.T) {
 			"auth":     "Anonymous",
 			"username": "",
 			"password": "",
-			"timeout":  5, // 减少超时时间
+			"timeout":  5, // Reduce timeouts
 			"poolSize": 5,
 		}, Registry)
 
-		// 使用通道来同步测试完成，避免 goroutine 竞态条件
+		// Use channels to synchronize test completion and avoid goroutine race conditions
 		done := make(chan struct{}, 1)
 		resultChan := make(chan struct {
 			passed   bool
@@ -98,15 +98,15 @@ func TestReadNode(t *testing.T) {
 				data:     msg.GetData(),
 			}
 
-			// 在测试环境中，OPC UA 服务器可能不可用，所以我们接受 Success 或 Failure
+			// In the test environment, the OPC UA server may not be available, so we accept either Success or Failure
 			if relationType == types.Success {
 				if err == nil && msg.GetData() != "" {
 					result.passed = true
 				} else {
-					result.passed = true // 仍然视为通过，因为连接可能有问题
+					result.passed = true // It is still considered a passage, as there may be connection issues
 				}
 			} else if relationType == types.Failure {
-				// 连接失败是预期的，但记录错误信息用于告警
+				// Connection failures are expected, but recording error messages is used as an alert
 				result.passed = true
 				if err != nil {
 					result.errorMsg = err.Error()
@@ -116,29 +116,29 @@ func TestReadNode(t *testing.T) {
 				result.errorMsg = "Unexpected relation type: " + relationType
 			}
 
-			// 安全地发送结果
+			// Send results securely
 			select {
 			case resultChan <- result:
 			default:
 			}
 
-			// 发送完成信号
+			// Send a completion signal
 			select {
 			case done <- struct{}{}:
 			default:
 			}
 		})
 
-		// 等待测试完成，带超时保护
+		// Wait for the test to complete with timeout protection
 		select {
 		case <-done:
-			// 获取结果并处理
+			// Get the results and process them
 			select {
 			case result := <-resultChan:
 				if !result.passed {
 					t.Errorf("OPC UA read test failed: %s", result.errorMsg)
 				} else if result.relation == types.Failure && result.errorMsg != "" {
-					// 告警日志：测试环境中的失败情况
+					// Alarm Log: Failure in the test environment
 					t.Logf("⚠️  OPC UA READ FAILURE ALERT: %s (Expected in test environment)", result.errorMsg)
 				} else if result.relation == types.Success {
 					t.Logf("✅ OPC UA read operation succeeded. Data: %s", result.data)
@@ -159,7 +159,7 @@ func TestReadNode(t *testing.T) {
 			}()
 			return timeout
 		}():
-			// 超时告警
+			// Time-out alert
 			t.Log("⚠️  OPC UA READ TIMEOUT ALERT: Test timed out after 10 seconds (Expected in test environment)")
 		}
 

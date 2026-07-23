@@ -31,12 +31,12 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register the node
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 }
 
-// Configuration 节点配置
+// Configuration: node configuration
 type Configuration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
@@ -79,11 +79,11 @@ func (c Configuration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
 
-// ReadNode opcua读取节点
-// 查询消息负荷 msg.Data 中节点列表点位数据
-// 节点列表格式：["ns=3;i=1003","ns=3;i=1005"]
-// 查询结果会重新赋值到msg.Data，通过`Success`链传给下一个节点
-// 结果格式：
+// ReadNode opcua reads nodes
+// Query message load msg.Data node list point data
+// Node list format: [ "ns=3;i=1003","ns=3;i=1005" ]
+// The query results will be reassigned to msg.Data, passed to the next node via the `Success` chain
+// Result format:
 // [
 //
 //	 {
@@ -99,7 +99,7 @@ func (c Configuration) GetCertKeyFile() string {
 // ]
 type ReadNode struct {
 	base.SharedNode[*opcua.Client]
-	//节点配置
+	//Node configuration
 	Config Configuration
 }
 
@@ -114,7 +114,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Type 返回组件类型
+// Type returns the component type
 func (x *ReadNode) Type() string {
 	return "x/opcuaRead"
 }
@@ -130,7 +130,7 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 	return err
 }
 
-// OnMsg 实现 Node 接口，处理消息
+// OnMsg implements the Node interface to process messages
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -155,7 +155,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	for i, result := range resp.Results {
 		if result != nil && result.Status != ua.StatusOK {
 			if len(errs) < 10 {
-				//防止查询结果过多
+				//Prevent excessive search results
 				errs = append(errs, result.Status.Error())
 			}
 		} else {
@@ -185,7 +185,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy to clean up resources
 func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }

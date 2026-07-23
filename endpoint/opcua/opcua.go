@@ -39,12 +39,12 @@ import (
 const Type = types.EndpointTypePrefix + "opcua"
 const OPC_UA_DATA_MSG_TYPE = "OPC_UA_DATA"
 
-// Endpoint 别名
+// Endpoint alias
 type Endpoint = OpcUa
 
 var _ endpointApi.Endpoint = (*Endpoint)(nil)
 
-// 注册组件
+// Register the component
 func init() {
 	_ = endpoint.Registry.Register(&Endpoint{})
 }
@@ -77,7 +77,7 @@ func (r *RequestMessage) From() string {
 	return ""
 }
 
-// GetParam 不提供获取参数
+// GetParam does not provide acquisition parameters
 func (r *RequestMessage) GetParam(key string) string {
 	return ""
 }
@@ -87,7 +87,7 @@ func (r *RequestMessage) SetMsg(msg *types.RuleMsg) {
 }
 func (r *RequestMessage) GetMsg() *types.RuleMsg {
 	if r.msg == nil {
-		//默认指定是JSON格式，如果不是该类型，请在process函数中修改
+		//The default specification is JSON format. If it is not this type, please modify it in the process function
 		ruleMsg := types.NewMsg(0, OPC_UA_DATA_MSG_TYPE, types.JSON, types.NewMetadata(), string(r.Body()))
 		r.msg = &ruleMsg
 	}
@@ -139,7 +139,7 @@ func (r *ResponseMessage) From() string {
 	return ""
 }
 
-// GetParam 不提供获取参数
+// GetParam does not provide acquisition parameters
 func (r *ResponseMessage) GetParam(key string) string {
 	return ""
 }
@@ -149,7 +149,7 @@ func (r *ResponseMessage) SetMsg(msg *types.RuleMsg) {
 }
 func (r *ResponseMessage) GetMsg() *types.RuleMsg {
 	if r.msg == nil {
-		//默认指定是JSON格式，如果不是该类型，请在process函数中修改
+		//The default specification is JSON format. If it is not this type, please modify it in the process function
 		ruleMsg := types.NewMsg(0, OPC_UA_DATA_MSG_TYPE, types.JSON, types.NewMetadata(), string(r.Body()))
 		r.msg = &ruleMsg
 	}
@@ -176,7 +176,7 @@ func (r *ResponseMessage) GetError() error {
 	return r.err
 }
 
-// OpcUaConfig OPC UA Server配置
+// OpcUaConfig OPC UA Server configuration
 type OpcUaConfig struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
@@ -230,25 +230,25 @@ type OpcUa struct {
 	impl.BaseEndpoint
 	base.SharedNode[*opcua.Client]
 	// GracefulShutdown provides graceful shutdown capabilities
-	// GracefulShutdown 提供优雅停机功能
+	// GracefulShutdown offers an elegant shutdown function
 	base.GracefulShutdown
 	RuleConfig types.Config
-	// opcua client相关配置
+	// Opcua client related configurations
 	Config OpcUaConfig
-	// 路由实例
+	// Routing instances
 	Router endpointApi.Router
-	// 定时任务实例
+	// Examples of scheduled tasks
 	cronTask *cron.Cron
-	// 定时任务id
+	// Scheduled task ID
 	taskId cron.EntryID
 }
 
-// Type 组件类型
+// Type returns the component type
 func (x *OpcUa) Type() string {
 	return Type
 }
 
-// New 创建组件实例
+// New creates a component instance
 func (x *OpcUa) New() types.Node {
 	return &OpcUa{
 		Config: OpcUaConfig{
@@ -261,12 +261,12 @@ func (x *OpcUa) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes the component
 func (x *OpcUa) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
 
-	// 初始化优雅停机功能 - 使用合理的默认超时(10秒)
+	// Initialize the elegant downtime function - use reasonable default timeout (10 seconds)
 	x.GracefulShutdown.InitGracefulShutdown(x.RuleConfig.Logger, 10*time.Second)
 
 	_ = x.SharedNode.InitWithClose(x.RuleConfig, x.Type(), x.Config.Server, true, func() (*opcua.Client, error) {
@@ -280,7 +280,7 @@ func (x *OpcUa) Init(ruleConfig types.Config, configuration types.Configuration)
 	return err
 }
 
-// Destroy 销毁
+// Destroy releases resources
 func (x *OpcUa) Destroy() {
 	x.GracefulShutdown.GracefulStop(func() {
 		_ = x.Close()
@@ -307,7 +307,7 @@ func (x *OpcUa) Def() types.ComponentForm {
 }
 
 // GracefulStop provides graceful shutdown for the OPC UA endpoint
-// GracefulStop 为 OPC UA 端点提供优雅停机
+// GracefulStop provides elegant downtime for OPC UA endpoints
 func (x *OpcUa) GracefulStop() {
 	x.GracefulShutdown.GracefulStop(func() {
 		_ = x.Close()
@@ -321,7 +321,7 @@ func (x *OpcUa) Close() error {
 	if x.cronTask != nil {
 		x.cronTask.Stop()
 	}
-	// SharedNode 会通过 InitWithClose 中的清理函数来管理客户端的关闭
+	// SharedNode manages client shutdowns through the cleanup function in InitWithClose
 	// SharedNode manages client closure through the cleanup function in InitWithClose
 	_ = x.SharedNode.Close()
 	return nil
@@ -382,7 +382,7 @@ func (x *OpcUa) Printf(format string, v ...interface{}) {
 }
 
 func (x *OpcUa) readNodes(router endpointApi.Router) error {
-	// 增加活跃操作计数
+	// Increase the count of active operations
 	x.GracefulShutdown.IncrementActiveOperations()
 	defer x.GracefulShutdown.DecrementActiveOperations()
 
@@ -407,7 +407,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 	return nil
 }
 
-// initClient 初始化客户端
+// initClient initializes the client
 func (x *OpcUa) initClient() (*opcua.Client, error) {
 	return opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
 }

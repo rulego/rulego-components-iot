@@ -20,84 +20,84 @@ import (
 
 const (
 	// DataTypeText text type
-	// 字符串类型
+	// String type
 	DataTypeText = "text"
 	// DataTypeBinary binary type
-	// 二进制类型
+	// Binary type
 	DataTypeBinary = "binary"
 	// DataTypeHex hex string type
-	// 十六进制字符串类型
+	// Hexadecimal string type
 	DataTypeHex = "hex"
 	// DataTypeBase64 base64 string type
-	// base64字符串类型
+	// base64 string type
 	DataTypeBase64 = "base64"
 
 	// SplitTypeChar split by char
-	// 按字符拆分
+	// Break it down by character
 	SplitTypeChar = "char"
 	// SplitTypeTimeout split by timeout
-	// 按超时拆分
+	// Split by timeout
 	SplitTypeTimeout = "timeout"
 	// SplitTypeFixed split by fixed length
-	// 按固定长度拆分
+	// Split by fixed length
 	SplitTypeFixed = "fixed"
 
 	// ParityNone no parity
-	// 无校验
+	// No verification
 	ParityNone = "N"
 	// ParityOdd odd parity
-	// 奇校验
+	// Marvelous verification and verification
 	ParityOdd = "O"
 	// ParityEven even parity
-	// 偶校验
+	// Occasionally verified
 	ParityEven = "E"
 	// ParityMark mark parity
-	// 标志校验
+	// Mark verification
 	ParityMark = "M"
 	// ParitySpace space parity
-	// 空格校验
+	// Spacebar check
 	ParitySpace = "S"
 
 	// StopBits1 1 stop bit
-	// 1位停止位
+	// 1 stop position
 	StopBits1 = "1"
 	// StopBits1_5 1.5 stop bits
-	// 1.5位停止位
+	// 1.5-bit stop position
 	StopBits1_5 = "1.5"
 	// StopBits2 2 stop bits
-	// 2位停止位
+	// 2
 	StopBits2 = "2"
 
 	// ActionOpen open port
-	// 打开串口
+	// Open the serial port
 	ActionOpen = "open"
 	// ActionClose close port
-	// 关闭串口
+	// Turn off the serial port
 	ActionClose = "close"
 	// ActionDTRHigh set DTR high
-	// 设置 DTR 为高电平
+	// Set DTR to high level
 	ActionDTRHigh = "dtr=1"
 	// ActionDTRLow set DTR low
-	// 设置 DTR 为低电平
+	// Set DTR to low level
 	ActionDTRLow = "dtr=0"
 	// ActionRTSHigh set RTS high
-	// 设置 RTS 为高电平
+	// Set RTS to high level
 	ActionRTSHigh = "rts=1"
 	// ActionRTSLow set RTS low
-	// 设置 RTS 为低电平
+	// Set RTS to low level
 	ActionRTSLow = "rts=0"
 	// ActionFlush flush both buffers
-	// 刷新输入输出缓冲区
+	// Refresh the input/output buffer
 	ActionFlush = "flush"
 	// ActionFlushIn flush input buffer
-	// 刷新输入缓冲区
+	// Refresh the input buffer
 	ActionFlushIn = "flush_in"
 	// ActionFlushOut flush output buffer
-	// 刷新输出缓冲区
+	// Refresh the output buffer
 	ActionFlushOut = "flush_out"
 )
 
-// 注册节点
+// Register the node
 func init() {
 	_ = rulego.Registry.Register(&SerialInNode{})
 	_ = rulego.Registry.Register(&SerialOutNode{})
@@ -106,7 +106,7 @@ func init() {
 }
 
 // ISerialPort Serial port interface, convenient for test Mock
-// ISerialPort 定义串口接口，方便测试Mock
+// ISerialPort defines serial port interfaces to facilitate mock testing
 type ISerialPort interface {
 	io.ReadWriteCloser
 	SetReadTimeout(t time.Duration) error
@@ -117,7 +117,7 @@ type ISerialPort interface {
 }
 
 // SharedSerialConfig Shared serial connection configuration
-// SharedSerialConfig 共享的串口连接配置
+// SharedSerialConfig shared serial port connection configuration
 type SharedSerialConfig struct {
 	Port     string `json:"port" label:"Port" desc:"Serial port name, e.g. COM1, /dev/ttyUSB0" required:"true" ref:"primary"`
 	BaudRate int    `json:"baudRate" label:"Baud Rate" desc:"Serial baud rate, e.g. 9600, 115200"`
@@ -129,7 +129,7 @@ type SharedSerialConfig struct {
 }
 
 // ReadConfig Read configuration
-// ReadConfig 读取配置
+// ReadConfig reads configuration
 type ReadConfig struct {
 	StartChar    string `json:"startChar" label:"Start Char" desc:"Optional start character"`
 	SplitType    string `json:"splitType" label:"Split Type" desc:"Split mode: char, timeout, fixed"`
@@ -139,18 +139,18 @@ type ReadConfig struct {
 }
 
 // SerialInConfig Serial input node configuration
-// SerialInConfig 串口读取节点配置
+// SerialInConfig serial port reads node configuration
 type SerialInConfig struct {
 	SharedSerialConfig `json:",squash"`
 	ReadConfig         `json:",squash"`
 }
 
 // SerialOutConfig Serial output node configuration
-// SerialOutConfig 串口写入节点配置
+// SerialOutConfig Serial port writes node configuration
 type SerialOutConfig struct {
 	SharedSerialConfig `json:",squash"`
 	// Data content to send, supports dynamic variable replacement (e.g. ${data}). If empty, use msg.Data
-	// Data 发送内容，支持动态变量替换（如 ${data}）。如果为空，则使用 msg.Data
+	// Data sends content, supports dynamic variable substitution (such as ${data}). If it is null, use msg.Data
 	Data string `json:"data" label:"Data" desc:"Data to send, supports \${} variables, empty uses msg.Data"`
 	// (e.g. \r\n)
 	AddChar  string `json:"addChar" label:"Add Char" desc:"Character appended when sending, e.g. \\r\\n"`
@@ -158,11 +158,11 @@ type SerialOutConfig struct {
 }
 
 // SerialRequestConfig Serial request node configuration
-// SerialRequestConfig 串口请求节点配置
+// SerialRequestConfig Serial port node configuration
 type SerialRequestConfig struct {
 	SharedSerialConfig `json:",squash"`
 	// Data content to send, supports dynamic variable replacement (e.g. ${data}). If empty, use msg.Data
-	// Data 发送内容，支持动态变量替换（如 ${data}）。如果为空，则使用 msg.Data
+	// Data sends content, supports dynamic variable substitution (such as ${data}). If it is null, use msg.Data
 	Data string `json:"data" label:"Data" desc:"Data to send, supports \${} variables, empty uses msg.Data"`
 	// Output settings
 	// (e.g. \r\n)
@@ -175,16 +175,16 @@ type SerialRequestConfig struct {
 }
 
 // SerialControlConfig Serial control node configuration
-// SerialControlConfig 串口控制节点配置
+// SerialControlConfig Configuration of serial port control nodes
 type SerialControlConfig struct {
 	SharedSerialConfig `json:",squash"`
 	// Action Control instruction, supports dynamic variable replacement (e.g. ${msg.action}). If empty, use msg.Data as instruction
-	// Action 控制指令，支持动态变量替换（如 ${msg.action}）。如果为空，则使用 msg.Data 作为指令
+	// Action control command, supports dynamic variable replacement (e.g., ${msg.action}). If it is null, use msg.Data as the command
 	Action string `json:"action" label:"Action" desc:"Control action, supports \${} variables, e.g. open, close, dtr=1"`
 }
 
 // SafeSerialPort Thread-safe serial port wrapper
-// SafeSerialPort 线程安全的串口封装
+// SafeSerialPort thread-safe serial port encapsulation
 type SafeSerialPort struct {
 	Port   ISerialPort
 	Config SharedSerialConfig
@@ -193,7 +193,7 @@ type SafeSerialPort struct {
 }
 
 // Write writes data to the serial port.
-// Write 向串口写入数据。
+// Write: Write data to the serial port.
 func (s *SafeSerialPort) Write(b []byte) (n int, err error) {
 	s.Lock()
 	defer s.Unlock()
@@ -213,7 +213,7 @@ func (s *SafeSerialPort) Write(b []byte) (n int, err error) {
 }
 
 // Read reads data from the serial port.
-// Read 从串口读取数据。
+// Read data from the serial port.
 func (s *SafeSerialPort) Read(b []byte) (n int, err error) {
 	s.Lock()
 	if !s.isOpen || s.Port == nil {
@@ -240,7 +240,7 @@ func (s *SafeSerialPort) Read(b []byte) (n int, err error) {
 }
 
 // Close closes the serial port.
-// Close 关闭串口。
+// Close: Close the serial port.
 func (s *SafeSerialPort) Close() error {
 	s.Lock()
 	defer s.Unlock()
@@ -376,7 +376,7 @@ func (s *SafeSerialPort) reopen() error {
 		return err
 	}
 
-	// Handle DTR/RTS / 处理 DTR/RTS
+	// Handle DTR/RTS
 	if err := port.SetDTR(s.Config.DTR); err != nil {
 		_ = port.Close()
 		return err
@@ -392,37 +392,37 @@ func (s *SafeSerialPort) reopen() error {
 }
 
 // Allow test coverage
-// 允许测试覆盖
+// Allow test coverage
 var serialOpener = func(name string, mode *serial.Mode) (ISerialPort, error) {
 	return serial.Open(name, mode)
 }
 
 // SetSerialOpener sets the serial port opener function.
-// SetSerialOpener 设置串口打开函数。
+// SetSerialOpener sets the function for opening the serial port.
 func SetSerialOpener(opener func(name string, mode *serial.Mode) (ISerialPort, error)) {
 	serialOpener = opener
 }
 
 // Allow test coverage
-// 允许测试覆盖
+// Allow test coverage
 var portsLister = func() ([]string, error) {
 	return serial.GetPortsList()
 }
 
 // SetPortsLister sets the serial ports lister function.
-// SetPortsLister 设置串口列表获取函数。
+// SetPortsLister sets the function for obtaining the serial port list.
 func SetPortsLister(lister func() ([]string, error)) {
 	portsLister = lister
 }
 
 // GetPortsList Get list of all available serial ports in the system
-// GetPortsList 获取系统中所有可用的串口列表
+// GetPortsList retrieves a list of all available serial ports in the system
 func GetPortsList() ([]string, error) {
 	return portsLister()
 }
 
 // baseSerialNode Base serial node
-// baseSerialNode 基础串口节点
+// baseSerialNode is a basic serial port node
 type baseSerialNode struct {
 	base.SharedNode[*SafeSerialPort]
 	Config SharedSerialConfig
@@ -447,13 +447,13 @@ type SerialInNode struct {
 }
 
 // Type returns the node type.
-// Type 返回节点类型。
+// Type returns the node type.
 func (x *SerialInNode) Type() string {
 	return "x/serialIn"
 }
 
 // New creates a new instance of SerialInNode.
-// New 创建 SerialInNode 的新实例。
+// New Create a new instance of SerialInNode.
 func (x *SerialInNode) New() types.Node {
 	return &SerialInNode{
 		Config: SerialInConfig{
@@ -468,7 +468,7 @@ func (x *SerialInNode) New() types.Node {
 }
 
 // Init initializes the node with the provided configuration.
-// Init 使用提供的配置初始化节点。
+// Init uses the provided configuration initialization node.
 func (x *SerialInNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
@@ -485,7 +485,7 @@ func (x *SerialInNode) Init(ruleConfig types.Config, configuration types.Configu
 }
 
 // OnMsg handles the incoming message and reads data from the serial port.
-// OnMsg 处理输入消息并从串口读取数据。
+// OnMsg handles input messages and reads data from the serial port.
 func (x *SerialInNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -516,13 +516,13 @@ func (x *SerialInNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 		ctx.TellSuccess(msg)
 	} else {
-		// No data read / 未读取到数据
+		// No data read
 		ctx.TellSuccess(msg)
 	}
 }
 
 // Destroy cleans up the node resources.
-// Destroy 清理节点资源。
+// Destroy cleans up node resources.
 func (x *SerialInNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -538,13 +538,13 @@ type SerialOutNode struct {
 }
 
 // Type returns the node type.
-// Type 返回节点类型。
+// Type returns the node type.
 func (x *SerialOutNode) Type() string {
 	return "x/serialOut"
 }
 
 // New creates a new instance of SerialOutNode.
-// New 创建 SerialOutNode 的新实例。
+// New Create a new instance of SerialOutNode.
 func (x *SerialOutNode) New() types.Node {
 	return &SerialOutNode{
 		Config: SerialOutConfig{
@@ -558,7 +558,7 @@ func (x *SerialOutNode) New() types.Node {
 }
 
 // Init initializes the node with the provided configuration.
-// Init 使用提供的配置初始化节点。
+// Init uses the provided configuration initialization node.
 func (x *SerialOutNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
@@ -574,7 +574,7 @@ func (x *SerialOutNode) Init(ruleConfig types.Config, configuration types.Config
 	if err != nil {
 		return err
 	}
-	// Initialize data template / 初始化 data 模板
+	// Initialize data template
 	if x.Config.Data != "" {
 		x.dataTemplate, err = el.NewTemplate(x.Config.Data)
 		if err != nil {
@@ -585,7 +585,7 @@ func (x *SerialOutNode) Init(ruleConfig types.Config, configuration types.Config
 }
 
 // OnMsg handles the incoming message and writes data to the serial port.
-// OnMsg 处理输入消息并向串口写入数据。
+// OnMsg processes input messages and writes data to the serial port.
 func (x *SerialOutNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -631,7 +631,7 @@ func (x *SerialOutNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // Destroy cleans up the node resources.
-// Destroy 清理节点资源。
+// Destroy cleans up node resources.
 func (x *SerialOutNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -647,13 +647,13 @@ type SerialRequestNode struct {
 }
 
 // Type returns the node type.
-// Type 返回节点类型。
+// Type returns the node type.
 func (x *SerialRequestNode) Type() string {
 	return "x/serialRequest"
 }
 
 // New creates a new instance of SerialRequestNode.
-// New 创建 SerialRequestNode 的新实例。
+// New: Create a new instance of SerialRequestNode.
 func (x *SerialRequestNode) New() types.Node {
 	return &SerialRequestNode{
 		Config: SerialRequestConfig{
@@ -670,7 +670,7 @@ func (x *SerialRequestNode) New() types.Node {
 }
 
 // Init initializes the node with the provided configuration.
-// Init 使用提供的配置初始化节点。
+// Init uses the provided configuration initialization node.
 func (x *SerialRequestNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
@@ -686,7 +686,7 @@ func (x *SerialRequestNode) Init(ruleConfig types.Config, configuration types.Co
 	if err != nil {
 		return err
 	}
-	// Initialize data template / 初始化 data 模板
+	// Initialize data template
 	if x.Config.Data != "" {
 		x.dataTemplate, err = el.NewTemplate(x.Config.Data)
 		if err != nil {
@@ -697,7 +697,7 @@ func (x *SerialRequestNode) Init(ruleConfig types.Config, configuration types.Co
 }
 
 // OnMsg handles the incoming message, writes to serial port and waits for response.
-// OnMsg 处理输入消息，向串口写入并等待响应。
+// OnMsg processes input messages, writes them to the serial port, and waits for a response.
 func (x *SerialRequestNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -705,7 +705,7 @@ func (x *SerialRequestNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-	// Write / 写入
+	// Write
 	var data []byte
 	if x.dataTemplate != nil {
 		data = []byte(x.dataTemplate.ExecuteAsString(ctx.GetEnv(msg, false)))
@@ -765,7 +765,7 @@ func (x *SerialRequestNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // Destroy cleans up the node resources.
-// Destroy 清理节点资源。
+// Destroy cleans up node resources.
 func (x *SerialRequestNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -781,13 +781,13 @@ type SerialControlNode struct {
 }
 
 // Type returns the node type.
-// Type 返回节点类型。
+// Type returns the node type.
 func (x *SerialControlNode) Type() string {
 	return "x/serialControl"
 }
 
 // New creates a new instance of SerialControlNode.
-// New 创建 SerialControlNode 的新实例。
+// New Create a new instance of SerialControlNode.
 func (x *SerialControlNode) New() types.Node {
 	return &SerialControlNode{
 		Config: SerialControlConfig{
@@ -800,7 +800,7 @@ func (x *SerialControlNode) New() types.Node {
 }
 
 // Init initializes the node with the provided configuration.
-// Init 使用提供的配置初始化节点。
+// Init uses the provided configuration initialization node.
 func (x *SerialControlNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
@@ -816,7 +816,7 @@ func (x *SerialControlNode) Init(ruleConfig types.Config, configuration types.Co
 	if err != nil {
 		return err
 	}
-	// Initialize action template / 初始化 action 模板
+	// Initialize action template
 	if x.Config.Action != "" {
 		x.actionTemplate, err = el.NewTemplate(x.Config.Action)
 		if err != nil {
@@ -827,7 +827,7 @@ func (x *SerialControlNode) Init(ruleConfig types.Config, configuration types.Co
 }
 
 // OnMsg handles the incoming message and controls the serial port.
-// OnMsg 处理输入消息并控制串口。
+// OnMsg handles input messages and controls the serial port.
 func (x *SerialControlNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -837,7 +837,7 @@ func (x *SerialControlNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 
 	var action string
 	if x.actionTemplate != nil {
-		// Use configured action expression / 使用配置的 action 表达式
+		// Use configured action expression
 		action = x.actionTemplate.ExecuteAsString(ctx.GetEnv(msg, true))
 	} else {
 		action = msg.GetData()
@@ -870,7 +870,7 @@ func (x *SerialControlNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // Destroy cleans up the node resources.
-// Destroy 清理节点资源。
+// Destroy cleans up node resources.
 func (x *SerialControlNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -880,7 +880,7 @@ func (x *SerialControlNode) Destroy() {
 // ------------------------------------------------------------------------------------------------
 
 // readData reads data from the serial port based on the provided configuration.
-// readData 根据提供的配置从串口读取数据。
+// readData reads data from the serial port according to the provided configuration.
 func readData(port io.Reader, config ReadConfig) ([]byte, error) {
 	// Set initial read timeout
 	if p, ok := port.(ISerialPort); ok {
@@ -990,7 +990,7 @@ func readData(port io.Reader, config ReadConfig) ([]byte, error) {
 }
 
 // min returns the minimum of two integers.
-// min 返回两个整数中的较小值。
+// min returns the smaller of the two integers.
 func min(a, b int) int {
 	if a < b {
 		return a
