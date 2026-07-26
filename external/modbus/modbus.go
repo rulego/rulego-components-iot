@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/rulego/rulego"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/components/base"
 	"github.com/rulego/rulego/utils/maps"
@@ -82,11 +83,11 @@ type ModbusConfiguration struct {
 	// UnitId 从机编号
 	UnitId uint8 `json:"unitId" label:"Unit ID" desc:"Modbus slave unit ID"`
 	// address 寄存器地址 允许使用 ${} 占位符变量，示例：50或者0x32
-	Address string `json:"address" label:"Address" desc:"Register address, supports \${} variables, e.g. 50 or 0x32"`
+	Address string `json:"address" label:"Address" desc:"Register address, supports ${} variables, e.g. 50 or 0x32"`
 	// quantity 寄存器数量 允许使用 ${} 占位符变量
-	Quantity string `json:"quantity" label:"Quantity" desc:"Number of registers, supports \${} variables"`
+	Quantity string `json:"quantity" label:"Quantity" desc:"Number of registers, supports ${} variables"`
 	// value 寄存器值 允许使用 ${} 占位符变量。。读则不需要提供，如果写入多个与逗号隔开，例如：0x1,0x1 true 51,52
-	Value string `json:"value" label:"Value" desc:"Register value for write, supports \${} variables, comma-separated for multiple"`
+	Value string `json:"value" label:"Value" desc:"Register value for write, supports ${} variables, comma-separated for multiple"`
 	// RegType 寄存器类型：  允许使用 ${} 占位符变量，0:保持寄存器(功能码0x3)，1:输入寄存器(功能码:0x4)
 	RegType        string         `json:"regType" label:"Register Type" desc:"Register type: 0=Holding, 1=Input"`
 	TcpConfig      TcpConfig      `json:"tcpConfig" label:"TCP Config" desc:"TCP connection configuration"`
@@ -124,7 +125,6 @@ type RtuConfig struct {
 }
 
 // reconnectFunc 重新获取连接的回调函数
-// 由 ModbusNode 提供，通过 SharedNode.Close() + GetSafely() 实现安全的连接重建
 type reconnectFunc func(oldClient *modbus.ModbusClient) (*modbus.ModbusClient, error)
 
 // RetryableModbusClient 带重试逻辑的Modbus客户端
@@ -141,7 +141,6 @@ type RetryableModbusClient struct {
 }
 
 // NewRetryableModbusClient 创建一个新的带重试逻辑的Modbus客户端
-// reconnectFn: 连接失败时用于重建连接的回调，由调用方通过 SharedNode 机制提供
 func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logger types.Logger, reconnectFn reconnectFunc, unitId uint8, endianness modbus.Endianness, wordOrder modbus.WordOrder) *RetryableModbusClient {
 	return &RetryableModbusClient{
 		client:        client,
@@ -154,11 +153,20 @@ func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logge
 	}
 }
 
+// modbusOpLocks 按底层 client 关联操作锁，串行化共享连接的 SetUnitId+操作。
+var modbusOpLocks iot_points.OpLocks
+
 // executeWithRetry 执行操作并在连接错误时重试
 func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() error) error {
 	var err error
 	for retry := 0; retry <= r.maxRetries; retry++ {
+		opLock := modbusOpLocks.Lock(r.client)
+		opLock.Lock()
+		if r.client != nil {
+			r.client.SetUnitId(r.currentUnitId)
+		}
 		err = fn()
+		opLock.Unlock()
 		if err == nil {
 			return nil
 		}
@@ -175,14 +183,16 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 
 			r.warnf("Modbus %s error: %s, retry count: %d, trying to reconnect...", operation, err, retry)
 
-			// 通过 SharedNode 机制重建连接，避免直接操作共享连接
+			// 通过 SharedNode 机制重建连接
 			if r.reconnectFn != nil {
-				newClient, reconnectErr := r.reconnectFn(r.client)
+				oldClient := r.client
+				newClient, reconnectErr := r.reconnectFn(oldClient)
 				if reconnectErr != nil {
 					r.warnf("Failed to reconnect: %s", reconnectErr)
 					return &ModbusConnErr{Err: reconnectErr}
 				}
 				r.client = newClient
+				modbusOpLocks.Delete(oldClient)
 				// 恢复运行时配置到新连接
 				r.applyRuntimeConfig()
 			} else {
@@ -540,7 +550,8 @@ func (r *RetryableModbusClient) applyRuntimeConfig() {
 	}
 }
 
-// ModbusNode 客户端节点，
+// ModbusNode 命令式 modbus 节点（单点 Cmd/Address/Quantity）。
+// Deprecated: 改用 x/modbusRead / x/modbusWrite（点位表 + Modicon 地址，统一 iot_points 契约）。
 // 成功：转向Success链，发送消息执行结果存放在msg.Data
 // 失败：转向Failure链
 type ModbusNode struct {
@@ -563,13 +574,6 @@ type Params struct {
 	Quantity uint16         `json:"quantity" `
 	Value    string         `json:"value" `
 	RegType  modbus.RegType `json:"regType" `
-}
-
-type ModbusValue struct {
-	UnitId  uint8  `json:"unitId"`
-	Type    string `json:"type" `
-	Address uint16 `json:"address"`
-	Value   any    `json:"value" `
 }
 
 // Type 返回组件类型
@@ -642,55 +646,53 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 	x.quantityTemplate = str.NewTemplate(x.Config.Quantity)
 	x.valueTemplate = str.NewTemplate(x.Config.Value)
 	x.regTypeTemplate = str.NewTemplate(x.Config.RegType)
+	// 启用同链连接池
+	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | byte](data []T, initAddr uint16, step uint16, unitId uint8) []ModbusValue {
-	addVals := make([]ModbusValue, 0)
-	// Get the reflect.Value of the slice
-	sliceValue := reflect.ValueOf(data)
-	// Get the type of the slice
-	sliceType := sliceValue.Type()
-	// Get the element type of the slice
-	elemType := sliceType.Elem()
+func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | byte](data []T, initAddr uint16, step uint16, unitId uint8) []iot_points.Data {
+	addVals := make([]iot_points.Data, 0, len(data))
+	now := time.Now().UnixNano()
+	elemType := reflect.ValueOf(data).Type().Elem()
 	if elemType == reflect.TypeOf(byte(0)) {
 		step = 1
 		for i := range data {
 			if i%2 == 0 {
-				addVals = append(addVals, ModbusValue{
-					UnitId:  unitId,
-					Address: initAddr + uint16(i)*step,
-					Value:   data[i : i+1],
-					Type:    elemType.Name(),
+				addVals = append(addVals, iot_points.Data{
+					Name:      strconv.Itoa(int(initAddr) + i*int(step)),
+					Value:     data[i : i+1],
+					Timestamp: now,
 				})
 			}
 		}
 
 	} else {
 		for i, v := range data {
-			addVals = append(addVals, ModbusValue{
-				UnitId:  unitId,
-				Address: initAddr + uint16(i)*step,
-				Value:   v,
-				Type:    elemType.Name(),
+			addVals = append(addVals, iot_points.Data{
+				Name:      strconv.Itoa(int(initAddr) + i*int(step)),
+				Value:     v,
+				Timestamp: now,
 			})
 		}
 	}
 	return addVals
 }
 
-// reconnect 通过 SharedNode 机制安全地重建连接
-// 使用互斥锁避免并发重连导致惊群效应：多个请求同时失败时，只有一个执行 Close+GetSafely，
-// 其余请求等待后直接通过 GetSafely 获取已重建的连接
+// reconnect 通过 SharedNode 机制安全地重建连接。
 func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusClient, error) {
-	// 如果是共享节点池模式，则需要委托给实际拥有连接的源节点
-	if x.SharedNode.IsFromPool() && x.RuleConfig.NodePool != nil {
-		if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-			if sourceNode, ok := nodeCtx.GetNode().(*ModbusNode); ok {
-				return sourceNode.reconnect(oldClient)
+	// ref:// 借用方：连接归源节点所有，借用方不重建。
+	if x.SharedNode.IsFromPool() {
+		// NodePool 模式：委托池内源节点重连
+		if x.RuleConfig.NodePool != nil {
+			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
+				if sourceNode, ok := nodeCtx.GetNode().(*ModbusNode); ok {
+					return sourceNode.reconnect(oldClient)
+				}
 			}
 		}
-		return nil, fmt.Errorf("failed to get source modbus node from pool for instance %s", x.SharedNode.InstanceId)
+		// 同链模式：返回错误由上层处理
+		return nil, fmt.Errorf("modbus ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
 	}
 
 	x.reconnectLocker.Lock()
@@ -699,7 +701,7 @@ func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusCl
 	// 检查连接是否已经被其他协程重建
 	currentClient, err := x.SharedNode.GetSafely()
 	if err != nil {
-		// 获取或初始化失败，直接返回错误，避免无意义的双重重试
+		// 获取或初始化失败
 		return nil, err
 	}
 	if currentClient != oldClient {
@@ -710,13 +712,17 @@ func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusCl
 	// 主动关闭旧连接并等待网关释放资源
 	if oldClient != nil {
 		_ = oldClient.Close()
-		time.Sleep(200 * time.Millisecond)
+		modbusOpLocks.Delete(oldClient) // 清理旧连接操作锁
+		time.Sleep(iot_points.ReconnectDelay)
 	}
 
-	// Close 会清理 localClient 并重置 clientInitialized=false
-	_ = x.SharedNode.Close()
-	// GetSafely 检测到 clientInitialized=false 后会调用 InitInstanceFunc 创建新客户端
-	return x.SharedNode.GetSafely()
+	// 建新连接，Refresh 更新 holder
+	newClient, err := x.initClient()
+	if err != nil {
+		return nil, err
+	}
+	x.SharedNode.Refresh(newClient)
+	return newClient, nil
 }
 
 // OnMsg 处理消息
@@ -724,7 +730,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	var (
 		err    error
 		params *Params
-		data   []ModbusValue = make([]ModbusValue, 0)
+		data   []iot_points.Data = make([]iot_points.Data, 0)
 	)
 
 	conn, err := x.SharedNode.GetSafely()
@@ -766,7 +772,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // executeModbusCommand 执行Modbus命令
-func (x *ModbusNode) executeModbusCommand(params *Params, retryableClient *RetryableModbusClient) (error, []ModbusValue) {
+func (x *ModbusNode) executeModbusCommand(params *Params, retryableClient *RetryableModbusClient) (error, []iot_points.Data) {
 	var (
 		err      error
 		boolVals []bool
@@ -782,7 +788,7 @@ func (x *ModbusNode) executeModbusCommand(params *Params, retryableClient *Retry
 		f32s     []float32
 		f64s     []float64
 		bts      []byte
-		data     []ModbusValue = make([]ModbusValue, 0)
+		data     []iot_points.Data = make([]iot_points.Data, 0)
 	)
 
 	switch params.Cmd {
@@ -1027,6 +1033,11 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 
 // Destroy 销毁组件
 func (x *ModbusNode) Destroy() {
+	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
+			modbusOpLocks.Delete(c)
+		}
+	}
 	_ = x.SharedNode.Close()
 }
 

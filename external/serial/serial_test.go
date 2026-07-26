@@ -68,6 +68,26 @@ func (m *MockSerialPort) ResetOutputBuffer() error {
 	return nil
 }
 
+// serialNodeOnMsg sends one message to a node and waits for the callback.
+func serialNodeOnMsg(t *testing.T, node types.Node, msg types.RuleMsg, callback func(types.RuleMsg, string, error)) {
+	t.Helper()
+	done := make(chan struct{}, 1)
+	test.NodeOnMsg(t, node, []test.Msg{{
+		DataType: msg.GetDataType(),
+		MsgType:  msg.Type,
+		MetaData: msg.Metadata,
+		Data:     msg.GetData(),
+	}}, func(outMsg types.RuleMsg, relationType string, err error) {
+		callback(outMsg, relationType, err)
+		done <- struct{}{}
+	})
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for serial node callback")
+	}
+}
+
 func TestGetPortsList(t *testing.T) {
 	originalLister := portsLister
 	defer func() { portsLister = originalLister }()
@@ -100,7 +120,6 @@ func TestSerialNodes(t *testing.T) {
 			"baudRate": 9600,
 		}
 	}
-
 	t.Run("SerialOutNode", func(t *testing.T) {
 		mockPort := &MockSerialPort{
 			RxBuffer: bytes.NewBuffer(nil),
@@ -117,14 +136,11 @@ func TestSerialNodes(t *testing.T) {
 		err := node.Init(types.NewConfig(), config)
 		assert.Nil(t, err)
 
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "Hello"), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
 		})
 
-		msg := types.NewMsg(0, "TEST", types.TEXT, nil, "Hello")
-		node.OnMsg(ctx, msg)
-
-		// Check TxBuffer
 		assert.Equal(t, "Hello\n", mockPort.TxBuffer.String())
 		node.Destroy()
 	})
@@ -146,17 +162,13 @@ func TestSerialNodes(t *testing.T) {
 		err := node.Init(types.NewConfig(), config)
 		assert.Nil(t, err)
 
-		// Pre-fill RxBuffer
 		mockPort.RxBuffer.WriteString("World\n")
 
-		var resultData string
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, ""), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
-			resultData = msg.GetData()
+			assert.Equal(t, types.Success, relationType)
+			assert.Equal(t, "World\n", msg.GetData())
 		})
-
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, ""))
-		assert.Equal(t, "World\n", resultData)
 		node.Destroy()
 	})
 
@@ -178,22 +190,15 @@ func TestSerialNodes(t *testing.T) {
 		err := node.Init(types.NewConfig(), config)
 		assert.Nil(t, err)
 
-		// Prepare response in RxBuffer
 		mockPort.RxBuffer.WriteString("Status OK!")
 
-		var resultData string
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "Query"), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
-			resultData = msg.GetData()
+			assert.Equal(t, types.Success, relationType)
+			assert.Equal(t, "Status OK!", msg.GetData())
 		})
 
-		msg := types.NewMsg(0, "TEST", types.TEXT, nil, "Query")
-		node.OnMsg(ctx, msg)
-
-		// Check Write
 		assert.Equal(t, "Query?", mockPort.TxBuffer.String())
-		// Check Read Result
-		assert.Equal(t, "Status OK!", resultData)
 		node.Destroy()
 	})
 
@@ -212,28 +217,34 @@ func TestSerialNodes(t *testing.T) {
 		err := node.Init(types.NewConfig(), config)
 		assert.Nil(t, err)
 
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "open"), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
 		})
-
-		// Test "open"
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, "open"))
 		assert.Equal(t, false, mockPort.Closed)
 
-		// Test "dtr=1"
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, "dtr=1"))
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "dtr=1"), func(msg types.RuleMsg, relationType string, err error) {
+			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
+		})
 		assert.Equal(t, true, mockPort.DTR)
 
-		// Test "rts=1"
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, "rts=1"))
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "rts=1"), func(msg types.RuleMsg, relationType string, err error) {
+			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
+		})
 		assert.Equal(t, true, mockPort.RTS)
 
-		// Test "flush"
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, "flush"))
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "flush"), func(msg types.RuleMsg, relationType string, err error) {
+			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
+		})
 		assert.Equal(t, true, mockPort.Flushed)
 
-		// Test "close"
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, "close"))
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "close"), func(msg types.RuleMsg, relationType string, err error) {
+			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
+		})
 		assert.Equal(t, true, mockPort.Closed)
 
 		node.Destroy()
@@ -270,16 +281,11 @@ func TestSerialHexDelivery(t *testing.T) {
 		// Prepare binary data: 0x01 0x02 0x0A 0xFF
 		mockPort.RxBuffer.Write([]byte{0x01, 0x02, 0x0A, 0xFF})
 
-		var resultData string
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, ""), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
-			resultData = msg.GetData()
+			assert.Equal(t, types.Success, relationType)
+			assert.Equal(t, "01020aff", msg.GetData())
 		})
-
-		node.OnMsg(ctx, types.NewMsg(0, "TEST", types.TEXT, nil, ""))
-
-		// Expected: "01020aff"
-		assert.Equal(t, "01020aff", resultData)
 		node.Destroy()
 	})
 
@@ -300,16 +306,11 @@ func TestSerialHexDelivery(t *testing.T) {
 		// Prepare response: 0xAB 0xCD
 		mockPort.RxBuffer.Write([]byte{0xAB, 0xCD})
 
-		var resultData string
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "5175657279"), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
-			resultData = msg.GetData()
+			assert.Equal(t, types.Success, relationType)
+			assert.Equal(t, "abcd", msg.GetData())
 		})
-
-		msg := types.NewMsg(0, "TEST", types.TEXT, nil, "5175657279") // "Query" in hex
-		node.OnMsg(ctx, msg)
-
-		assert.Equal(t, "abcd", resultData)
 		node.Destroy()
 	})
 
@@ -326,13 +327,10 @@ func TestSerialHexDelivery(t *testing.T) {
 		err := node.Init(types.NewConfig(), config)
 		assert.Nil(t, err)
 
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "01020A"), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
 		})
-
-		// Send hex string "01020A"
-		msg := types.NewMsg(0, "TEST", types.TEXT, nil, "01020A")
-		node.OnMsg(ctx, msg)
 
 		// Expect bytes 0x01, 0x02, 0x0A
 		expected := []byte{0x01, 0x02, 0x0A}
@@ -357,13 +355,10 @@ func TestSerialHexDelivery(t *testing.T) {
 		// Prepare response
 		mockPort.RxBuffer.WriteString("OK")
 
-		ctx := test.NewRuleContext(types.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
+		serialNodeOnMsg(t, node, types.NewMsg(0, "TEST", types.TEXT, nil, "0102"), func(msg types.RuleMsg, relationType string, err error) {
 			assert.Nil(t, err)
+			assert.Equal(t, types.Success, relationType)
 		})
-
-		// Send hex string "0102"
-		msg := types.NewMsg(0, "TEST", types.TEXT, nil, "0102")
-		node.OnMsg(ctx, msg)
 
 		// Expect bytes 0x01, 0x02
 		expected := []byte{0x01, 0x02}

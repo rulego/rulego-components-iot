@@ -28,12 +28,11 @@ import (
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 )
 
 const OPC_UA_DATA_MSG_TYPE = "OPC_UA_DATA"
-
-var logger = types.DefaultLogger()
 
 // Data OPC数据封装结构体
 type Data struct {
@@ -125,7 +124,7 @@ type OpcUaClientHolder struct {
 	Ctx context.Context
 	// Logger 日志
 	Logger types.Logger
-	// endpointOptionsPrinted 跟踪是否已经打印过端点选项（避免重复打印）
+	// endpointOptionsPrinted 跟踪是否已经打印过端点选项
 	endpointOptionsPrinted bool
 }
 
@@ -137,7 +136,7 @@ func (x *OpcUaClientHolder) Printf(format string, v ...interface{}) {
 }
 
 // DefaultHolder 默认配置
-func DefaultHolder(c ConfigProp) *OpcUaClientHolder {
+func DefaultHolder(c ConfigProp, logger types.Logger) *OpcUaClientHolder {
 	return &OpcUaClientHolder{
 		Config: c,
 		Ctx:    context.Background(),
@@ -272,7 +271,7 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 	}
 
 	if serverEndpoint == nil { // Didn't find an endpoint with matching policy and mode.
-		// 只在首次失败时打印端点选项，帮助用户了解正确配置
+		// 只在首次失败时打印端点选项
 		if !x.endpointOptionsPrinted && x.Logger != nil {
 			x.Printf("unable to find suitable server endpoint with selected sec-policy and sec-mode")
 			x.printEndpointOptions(endpoints)
@@ -345,7 +344,7 @@ func (x *OpcUaClientHolder) validateEndpointConfig(endpoints []*ua.EndpointDescr
 
 	err := fmt.Errorf("server does not support an endpoint with security : %s , %s, %s", secPolicy, secMode, authMode)
 
-	// 只在首次失败时打印端点选项，避免重复日志
+	// 只在首次失败时打印端点选项
 	if !x.endpointOptionsPrinted && x.Logger != nil {
 		x.Printf("OPC UA endpoint validation failed: %v", err)
 		x.printEndpointOptions(endpoints)
@@ -383,7 +382,7 @@ func (x *OpcUaClientHolder) printEndpointOptions(endpoints []*ua.EndpointDescrip
 }
 
 // Read 读取点位数据
-func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, error) {
+func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, *ua.ReadResponse, error) {
 	ctx := context.Background()
 	allIds := make([]*ua.ReadValueID, 0)
 	data := make([]Data, 0)
@@ -391,7 +390,9 @@ func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, err
 	for _, nodeId := range nodeIds {
 		id, err := ua.ParseNodeID(nodeId)
 		if err != nil {
-			logger.Printf("parse node id error %v ", err)
+			if logger != nil {
+				logger.Warnf("parse node id error %v ", err)
+			}
 			return nil, nil, err
 		} else {
 			allIds = append(allIds, &ua.ReadValueID{NodeID: id})
@@ -412,7 +413,9 @@ func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, err
 	var resp *ua.ReadResponse
 	resp, err := client.Read(ctx, req)
 	if err != nil {
-		logger.Printf("point read error: %v", err)
+		if logger != nil {
+			logger.Warnf("point read error: %v", err)
+		}
 		return nil, nil, err
 	} else {
 		for i, result := range resp.Results {
@@ -432,4 +435,36 @@ func Read(client *opcua.Client, nodeIds []string) ([]Data, *ua.ReadResponse, err
 		}
 	}
 	return data, resp, nil
+}
+
+// ToPointsData 把 Read 的结果转为统一的 iot_points.Data 列表。供 read 节点与采集端点共用。
+// names 为用户配置的点名(与 nodeIds 对齐,可为 nil)；Name 优先级：names[i] → DisplayName → NodeID。
+// 单点非 OK 标记 Error；OK 点填 Value 与 ServerTimestamp(ns)。
+func ToPointsData(nodeIds []string, names []string, data []Data, resp *ua.ReadResponse) []iot_points.Data {
+	out := make([]iot_points.Data, 0, len(nodeIds))
+	for i, result := range resp.Results {
+		name := ""
+		switch {
+		case i < len(names) && names[i] != "":
+			name = names[i]
+		case i < len(data) && data[i].DisplayName != "":
+			name = data[i].DisplayName
+		case i < len(nodeIds):
+			name = nodeIds[i]
+		}
+		dd := iot_points.Data{Name: name}
+		switch {
+		case result != nil && result.Status == ua.StatusOK:
+			dd.Value = result.Value.Value()
+			if t := result.ServerTimestamp; !t.IsZero() {
+				dd.Timestamp = t.UnixNano()
+			}
+		case result != nil:
+			dd.Error = result.Status.Error()
+		default:
+			dd.Error = "nil read result"
+		}
+		out = append(out, dd)
+	}
+	return out
 }

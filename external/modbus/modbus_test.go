@@ -22,7 +22,11 @@ import (
 	"time"
 
 	"github.com/rulego/rulego/api/types"
+	"github.com/rulego/rulego/components/base"
+	"github.com/rulego/rulego/test"
 	"github.com/rulego/rulego/test/assert"
+	"github.com/rulego/rulego/utils/str"
+	"github.com/simonvetter/modbus"
 )
 
 // TestModbusNode 测试 Modbus 节点基本功能
@@ -90,5 +94,74 @@ func TestModbusBasicOperations(t *testing.T) {
 		t.Fatal("Modbus 基础操作测试超时")
 	case <-done:
 		t.Log("Modbus 基础操作测试完成")
+	}
+}
+
+// TestModbusNodeOnMsgInvalidAddress verifies that invalid addresses are routed to Failure.
+func TestModbusNodeOnMsgInvalidAddress(t *testing.T) {
+	node := &ModbusNode{
+		Config: ModbusConfiguration{
+			Cmd:      "ReadCoils",
+			Address:  "bad-address",
+			Quantity: "1",
+			UnitId:   1,
+			Server:   "mock://modbus",
+		},
+	}
+	err := node.SharedNode.InitWithClose(types.NewConfig(), node.Type(), "mock://modbus", false, func() (*modbus.ModbusClient, error) {
+		return &modbus.ModbusClient{}, nil
+	}, func(client *modbus.ModbusClient) error {
+		return nil
+	})
+	assert.Nil(t, err)
+	node.addressTemplate = str.NewTemplate(node.Config.Address)
+	node.quantityTemplate = str.NewTemplate(node.Config.Quantity)
+	node.valueTemplate = str.NewTemplate(node.Config.Value)
+	node.regTypeTemplate = str.NewTemplate(node.Config.RegType)
+
+	done := make(chan struct{}, 1)
+	test.NodeOnMsg(t, node, []test.Msg{{
+		DataType: types.JSON,
+		MsgType:  "TEST",
+		Data:     `{}`,
+	}}, func(msg types.RuleMsg, relationType string, err error) {
+		assert.NotNil(t, err)
+		assert.Equal(t, types.Failure, relationType)
+		done <- struct{}{}
+	})
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for modbus invalid address callback")
+	}
+}
+
+// TestModbusNodeOnMsgMissingClient verifies that missing clients are routed to Failure.
+func TestModbusNodeOnMsgMissingClient(t *testing.T) {
+	node := &ModbusNode{
+		Config: ModbusConfiguration{
+			Cmd:      "ReadCoils",
+			Address:  "1",
+			Quantity: "1",
+			UnitId:   1,
+		},
+	}
+
+	done := make(chan struct{}, 1)
+	test.NodeOnMsg(t, node, []test.Msg{{
+		DataType: types.JSON,
+		MsgType:  "TEST",
+		Data:     `{}`,
+	}}, func(msg types.RuleMsg, relationType string, err error) {
+		assert.Equal(t, base.ErrClientNotInit, err)
+		assert.Equal(t, types.Failure, relationType)
+		done <- struct{}{}
+	})
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for modbus missing client callback")
 	}
 }

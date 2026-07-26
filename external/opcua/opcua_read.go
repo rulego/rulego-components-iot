@@ -19,12 +19,14 @@ package opcua
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gopcua/opcua"
-	"github.com/gopcua/opcua/ua"
 	"github.com/rulego/rulego"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	opcuaClient "github.com/rulego/rulego-components-iot/pkg/opcua_client"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/components/base"
@@ -41,17 +43,19 @@ type Configuration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
-	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256"`
+	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256" group:"advanced"`
 	//Security Mode: one of None, Sign, SignAndEncrypt
-	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt"`
+	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt" group:"advanced"`
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate"`
-	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared"`
-	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared"`
+	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" group:"advanced"`
+	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared" group:"advanced"`
+	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared" group:"advanced"`
 	//OPC UA Server CertFile Path
-	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared"`
+	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared" group:"advanced"`
 	//OPC UA Server CertKeyFile Path
-	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared"`
+	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared" group:"advanced"`
+	// 默认点位表（addr=NodeID，如 ns=2;s=Temperature）；为空则从 msg.Data 解析 nodeIds（旧兼容）
+	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=NodeID; empty=parse nodeIds from msg.Data"`
 }
 
 func (c Configuration) GetServer() string {
@@ -79,28 +83,23 @@ func (c Configuration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
 
-// ReadNode opcua读取节点
-// 查询消息负荷 msg.Data 中节点列表点位数据
-// 节点列表格式：["ns=3;i=1003","ns=3;i=1005"]
-// 查询结果会重新赋值到msg.Data，通过`Success`链传给下一个节点
-// 结果格式：
-// [
+// ReadNode 批量读取 OPC UA 节点，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// gopcua SecureChannel 按 RequestID 匹配响应，天然并发安全，无需 opLock。
 //
-//	 {
-//	   "displayName": "ns=3;i=1003",
-//	   "floatValue": 0,
-//	   "nodeId": "ns=3;i=1003",
-//	   "quality": 0,
-//	   "recordTime": "0001-01-01T00:00:00Z",
-//	   "sourceTime": "0001-01-01T00:00:00Z",
-//	   "timestamp": "0001-01-01T00:00:00Z",
-//	}
+// 点位来源（双入口，msg.Data 优先）：配置 points(addr=NodeID)；或 msg.Data 带 nodeIds/points。
+// 输出(msg.Data)：[{"name","value","timestamp","error"}]
 //
-// ]
+// opcuaReconnecter 连接重建能力接口。
+type opcuaReconnecter interface {
+	reconnect(old *opcua.Client) (*opcua.Client, error)
+}
+
 type ReadNode struct {
 	base.SharedNode[*opcua.Client]
 	//节点配置
 	Config Configuration
+	// reconnectLocker 保护重连
+	reconnectLocker sync.Mutex
 }
 
 func (x *ReadNode) New() types.Node {
@@ -110,6 +109,9 @@ func (x *ReadNode) New() types.Node {
 			Policy: "None",
 			Mode:   "none",
 			Auth:   "anonymous",
+			Points: []iot_points.Point{
+				{Name: "temperature", Addr: "ns=2;s=Temperature"},
+			},
 		},
 	}
 }
@@ -127,62 +129,54 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 	}, func(client *opcua.Client) error {
 		return client.Close(context.Background())
 	})
+	// 启用同链连接池
+	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 实现 Node 接口，处理消息
+// OnMsg 处理消息。点位双入口（msg.Data 优先，兼容旧 nodeIds/旧 write Data/新 points）；连接级失败自动重连重试。
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-
-	nodeIds := make([]string, 0)
-	err = json.Unmarshal([]byte(msg.GetData()), &nodeIds)
+	pts, err := resolvePoints(x.Config.Points, msg, errors.New("no opcua points: configure points or pass nodeIds/points via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-
-	data, resp, err := opcuaClient.Read(client, nodeIds)
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
 	}
-	succ := false
-	errs := make([]string, 10)
-	for i, result := range resp.Results {
-		if result != nil && result.Status != ua.StatusOK {
-			if len(errs) < 10 {
-				//防止查询结果过多
-				errs = append(errs, result.Status.Error())
+	var lastErr error
+	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
+		data, err := newDriver(client, x.RuleConfig.Logger).ReadPoints(rendered)
+		if err == nil {
+			b, mErr := json.Marshal(data)
+			if mErr != nil {
+				ctx.TellFailure(msg, mErr)
+				return
 			}
-		} else {
-			d := opcuaClient.Data{
-				DisplayName: data[i].DisplayName,
-				NodeId:      data[i].NodeId,
-				RecordTime:  result.ServerTimestamp,
-				SourceTime:  result.SourceTimestamp,
-				Value:       result.Value.Value(),
-				Quality:     uint32(result.Status),
-				Timestamp:   time.Now(),
-			}
-			_, _ = d.ParseValue()
-			data[i] = d
-			succ = true
-		}
-	}
-	if succ {
-		if dbyte, err := json.Marshal(data); err != nil {
-			ctx.TellFailure(msg, err)
-		} else {
-			msg.SetData(string(dbyte))
+			msg.SetDataType(types.JSON)
+			msg.SetData(string(b))
 			ctx.TellSuccess(msg)
+			return
 		}
-	} else {
-		ctx.TellFailure(msg, fmt.Errorf("read failed: %q ", errs))
+		lastErr = err
+		if retry < iot_points.DefaultMaxRetries {
+			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
+			newClient, rerr := x.reconnect(client)
+			if rerr != nil {
+				ctx.TellFailure(msg, rerr)
+				return
+			}
+			client = newClient
+		}
 	}
+	ctx.TellFailure(msg, lastErr)
 }
 
 // Destroy 清理资源
@@ -195,7 +189,58 @@ func (x *ReadNode) Desc() string {
 	return "OPC-UA client for reading node values. Routes to Success/Failure"
 }
 
+// Def returns the component form definition
+func (x *ReadNode) Def() types.ComponentForm {
+	return types.ComponentForm{
+		Groups: map[string]types.ComponentGroup{
+			"advanced": {
+				Label:     "Advanced Configuration",
+				Collapsed: true,
+			},
+		},
+	}
+}
+
 func (x *ReadNode) initClient() (*opcua.Client, error) {
-	client, err := opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
+	client, err := opcuaClient.DefaultHolder(x.Config, x.RuleConfig.Logger).NewOpcUaClient()
 	return client, err
+}
+
+// reconnect 安全重建连接。
+func (x *ReadNode) reconnect(old *opcua.Client) (*opcua.Client, error) {
+	if x.SharedNode.IsFromPool() {
+		if x.RuleConfig.NodePool != nil {
+			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
+				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // 跨类型：Read↔Write 均可委派
+					return source.reconnect(old)
+				}
+			}
+		}
+		return nil, fmt.Errorf("opcua ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+	}
+	x.reconnectLocker.Lock()
+	defer x.reconnectLocker.Unlock()
+	current, err := x.SharedNode.GetSafely()
+	if err != nil {
+		return nil, err
+	}
+	if current != old {
+		return current, nil
+	}
+	if old != nil {
+		_ = old.Close(context.Background())
+		time.Sleep(iot_points.ReconnectDelay)
+	}
+	newClient, err := x.initClient()
+	if err != nil {
+		return nil, err
+	}
+	x.SharedNode.Refresh(newClient)
+	return newClient, nil
+}
+
+func (x *ReadNode) warnf(format string, v ...interface{}) {
+	if x.RuleConfig.Logger != nil {
+		x.RuleConfig.Logger.Warnf("[OPCUA] "+format, v...)
+	}
 }

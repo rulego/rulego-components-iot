@@ -18,14 +18,15 @@ package opcua
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopcua/opcua"
-	"github.com/gopcua/opcua/ua"
 	"github.com/rulego/rulego"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	opcuaClient "github.com/rulego/rulego-components-iot/pkg/opcua_client"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/components/base"
@@ -42,17 +43,19 @@ type WriteNodeConfiguration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
-	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256"`
+	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256" group:"advanced"`
 	//Security Mode: one of None, Sign, SignAndEncrypt
-	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt"`
+	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt" group:"advanced"`
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate"`
-	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared"`
-	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared"`
+	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" group:"advanced"`
+	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared" group:"advanced"`
+	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared" group:"advanced"`
 	//OPC UA Server CertFile Path
-	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared"`
+	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared" group:"advanced"`
 	//OPC UA Server CertKeyFile Path
-	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared"`
+	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared" group:"advanced"`
+	// 默认点位表（addr=NodeID）；为空则从 msg.Data 解析点位（旧兼容）
+	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=NodeID; empty=parse from msg.Data"`
 }
 
 func (c WriteNodeConfiguration) GetServer() string {
@@ -80,26 +83,15 @@ func (c WriteNodeConfiguration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
 
-// WriteNode opcua写入节点
-// 把消息负荷 msg.Data 点位数据写入到opcua服务器，格式为：
+// WriteNode 把点位值写入 OPC UA 服务器，成功走 Success 链，否则 Failure 链。
 //
-//	[
-//	  {
-//	    "nodeId": "ns=3;i=1009",
-//	    "value": 1
-//	  },
-//	  {
-//	    "nodeId": "ns=3;i=1010",
-//	    "value": 2
-//	  }
-//	]
-//
-// 写入成功，流转到`Success`链
-// 否则流程转到`Failure`链
+// 点位来源（双入口，msg.Data 优先）：配置 points(addr=NodeID)；或 msg.Data 带点位/旧 {nodeId,value} 列表。
 type WriteNode struct {
 	base.SharedNode[*opcua.Client]
 	//节点配置
 	Config WriteNodeConfiguration
+	// reconnectLocker 保护重连
+	reconnectLocker sync.Mutex
 }
 
 func (x *WriteNode) New() types.Node {
@@ -109,6 +101,9 @@ func (x *WriteNode) New() types.Node {
 			Policy: "None",
 			Mode:   "none",
 			Auth:   "anonymous",
+			Points: []iot_points.Point{
+				{Name: "setpoint", Addr: "ns=2;s=Setpoint", Type: "FLOAT64", Value: "${msg.value}"},
+			},
 		},
 	}
 }
@@ -126,77 +121,47 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 	}, func(client *opcua.Client) error {
 		return client.Close(context.Background())
 	})
+	// 启用同链连接池：本地连接按节点ID注册到链目录
+	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 实现 Node 接口，处理消息
+// OnMsg 处理消息。点位双入口（msg.Data 优先，兼容旧 write Data/旧 read nodeIds/新 points）；写入失败自动重连重试。
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-
-	data := make([]opcuaClient.Data, 0)
-	err = json.Unmarshal([]byte(msg.GetData()), &data)
+	pts, err := resolvePoints(x.Config.Points, msg, errors.New("no opcua points: configure points or pass points via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-
-	nodesToWrite := make([]*ua.WriteValue, 0)
-
-	for _, d := range data {
-		id, err := ua.ParseNodeID(d.NodeId)
-		if err != nil {
-			ctx.TellFailure(msg, err)
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	var lastErr error
+	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
+		if werr := newDriver(client, x.RuleConfig.Logger).WritePoints(rendered); werr == nil {
+			ctx.TellSuccess(msg)
 			return
-		}
-
-		v, err := ua.NewVariant(castValue(d.Value, d.DataType))
-		if err != nil {
-			ctx.TellFailure(msg, err)
-			return
-		}
-		nodesToWrite = append(nodesToWrite, &ua.WriteValue{
-			NodeID:      id,
-			AttributeID: ua.AttributeIDValue,
-			Value: &ua.DataValue{
-				EncodingMask: ua.DataValueValue,
-				Value:        v,
-			},
-		})
-	}
-
-	req := &ua.WriteRequest{
-		NodesToWrite: nodesToWrite,
-	}
-
-	resp, err := client.Write(context.Background(), req)
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
-	succ := false
-	var errs []string // 移除预分配的大小，避免空字符串
-	if resp != nil {
-		for _, result := range resp.Results {
-			if result == ua.StatusOK {
-				succ = true
-			} else {
-				errs = append(errs, result.Error())
-			}
-		}
-	}
-	if succ {
-		ctx.TellSuccess(msg)
-	} else {
-		if len(errs) > 0 {
-			ctx.TellFailure(msg, fmt.Errorf("write failed: %v", errs))
 		} else {
-			ctx.TellFailure(msg, fmt.Errorf("write failed with unknown error"))
+			lastErr = werr
+		}
+		if retry < iot_points.DefaultMaxRetries {
+			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
+			newClient, rerr := x.reconnect(client)
+			if rerr != nil {
+				ctx.TellFailure(msg, rerr)
+				return
+			}
+			client = newClient
 		}
 	}
+	ctx.TellFailure(msg, lastErr)
 }
 
 // Destroy 清理资源
@@ -209,9 +174,60 @@ func (x *WriteNode) Desc() string {
 	return "OPC-UA client for writing node values. Routes to Success/Failure"
 }
 
+// Def returns the component form definition
+func (x *WriteNode) Def() types.ComponentForm {
+	return types.ComponentForm{
+		Groups: map[string]types.ComponentGroup{
+			"advanced": {
+				Label:     "Advanced Configuration",
+				Collapsed: true,
+			},
+		},
+	}
+}
+
 func (x *WriteNode) initClient() (*opcua.Client, error) {
-	client, err := opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
+	client, err := opcuaClient.DefaultHolder(x.Config, x.RuleConfig.Logger).NewOpcUaClient()
 	return client, err
+}
+
+// reconnect 安全重建连接。
+func (x *WriteNode) reconnect(old *opcua.Client) (*opcua.Client, error) {
+	if x.SharedNode.IsFromPool() {
+		if x.RuleConfig.NodePool != nil {
+			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
+				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // 跨类型：Read↔Write 均可委派
+					return source.reconnect(old)
+				}
+			}
+		}
+		return nil, fmt.Errorf("opcua ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+	}
+	x.reconnectLocker.Lock()
+	defer x.reconnectLocker.Unlock()
+	current, err := x.SharedNode.GetSafely()
+	if err != nil {
+		return nil, err
+	}
+	if current != old {
+		return current, nil
+	}
+	if old != nil {
+		_ = old.Close(context.Background())
+		time.Sleep(iot_points.ReconnectDelay)
+	}
+	newClient, err := x.initClient()
+	if err != nil {
+		return nil, err
+	}
+	x.SharedNode.Refresh(newClient)
+	return newClient, nil
+}
+
+func (x *WriteNode) warnf(format string, v ...interface{}) {
+	if x.RuleConfig.Logger != nil {
+		x.RuleConfig.Logger.Warnf("[OPCUA] "+format, v...)
+	}
 }
 
 // castValue 尝试将 []interface{} 转换为特定类型的切片，以便 ua.NewVariant 可以正确处理

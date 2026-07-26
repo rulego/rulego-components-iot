@@ -31,7 +31,8 @@ jobs:
           OPCPLC_AUTOACCEPT: true
           OPCPLC_UNSECURETRANSPORT: true
 
-      # Modbus 模拟器服务暂时禁用 - 模拟器启动不稳定，先跳过测试
+      # Modbus 端到端测试用 simonvetter 库自带的进程内 server（无需外部服务，见 modbus points_test / iotread e2e_test，CI 直接可跑）。
+      # 如需外部 Modbus 模拟器可启用下方（之前因启动不稳定禁用，保留作参考）：
       # modbus-simulator:
       #   image: techplex/modbus-sim:latest
       #   ports:
@@ -42,9 +43,57 @@ jobs:
       #     --health-timeout 10s
       #     --health-retries 6
 
+      # VictoriaMetrics - 接收 Prometheus Remote Write（promremote 真实端到端测试，单二进制最轻量）
+      victoriametrics:
+        image: victoriametrics/victoria-metrics:latest
+        ports:
+          - 8428:8428
+        command: ["-httpListenAddr=:8428"]
+
+      # TimescaleDB - timescaledb tsdb 驱动真实端到端
+      timescaledb:
+        image: timescale/timescaledb:latest-pg16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      # InfluxDB 2.x - influxdb tsdb 驱动真实端到端（setup 模式自动初始化 org/bucket/token）
+      influxdb:
+        image: influxdb:2.7-alpine
+        ports:
+          - 8086:8086
+        env:
+          DOCKER_INFLUXDB_INIT_MODE: setup
+          DOCKER_INFLUXDB_INIT_USERNAME: e2e
+          DOCKER_INFLUXDB_INIT_PASSWORD: e2e-password
+          DOCKER_INFLUXDB_INIT_ORG: rulego
+          DOCKER_INFLUXDB_INIT_BUCKET: iot
+          DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: e2e-test-token
+          DOCKER_INFLUXDB_INIT_RETENTION: 0
+
+      # TDengine - tdengine tsdb 驱动真实端到端
+      tdengine:
+        image: tdengine/tdengine:3.3.2.0
+        ports:
+          - 6030:6030
+          - 6041:6041
+
+      # OpenGemini - opengemini tsdb 驱动真实端到端（host 用 8087 避开 influxdb 占用的 8086）
+      opengemini:
+        image: opengemini/opengemini:latest
+        ports:
+          - 8087:8086
+
     strategy:
       matrix:
-        go-version: [1.22, 1.23, 1.24]
+        # go.mod 要求 go >= 1.24.7（gosnmp 等依赖带入）
+        go-version: ['1.24.7', '1.25.x']
 
     steps:
     - uses: actions/checkout@v4
@@ -70,6 +119,10 @@ jobs:
     - name: Verify dependencies
       run: go mod verify
 
+    - name: Vet
+      run: go vet ./...
+      continue-on-error: true
+
     - name: Wait for services to be ready
       run: |
         echo "等待服务就绪..."
@@ -89,6 +142,11 @@ jobs:
         
         # Modbus 测试已跳过 - 模拟器启动不稳定
         echo "跳过 Modbus 服务检查 (SKIP_MODBUS_TESTS=true)"
+
+        # 等待时序数据库服务就绪（e2e 测试依赖；超时不阻断，测试侧 skip 兜底）
+        for port in 5432 8086 6030 8087; do
+          timeout 90 sh -c "until nc -z localhost $port; do echo \"等待端口 $port...\"; sleep 3; done" || echo "端口 $port 未就绪，相关 e2e 测试将 skip"
+        done
 
     - name: Run tests with coverage
       env:
@@ -113,6 +171,16 @@ jobs:
         SKIP_S7_TESTS: true         # Siemens S7 需要物理设备
         SKIP_ETHERNET_IP_TESTS: true # Ethernet/IP 需要物理设备
         
+        # 时序数据库真实端到端（services 已起；各 e2e 测试未设对应变量则 skip）
+        E2E_VICTORIAMETRICS_URL: http://localhost:8428
+        E2E_TIMESCALEDB_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        E2E_INFLUXDB_URL: http://localhost:8086
+        E2E_INFLUXDB_TOKEN: e2e-test-token
+        E2E_INFLUXDB_ORG: rulego
+        E2E_INFLUXDB_BUCKET: iot
+        E2E_TDENGINE_DSN: root:taosdata@http(localhost:6041)/
+        E2E_OPENGEMINI_ADDR: localhost:8087
+
         # 测试超时设置
         TEST_TIMEOUT: 45s
       run: |

@@ -27,6 +27,7 @@ import (
 	"github.com/gopcua/opcua/errors"
 	"github.com/robfig/cron/v3"
 
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	opcuaClient "github.com/rulego/rulego-components-iot/pkg/opcua_client"
 	"github.com/rulego/rulego/api/types"
 	endpointApi "github.com/rulego/rulego/api/types/endpoint"
@@ -52,14 +53,14 @@ func init() {
 type RequestMessage struct {
 	headers    textproto.MIMEHeader
 	body       []byte
-	data       []opcuaClient.Data
+	points     []iot_points.Data
 	msg        *types.RuleMsg
 	statusCode int
 	err        error
 }
 
 func (r *RequestMessage) Body() []byte {
-	b, err := json.Marshal(r.data)
+	b, err := json.Marshal(r.points)
 	if err != nil {
 		log.Println(err)
 	}
@@ -114,7 +115,7 @@ func (r *RequestMessage) GetError() error {
 type ResponseMessage struct {
 	headers    textproto.MIMEHeader
 	body       []byte
-	data       []opcuaClient.Data
+	points     []iot_points.Data
 	msg        *types.RuleMsg
 	statusCode int
 	err        error
@@ -392,15 +393,17 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 		return err
 	}
 
-	data, _, err := opcuaClient.Read(client, x.Config.NodeIds)
+	nodeIds := x.Config.NodeIds
+	data, resp, err := opcuaClient.Read(client, nodeIds, x.RuleConfig.Logger)
 	if err != nil {
 		x.Printf("read nodes error %v ", err)
 		return err
 	}
+	points := opcuaClient.ToPointsData(nodeIds, nil, data, resp)
 	exchange := &endpointApi.Exchange{
-		In: &RequestMessage{data: data},
+		In: &RequestMessage{points: points},
 		Out: &ResponseMessage{
-			data: data,
+			points: points,
 		}}
 
 	x.DoProcess(context.Background(), router, exchange)
@@ -409,5 +412,5 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 
 // initClient 初始化客户端
 func (x *OpcUa) initClient() (*opcua.Client, error) {
-	return opcuaClient.DefaultHolder(x.Config).NewOpcUaClient()
+	return opcuaClient.DefaultHolder(x.Config, x.RuleConfig.Logger).NewOpcUaClient()
 }

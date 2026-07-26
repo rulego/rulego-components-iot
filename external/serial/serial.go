@@ -151,7 +151,7 @@ type SerialOutConfig struct {
 	SharedSerialConfig `json:",squash"`
 	// Data content to send, supports dynamic variable replacement (e.g. ${data}). If empty, use msg.Data
 	// Data 发送内容，支持动态变量替换（如 ${data}）。如果为空，则使用 msg.Data
-	Data string `json:"data" label:"Data" desc:"Data to send, supports \${} variables, empty uses msg.Data"`
+	Data string `json:"data" label:"Data" desc:"Data to send, supports ${xx} variables, empty uses msg.Data"`
 	// (e.g. \r\n)
 	AddChar  string `json:"addChar" label:"Add Char" desc:"Character appended when sending, e.g. \\r\\n"`
 	DataType string `json:"dataType" label:"Data Type" desc:"Data type: text, hex, base64"`
@@ -163,7 +163,7 @@ type SerialRequestConfig struct {
 	SharedSerialConfig `json:",squash"`
 	// Data content to send, supports dynamic variable replacement (e.g. ${data}). If empty, use msg.Data
 	// Data 发送内容，支持动态变量替换（如 ${data}）。如果为空，则使用 msg.Data
-	Data string `json:"data" label:"Data" desc:"Data to send, supports \${} variables, empty uses msg.Data"`
+	Data string `json:"data" label:"Data" desc:"Data to send, supports ${xx} variables, empty uses msg.Data"`
 	// Output settings
 	// (e.g. \r\n)
 	AddChar  string `json:"addChar" label:"Add Char" desc:"Character appended when sending, e.g. \\r\\n"`
@@ -180,7 +180,7 @@ type SerialControlConfig struct {
 	SharedSerialConfig `json:",squash"`
 	// Action Control instruction, supports dynamic variable replacement (e.g. ${msg.action}). If empty, use msg.Data as instruction
 	// Action 控制指令，支持动态变量替换（如 ${msg.action}）。如果为空，则使用 msg.Data 作为指令
-	Action string `json:"action" label:"Action" desc:"Control action, supports \${} variables, e.g. open, close, dtr=1"`
+	Action string `json:"action" label:"Action" desc:"Control action, supports ${xx} variables, e.g. open, close, dtr=1"`
 }
 
 // SafeSerialPort Thread-safe serial port wrapper
