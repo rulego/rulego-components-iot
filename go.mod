@@ -5,6 +5,7 @@ go 1.24.7
 require (
 	github.com/castai/promwrite v0.6.0
 	github.com/danomagnum/gologix v0.41.0-beta
+	github.com/eclipse/paho.mqtt.golang v1.4.3
 	github.com/golang/snappy v1.0.0
 	github.com/gopcua/opcua v0.8.0
 	github.com/gosnmp/gosnmp v1.44.0
@@ -34,7 +35,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/dop251/goja v0.0.0-20231024180952-594410467bc6 // indirect
-	github.com/eclipse/paho.mqtt.golang v1.4.3 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -82,3 +82,5 @@ require (
 )
 
 replace github.com/rulego/rulego => ../rulego
+
+replace github.com/wendy512/iec104 => ./third_party/iec104

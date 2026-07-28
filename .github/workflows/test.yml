@@ -76,6 +76,11 @@ jobs:
           DOCKER_INFLUXDB_INIT_BUCKET: iot
           DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: e2e-test-token
           DOCKER_INFLUXDB_INIT_RETENTION: 0
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8086/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
 
       # TDengine - tdengine tsdb 驱动真实端到端
       tdengine:
@@ -83,12 +88,24 @@ jobs:
         ports:
           - 6030:6030
           - 6041:6041
+        options: >-
+          --health-cmd "taos -s 'show databases'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
 
       # OpenGemini - opengemini tsdb 驱动真实端到端（host 用 8087 避开 influxdb 占用的 8086）
       opengemini:
         image: opengemini/opengemini:latest
         ports:
           - 8087:8086
+
+      # Mosquitto - endpoint/mqtt 订阅场景 e2e
+      mosquitto:
+        image: eclipse-mosquitto:2.0
+        ports:
+          - 1883:1883
+        command: ["sh", "-c", "printf 'listener 1883\\nallow_anonymous true\\n' > /tmp/mosq.conf && mosquitto -c /tmp/mosq.conf"]
 
     strategy:
       matrix:
@@ -123,6 +140,19 @@ jobs:
       run: go vet ./...
       continue-on-error: true
 
+    - name: Set up protocol simulators (S7 / SNMP)
+      run: |
+        # S7 模拟器（python-snap7，监听 102 特权端口需 sudo）
+        sudo pip3 install --quiet 'python-snap7<2'
+        sudo nohup python3 test/e2e/s7sim/s7_server.py > /tmp/s7sim.log 2>&1 &
+        # snmpd（v2c public，放开 systemonly 视图与监听地址）
+        sudo apt-get update -qq && sudo apt-get install -y -qq snmpd
+        sudo sed -i -E 's/^agentaddress.*/agentaddress udp:161,udp6:161/I' /etc/snmp/snmpd.conf
+        sudo sed -i -E 's/^rocommunity6?[[:space:]]+public default -V systemonly/# &/' /etc/snmp/snmpd.conf
+        sudo systemctl restart snmpd
+        sleep 2
+        ss -tln | grep :102 && ss -uln | grep :161
+
     - name: Wait for services to be ready
       run: |
         echo "等待服务就绪..."
@@ -143,8 +173,8 @@ jobs:
         # Modbus 测试已跳过 - 模拟器启动不稳定
         echo "跳过 Modbus 服务检查 (SKIP_MODBUS_TESTS=true)"
 
-        # 等待时序数据库服务就绪（e2e 测试依赖；超时不阻断，测试侧 skip 兜底）
-        for port in 5432 8086 6030 8087; do
+        # 等待时序数据库服务就绪（e2e 测试依赖；超时不阻断，测试侧自带就绪重试）
+        for port in 5432 8086 6030 6041 8087 8428; do
           timeout 90 sh -c "until nc -z localhost $port; do echo \"等待端口 $port...\"; sleep 3; done" || echo "端口 $port 未就绪，相关 e2e 测试将 skip"
         done
 
@@ -180,12 +210,20 @@ jobs:
         E2E_INFLUXDB_BUCKET: iot
         E2E_TDENGINE_DSN: root:taosdata@http(localhost:6041)/
         E2E_OPENGEMINI_ADDR: localhost:8087
+        E2E_S7_ADDR: localhost:102
+        E2E_SNMP_ADDR: localhost
+        E2E_MQTT_ADDR: tcp://localhost:1883
 
         # 测试超时设置
         TEST_TIMEOUT: 45s
       run: |
         # 运行测试并生成覆盖率报告
-        go test -v -race -timeout=8m -coverprofile=coverage.out -covermode=atomic ./...
+        # endpoint/snmp 排除 -race：gosnmp v1.44.0（当前最新）TrapListener 自身有
+        # t.conn 无锁写(listenUDP) vs 加锁读(Close) 的竞态，Start 后任何 Close 必报，等上游修复
+        go test -v -race -timeout=8m -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -v '/endpoint/snmp')
+
+    - name: Run endpoint/snmp tests (no race, gosnmp library race excluded)
+      run: go test -v -timeout=5m ./endpoint/...
 
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v3

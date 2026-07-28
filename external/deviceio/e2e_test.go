@@ -18,23 +18,36 @@ package deviceio
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/golang/snappy"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	_ "github.com/lib/pq"
+	opengeminiclient "github.com/openGemini/opengemini-client-go/opengemini"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/rulego/rulego"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/engine"
 	"github.com/rulego/rulego/test/assert"
 	"github.com/simonvetter/modbus"
+	"github.com/stretchr/testify/require"
+	_ "github.com/taosdata/driver-go/v3/taosRestful"
+
+	// endpoint 类型注册
+	_ "github.com/rulego/rulego/endpoint/mqtt"
+	_ "github.com/rulego/rulego/endpoint/rest"
+	_ "github.com/rulego/rulego/endpoint/schedule"
 
 	_ "github.com/rulego/rulego-components-iot/external/tsdbwrite"
 	_ "github.com/rulego/rulego-components-iot/transform/iot_to_series"
@@ -209,4 +222,362 @@ func TestEndToEnd_ModbusToInfluxDB(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	assert.True(t, found, "modbus -> tsdbWrite(influxdb) should persist mapped field temp_c=23.5")
+}
+
+// parseOGAddr 解析 host:port 为 OpenGemini 客户端地址列表。
+func parseOGAddr(t *testing.T, addr string) []opengeminiclient.Address {
+	t.Helper()
+	parts := strings.Split(addr, ":")
+	require.Equal(t, 2, len(parts), "addr must be host:port")
+	port, err := strconv.Atoi(parts[1])
+	require.Nil(t, err)
+	return []opengeminiclient.Address{{Host: parts[0], Port: port}}
+}
+
+// s7ChainDSL 组装「S7 采集 -> tsdbWrite」两节点链 DSL。
+func s7ChainDSL(chainID, s7Addr, writeCfg string) string {
+	return fmt.Sprintf(`{
+		"ruleChain":{"id":"%s","root":true},
+		"metadata":{"nodes":[
+			{"id":"read","type":"x/iotRead","configuration":{"driver":"s7","server":"%s","rack":0,"slot":1,"points":[
+				{"name":"temp","addr":"DB1.DBD0","type":"FLOAT32"},
+				{"name":"pressure","addr":"DB1.DBD4","type":"FLOAT32"}
+			]}},
+			{"id":"w","type":"x/tsdbWrite","configuration":%s}
+		],"connections":[
+			{"fromId":"read","toId":"w","type":"Success"}
+		]}
+	}`, chainID, s7Addr, writeCfg)
+}
+
+// triggerAndWait 触发链一次并轮询 cond 至真（上限 wait）。
+func triggerAndWait(t *testing.T, chainID, dsl string, wait time.Duration, cond func() bool) {
+	t.Helper()
+	rg, err := rulego.New(chainID, []byte(dsl))
+	require.Nil(t, err, "create rule engine")
+	defer rulego.Del(chainID)
+	rg.OnMsg(types.NewMsg(0, "TRIGGER", types.JSON, types.NewMetadata(), ""))
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	require.True(t, cond(), "condition not met within %s", wait)
+}
+
+// TestEndToEnd_S7ToTDengine S7 采集 -> x/tsdbWrite(tdengine) -> 读回核对。
+func TestEndToEnd_S7ToTDengine(t *testing.T) {
+	s7Addr := os.Getenv("E2E_S7_ADDR")
+	dsn := os.Getenv("E2E_TDENGINE_DSN")
+	if s7Addr == "" || dsn == "" {
+		t.Skip("set E2E_S7_ADDR and E2E_TDENGINE_DSN to enable s7->tdengine e2e")
+	}
+	db, err := sql.Open("taosRestful", dsn)
+	require.Nil(t, err)
+	defer db.Close()
+	m := fmt.Sprintf("e2e_s7chain_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf(
+		"CREATE STABLE iot_e2e.%s (ts TIMESTAMP, temp_c DOUBLE, press DOUBLE) TAGS (`host` NCHAR(32))", m))
+	require.Nil(t, err, "create stable")
+	defer func() { _, _ = db.Exec(fmt.Sprintf("DROP STABLE IF EXISTS iot_e2e.%s", m)) }()
+
+	writeCfg := fmt.Sprintf(`{"driver":"tdengine","dsn":"%s","db":"iot_e2e","measurement":"%s",
+		"tags":[{"key":"host","value":"e2e"}],
+		"fields":[{"key":"temp_c","source":"temp"},{"key":"press","source":"pressure"}]}`, dsn, m)
+	found := func() bool {
+		var tempC, press float64
+		if e := db.QueryRow(fmt.Sprintf("SELECT temp_c, press FROM iot_e2e.%s", m)).Scan(&tempC, &press); e != nil {
+			return false
+		}
+		return tempC == 25.5 && press == 80.25
+	}
+	triggerAndWait(t, "e2e_s7_tdengine", s7ChainDSL("e2e_s7_tdengine", s7Addr, writeCfg), 15*time.Second, found)
+}
+
+// TestEndToEnd_S7ToTimescaleDB S7 采集 -> x/tsdbWrite(timescaledb) -> 读回核对。
+func TestEndToEnd_S7ToTimescaleDB(t *testing.T) {
+	s7Addr := os.Getenv("E2E_S7_ADDR")
+	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
+	if s7Addr == "" || dsn == "" {
+		t.Skip("set E2E_S7_ADDR and E2E_TIMESCALEDB_DSN to enable s7->timescaledb e2e")
+	}
+	db, err := sql.Open("postgres", dsn)
+	require.Nil(t, err)
+	defer db.Close()
+	m := fmt.Sprintf("e2e_s7chain_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf(
+		`CREATE TABLE public.%s (time timestamptz, host text, temp_c double precision, press double precision)`, m))
+	require.Nil(t, err, "create table")
+	defer func() { _, _ = db.Exec(fmt.Sprintf(`DROP TABLE public.%s`, m)) }()
+
+	writeCfg := fmt.Sprintf(`{"driver":"timescaledb","dsn":"%s","db":"public","measurement":"%s",
+		"tags":[{"key":"host","value":"e2e"}],
+		"fields":[{"key":"temp_c","source":"temp"},{"key":"press","source":"pressure"}]}`, dsn, m)
+	found := func() bool {
+		var host string
+		var tempC, press float64
+		if e := db.QueryRow(fmt.Sprintf(`SELECT host, temp_c, press FROM public.%s`, m)).Scan(&host, &tempC, &press); e != nil {
+			return false
+		}
+		return host == "e2e" && tempC == 25.5 && press == 80.25
+	}
+	triggerAndWait(t, "e2e_s7_timescale", s7ChainDSL("e2e_s7_timescale", s7Addr, writeCfg), 15*time.Second, found)
+}
+
+// TestEndToEnd_S7ToOpenGemini S7 采集 -> x/tsdbWrite(opengemini) -> 读回核对。
+func TestEndToEnd_S7ToOpenGemini(t *testing.T) {
+	s7Addr := os.Getenv("E2E_S7_ADDR")
+	addr := os.Getenv("E2E_OPENGEMINI_ADDR")
+	if s7Addr == "" || addr == "" {
+		t.Skip("set E2E_S7_ADDR and E2E_OPENGEMINI_ADDR to enable s7->opengemini e2e")
+	}
+	client, err := opengeminiclient.NewClient(&opengeminiclient.Config{Addresses: parseOGAddr(t, addr)})
+	require.Nil(t, err)
+	defer client.Close()
+	_ = client.CreateDatabase("e2e_iot")
+	m := fmt.Sprintf("e2e_s7chain_%d", time.Now().UnixNano())
+
+	writeCfg := fmt.Sprintf(`{"driver":"opengemini","server":"%s","database":"e2e_iot","measurement":"%s",
+		"tags":[{"key":"host","value":"e2e"}],
+		"fields":[{"key":"temp_c","source":"temp"},{"key":"press","source":"pressure"}]}`, addr, m)
+	found := func() bool {
+		res, e := client.Query(opengeminiclient.Query{Database: "e2e_iot", Command: fmt.Sprintf("select * from %s", m)})
+		if e != nil || len(res.Results) == 0 || res.Results[0] == nil {
+			return false
+		}
+		for _, s := range res.Results[0].Series {
+			for _, row := range s.Values {
+				var hit bool
+				for _, v := range row {
+					if f, ok := v.(float64); ok && f == 25.5 {
+						hit = true
+					}
+				}
+				if hit {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	triggerAndWait(t, "e2e_s7_opengemini", s7ChainDSL("e2e_s7_opengemini", s7Addr, writeCfg), 15*time.Second, found)
+}
+
+// TestEndToEnd_S7ToSeriesToTimescaleDB 三节点链：S7 采集 -> x/iotToSeries 转换 -> x/tsdbWrite -> 读回核对。
+func TestEndToEnd_S7ToSeriesToTimescaleDB(t *testing.T) {
+	s7Addr := os.Getenv("E2E_S7_ADDR")
+	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
+	if s7Addr == "" || dsn == "" {
+		t.Skip("set E2E_S7_ADDR and E2E_TIMESCALEDB_DSN to enable s7->iotToSeries->timescaledb e2e")
+	}
+	db, err := sql.Open("postgres", dsn)
+	require.Nil(t, err)
+	defer db.Close()
+	m := fmt.Sprintf("e2e_s7series_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf(
+		`CREATE TABLE public.%s (time timestamptz, host text, temp_c double precision)`, m))
+	require.Nil(t, err, "create table")
+	defer func() { _, _ = db.Exec(fmt.Sprintf(`DROP TABLE public.%s`, m)) }()
+
+	dsl := fmt.Sprintf(`{
+		"ruleChain":{"id":"e2e_s7_series","root":true},
+		"metadata":{"nodes":[
+			{"id":"read","type":"x/iotRead","configuration":{"driver":"s7","server":"%s","rack":0,"slot":1,"points":[
+				{"name":"temp","addr":"DB1.DBD0","type":"FLOAT32"}
+			]}},
+			{"id":"conv","type":"x/iotToSeries","configuration":{"measurement":"%s","tags":{"host":"e2e"},"fields":{"temp_c":"value"},"timestampField":"timestamp"}},
+			{"id":"w","type":"x/tsdbWrite","configuration":{"driver":"timescaledb","dsn":"%s","db":"public"}}
+		],"connections":[
+			{"fromId":"read","toId":"conv","type":"Success"},
+			{"fromId":"conv","toId":"w","type":"Success"}
+		]}
+	}`, s7Addr, m, dsn)
+	found := func() bool {
+		var host string
+		var tempC float64
+		if e := db.QueryRow(fmt.Sprintf(`SELECT host, temp_c FROM public.%s`, m)).Scan(&host, &tempC); e != nil {
+			return false
+		}
+		return host == "e2e" && tempC == 25.5
+	}
+	triggerAndWait(t, "e2e_s7_series", dsl, 15*time.Second, found)
+}
+
+// startEndpointEngine 创建启用 endpoint 模块的规则引擎。
+func startEndpointEngine(t *testing.T, chainID, dsl string) {
+	t.Helper()
+	config := rulego.NewConfig(types.WithDefaultPool())
+	config.EndpointEnabled = true
+	rg, err := rulego.New(chainID, []byte(dsl), engine.WithConfig(config))
+	require.Nil(t, err, "create rule engine with endpoints")
+	_ = rg // 引擎按 chainID 全局注册，t.Cleanup 统一注销
+	t.Cleanup(func() { rulego.Del(chainID) })
+}
+
+// pollPG 轮询 PostgreSQL 查询直到 cond 满足或超时。
+func pollPG(t *testing.T, dsn string, wait time.Duration, cond func(db *sql.DB) bool) {
+	t.Helper()
+	db, err := sql.Open("postgres", dsn)
+	require.Nil(t, err)
+	defer db.Close()
+	deadline := time.Now().Add(wait)
+	for time.Now().Before(deadline) {
+		if cond(db) {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	require.True(t, cond(db), "condition not met within %s", wait)
+}
+
+// TestEndToEnd_ScheduleS7Collect 定时采集：endpoint/schedule 每秒触发 -> x/iotRead(s7) -> x/tsdbWrite(timescaledb)，
+// 不手动发消息，等行数累积 >=3 验证持续落盘。
+func TestEndToEnd_ScheduleS7Collect(t *testing.T) {
+	s7Addr := os.Getenv("E2E_S7_ADDR")
+	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
+	if s7Addr == "" || dsn == "" {
+		t.Skip("set E2E_S7_ADDR and E2E_TIMESCALEDB_DSN to enable schedule e2e")
+	}
+	db, err := sql.Open("postgres", dsn)
+	require.Nil(t, err)
+	m := fmt.Sprintf("e2e_sched_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf(
+		`CREATE TABLE public.%s (time timestamptz, host text, temp_c double precision)`, m))
+	require.Nil(t, err, "create table")
+	defer func() { _, _ = db.Exec(fmt.Sprintf(`DROP TABLE public.%s`, m)) }()
+	db.Close()
+
+	dsl := fmt.Sprintf(`{
+		"ruleChain":{"id":"e2e_sched","root":true},
+		"metadata":{
+			"endpoints":[{
+				"id":"sch","type":"endpoint/schedule",
+				"routers":[{"from":{"path":"*/1 * * * * *"},"to":{"path":"e2e_sched:read"}}]
+			}],
+			"nodes":[
+				{"id":"read","type":"x/iotRead","configuration":{"driver":"s7","server":"%s","rack":0,"slot":1,"points":[
+					{"name":"temp","addr":"DB1.DBD0","type":"FLOAT32"}
+				]}},
+				{"id":"w","type":"x/tsdbWrite","configuration":{"driver":"timescaledb","dsn":"%s","db":"public","measurement":"%s",
+					"tags":[{"key":"host","value":"e2e"}],
+					"fields":[{"key":"temp_c","source":"temp"}]}}
+			],
+			"connections":[{"fromId":"read","toId":"w","type":"Success"}]
+		}
+	}`, s7Addr, dsn, m)
+	startEndpointEngine(t, "e2e_sched", dsl)
+
+	pollPG(t, dsn, 20*time.Second, func(q *sql.DB) bool {
+		var count int
+		if e := q.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM public.%s`, m)).Scan(&count); e != nil {
+			return false
+		}
+		return count >= 3
+	})
+}
+
+// TestEndToEnd_MqttToTimescaleDB MQTT 订阅：endpoint/mqtt 订阅 topic -> x/tsdbWrite(timescaledb)，
+// 测试用 paho 客户端发布 SeriesPoint JSON 后读回核对。
+func TestEndToEnd_MqttToTimescaleDB(t *testing.T) {
+	broker := os.Getenv("E2E_MQTT_ADDR")
+	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
+	if broker == "" || dsn == "" {
+		t.Skip("set E2E_MQTT_ADDR (e.g. tcp://localhost:1883) and E2E_TIMESCALEDB_DSN to enable mqtt e2e")
+	}
+	db, err := sql.Open("postgres", dsn)
+	require.Nil(t, err)
+	m := fmt.Sprintf("e2e_mqtt_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf(
+		`CREATE TABLE public.%s (time timestamptz, host text, value double precision)`, m))
+	require.Nil(t, err, "create table")
+	defer func() { _, _ = db.Exec(fmt.Sprintf(`DROP TABLE public.%s`, m)) }()
+	db.Close()
+
+	const topic = "rulego/e2e/telemetry"
+	dsl := fmt.Sprintf(`{
+		"ruleChain":{"id":"e2e_mqtt","root":true},
+		"metadata":{
+			"endpoints":[{
+				"id":"ep","type":"endpoint/mqtt",
+				"configuration":{"server":"%s"},
+				"routers":[{"from":{"path":"%s"},"to":{"path":"e2e_mqtt:w"}}]
+			}],
+			"nodes":[
+				{"id":"w","type":"x/tsdbWrite","configuration":{"driver":"timescaledb","dsn":"%s","db":"public"}}
+			]
+		}
+	}`, broker, topic, dsn)
+	startEndpointEngine(t, "e2e_mqtt", dsl)
+	time.Sleep(2 * time.Second) // 等订阅建立
+
+	opts := mqtt.NewClientOptions().AddBroker(broker).SetClientID(fmt.Sprintf("e2e_pub_%d", time.Now().UnixNano()))
+	client := mqtt.NewClient(opts)
+	require.True(t, client.Connect().WaitTimeout(10*time.Second), "mqtt connect timeout")
+	defer client.Disconnect(100)
+
+	payload := fmt.Sprintf(
+		`[{"measurement":"%s","tags":{"host":"e2e"},"fields":{"value":42.5},"timestamp":%d}]`,
+		m, time.Now().UnixNano())
+	token := client.Publish(topic, 0, false, payload)
+	require.True(t, token.WaitTimeout(10*time.Second), "mqtt publish timeout")
+
+	pollPG(t, dsn, 15*time.Second, func(q *sql.DB) bool {
+		var host string
+		var v float64
+		if e := q.QueryRow(fmt.Sprintf(`SELECT host, value FROM public.%s`, m)).Scan(&host, &v); e != nil {
+			return false
+		}
+		return host == "e2e" && v == 42.5
+	})
+}
+
+// TestEndToEnd_HttpToTimescaleDB HTTP 推送：endpoint/http 接收 POST 遥测 -> x/tsdbWrite(timescaledb)。
+func TestEndToEnd_HttpToTimescaleDB(t *testing.T) {
+	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
+	if dsn == "" {
+		t.Skip("set E2E_TIMESCALEDB_DSN to enable http endpoint e2e")
+	}
+	db, err := sql.Open("postgres", dsn)
+	require.Nil(t, err)
+	m := fmt.Sprintf("e2e_http_%d", time.Now().UnixNano())
+	_, err = db.Exec(fmt.Sprintf(
+		`CREATE TABLE public.%s (time timestamptz, host text, value double precision)`, m))
+	require.Nil(t, err, "create table")
+	defer func() { _, _ = db.Exec(fmt.Sprintf(`DROP TABLE public.%s`, m)) }()
+	db.Close()
+
+	const addr = ":19095"
+	dsl := fmt.Sprintf(`{
+		"ruleChain":{"id":"e2e_http","root":true},
+		"metadata":{
+			"endpoints":[{
+				"id":"ep","type":"endpoint/http",
+				"configuration":{"server":"%s"},
+				"routers":[{"from":{"path":"/api/telemetry"},"params":["POST"],"to":{"path":"e2e_http:w"}}]
+			}],
+			"nodes":[
+				{"id":"w","type":"x/tsdbWrite","configuration":{"driver":"timescaledb","dsn":"%s","db":"public"}}
+			]
+		}
+	}`, addr, dsn)
+	startEndpointEngine(t, "e2e_http", dsl)
+	time.Sleep(500 * time.Millisecond) // 等 HTTP 监听就绪
+
+	payload := fmt.Sprintf(
+		`[{"measurement":"%s","tags":{"host":"e2e"},"fields":{"value":42.5},"timestamp":%d}]`,
+		m, time.Now().UnixNano())
+	resp, err := http.Post("http://localhost"+addr+"/api/telemetry", "application/json", strings.NewReader(payload))
+	require.Nil(t, err, "http post")
+	resp.Body.Close()
+
+	pollPG(t, dsn, 15*time.Second, func(q *sql.DB) bool {
+		var host string
+		var v float64
+		if e := q.QueryRow(fmt.Sprintf(`SELECT host, value FROM public.%s`, m)).Scan(&host, &v); e != nil {
+			return false
+		}
+		return host == "e2e" && v == 42.5
+	})
 }
