@@ -52,7 +52,10 @@ func TestE2E_OpenGemini(t *testing.T) {
 	defer client.Close()
 
 	database := "e2e_iot"
-	_ = client.CreateDatabase(database) // 已存在则忽略
+	// 环境变量已设即期望可跑：等待服务就绪，持续不可达按失败处理（CreateDatabase 幂等）
+	if err := waitReady(60*time.Second, func() error { return client.CreateDatabase(database) }); err != nil {
+		t.Fatalf("opengemini not reachable within 60s: %v", err)
+	}
 	d := newDriver(client)
 
 	measurement := fmt.Sprintf("e2e_iot_%d", time.Now().UnixNano())
@@ -70,4 +73,17 @@ func TestE2E_OpenGemini(t *testing.T) {
 	res, err := d.Query(ctx, database, fmt.Sprintf("select * from %s", measurement))
 	assert.Nil(t, err)
 	assert.True(t, len(res.Rows) > 0, "query should return the written point")
+}
+
+// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+func waitReady(timeout time.Duration, ready func() error) error {
+	var err error
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err = ready(); err == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return err
 }

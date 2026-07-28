@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/castai/promwrite"
 	"github.com/rulego/rulego-components-iot/pkg/tsdb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestE2E_VictoriaMetrics 真实端到端：写 SeriesPoint 到 VictoriaMetrics，查询验证值。
@@ -54,12 +56,18 @@ func TestE2E_VictoriaMetrics(t *testing.T) {
 	}})
 	assert.Nil(t, err, "write to VictoriaMetrics")
 
-	// 查询验证（VictoriaMetrics 索引需短暂等待）
-	time.Sleep(time.Second)
+	// 查询验证：VM 新序列索引建立有约 1 分钟延迟，轮询 query_range 直到可查
 	q := url.QueryEscape(fmt.Sprintf(`%s{host="e2e"}`, metric))
-	resp, err := http.Get(base + "/api/v1/query?query=" + q)
-	assert.Nil(t, err)
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	assert.Contains(t, string(body), "42.5", "VictoriaMetrics should return the written value")
+	ts := now / 1e9
+	queryURL := base + "/api/v1/query_range?query=" + q +
+		"&start=" + strconv.FormatInt(ts-60, 10) + "&end=" + strconv.FormatInt(ts+60, 10) + "&step=15"
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(queryURL)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return strings.Contains(string(body), "42.5")
+	}, 120*time.Second, 5*time.Second, "VictoriaMetrics should return the written value")
 }

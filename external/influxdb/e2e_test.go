@@ -52,13 +52,18 @@ func TestE2E_InfluxDB(t *testing.T) {
 
 	measurement := fmt.Sprintf("e2e_iot_%d", time.Now().UnixNano())
 	ctx := context.Background()
-	err := d.WritePoints(ctx, bucket, []tsdb.SeriesPoint{{
+	point := tsdb.SeriesPoint{
 		Measurement: measurement,
 		Tags:        map[string]string{"host": "e2e"},
 		Fields:      map[string]interface{}{"value": 42.5},
 		Timestamp:   time.Now().UnixNano(),
-	}})
-	assert.Nil(t, err, "write to InfluxDB")
+	}
+	// 环境变量已设即期望可跑：等待 setup 完成，同点重试幂等，持续失败按错误处理
+	if err := waitReady(60*time.Second, func() error {
+		return d.WritePoints(ctx, bucket, []tsdb.SeriesPoint{point})
+	}); err != nil {
+		t.Fatalf("influxdb not ready within 60s: %v", err)
+	}
 
 	// InfluxDB 写入后可查需短暂等待
 	time.Sleep(2 * time.Second)
@@ -70,4 +75,17 @@ func TestE2E_InfluxDB(t *testing.T) {
 	assert.True(t, len(res.Rows) > 0, "query should return the written point")
 	assert.Equal(t, 42.5, res.Rows[0]["_value"])
 	assert.Equal(t, "e2e", res.Rows[0]["host"])
+}
+
+// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+func waitReady(timeout time.Duration, ready func() error) error {
+	var err error
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err = ready(); err == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return err
 }

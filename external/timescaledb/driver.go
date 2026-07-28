@@ -44,32 +44,11 @@ func newDriver(db *sql.DB) *driver {
 	return &driver{db: db}
 }
 
-// escapeSingleQuotes escapes single quotes in strings.
-func escapeSingleQuotes(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
-}
+// 以下两个函数把 PostgreSQL 方言参数（双引号标识符、标准字符串转义）绑定到 pkg/tsdb 通用实现。
 
-// formatValue formats a value for SQL INSERT.
-func formatValue(v interface{}) string {
-	switch val := v.(type) {
-	case string:
-		return fmt.Sprintf("'%s'", escapeSingleQuotes(val))
-	case float64, float32, int, int64, int32, uint, uint64, uint32:
-		return fmt.Sprintf("%v", val)
-	case bool:
-		if val {
-			return "TRUE"
-		}
-		return "FALSE"
-	default:
-		return fmt.Sprintf("'%v'", val)
-	}
-}
+func quoteIdentifier(s string) string { return tsdb.QuoteIdentifier(s, '"') }
 
-// quoteIdentifier 用双引号包裹标识符并转义内部双引号（PostgreSQL）。
-func quoteIdentifier(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-}
+func formatValue(v interface{}) string { return tsdb.FormatValue(v, false) }
 
 // buildInsertSQL builds INSERT SQL for a single SeriesPoint.
 func buildInsertSQL(db string, point tsdb.SeriesPoint) string {
@@ -135,42 +114,7 @@ func (d *driver) Query(ctx context.Context, db, sqlStr string) (*tsdb.QueryResul
 		return nil, err
 	}
 	defer rows.Close()
-
-	result := &tsdb.QueryResult{}
-
-	// Get column names
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	result.Columns = cols
-
-	// Scan rows
-	for rows.Next() {
-		values := make([]interface{}, len(cols))
-		valuePtrs := make([]interface{}, len(cols))
-		for i := range cols {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, err
-		}
-
-		row := make(map[string]interface{})
-		for i, col := range cols {
-			val := values[i]
-			// Convert []byte to string if needed
-			if b, ok := val.([]byte); ok {
-				row[col] = string(b)
-			} else {
-				row[col] = val
-			}
-		}
-		result.Rows = append(result.Rows, row)
-	}
-
-	return result, rows.Err()
+	return tsdb.ScanRows(rows)
 }
 
 // Close closes the TimescaleDB database connection.

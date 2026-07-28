@@ -72,11 +72,13 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		if err != nil {
 			return nil, err
 		}
-		// Test the connection
-		if err := db.Ping(); err != nil {
+		// 执行真实查询验证连接可用性
+		rows, err := db.QueryContext(context.Background(), "SELECT SERVER_VERSION()")
+		if err != nil {
 			_ = db.Close()
 			return nil, err
 		}
+		_ = rows.Close()
 		return db, nil
 	}, func(db *sql.DB) error {
 		return db.Close()

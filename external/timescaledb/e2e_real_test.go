@@ -44,10 +44,13 @@ func TestE2E_TimescaleDB(t *testing.T) {
 
 	ctx := context.Background()
 	measurement := fmt.Sprintf("e2e_iot_%d", time.Now().UnixNano())
-	_, err = db.ExecContext(ctx, fmt.Sprintf(
-		`CREATE TABLE public.%s (time timestamptz, host text, value double precision)`, measurement))
-	if err != nil {
-		t.Skipf("create table failed (db not ready?): %v", err)
+	createSQL := fmt.Sprintf(
+		`CREATE TABLE public.%s (time timestamptz, host text, value double precision)`, measurement)
+	if err := waitReady(60*time.Second, func() error {
+		_, e := db.ExecContext(ctx, createSQL)
+		return e
+	}); err != nil {
+		t.Fatalf("timescaledb not ready within 60s: %v", err)
 	}
 	defer func() { _, _ = db.ExecContext(ctx, fmt.Sprintf(`DROP TABLE public.%s`, measurement)) }()
 
@@ -64,4 +67,17 @@ func TestE2E_TimescaleDB(t *testing.T) {
 	assert.Equal(t, 1, len(res.Rows))
 	assert.Equal(t, "e2e", res.Rows[0]["host"])
 	assert.Equal(t, 42.5, res.Rows[0]["value"])
+}
+
+// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+func waitReady(timeout time.Duration, ready func() error) error {
+	var err error
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err = ready(); err == nil {
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return err
 }

@@ -17,7 +17,11 @@
 package tdengine
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,17 +80,165 @@ func TestParseMsgPointsLine(t *testing.T) {
 	assert.Equal(t, "cpu", pts[0].Measurement)
 }
 
-func TestEscapeSingleQuotes(t *testing.T) {
-	assert.Equal(t, "''", escapeSingleQuotes("'"))
-	assert.Equal(t, "O''Neil", escapeSingleQuotes("O'Neil"))
-}
-
 func TestFormatValue(t *testing.T) {
 	assert.Equal(t, "'test'", formatValue("test"))
 	assert.Equal(t, "123", formatValue(123))
 	assert.Equal(t, "123.45", formatValue(123.45))
 	assert.Equal(t, "TRUE", formatValue(true))
 	assert.Equal(t, "FALSE", formatValue(false))
+}
+
+func TestFormatValueExtended(t *testing.T) {
+	assert.Equal(t, "NULL", formatValue(nil))
+	// 浮点数不使用科学计数法
+	assert.Equal(t, "1000000", formatValue(float64(1000000)))
+	assert.Equal(t, "'O\\'Neil'", formatValue("O'Neil"))
+	// TDengine 方言反斜杠翻倍
+	assert.Equal(t, "'C:\\\\new'", formatValue("C:\\new"))
+	// 嵌套对象序列化为 JSON 字符串
+	assert.Equal(t, "'{\"a\":1}'", formatValue(map[string]interface{}{"a": 1}))
+}
+
+func TestValidFieldValue(t *testing.T) {
+	assert.False(t, validFieldValue(nil))
+	assert.False(t, validFieldValue(math.NaN()))
+	assert.False(t, validFieldValue(math.Inf(1)))
+	assert.False(t, validFieldValue(math.Inf(-1)))
+	assert.True(t, validFieldValue(1.0))
+	assert.True(t, validFieldValue(0.0))
+	assert.True(t, validFieldValue("s"))
+	assert.True(t, validFieldValue(1))
+	assert.True(t, validFieldValue(false))
+}
+
+// TestBuildInsertStatementsStable 超级表模式：同表段多行合并、不同 tags 拆表段、ts=0 用 NOW()。
+func TestBuildInsertStatementsStable(t *testing.T) {
+	ts := int64(1700000000000000000)
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "meters", Tags: map[string]string{"loc": "a"}, Fields: map[string]interface{}{"v": 1.5}, Timestamp: ts},
+		{Measurement: "meters", Tags: map[string]string{"loc": "a"}, Fields: map[string]interface{}{"v": 2.5}, Timestamp: ts},
+		{Measurement: "meters", Tags: map[string]string{"loc": "b"}, Fields: map[string]interface{}{"v": 3.5}, Timestamp: 0},
+	})
+	subA := subTableName("meters", map[string]string{"loc": "a"}, []string{"loc"})
+	subB := subTableName("meters", map[string]string{"loc": "b"}, []string{"loc"})
+	tsLit := formatTimestamp(ts)
+	expected := "INSERT INTO `iot`.`" + subA + "` USING `iot`.`meters` (`loc`) TAGS ('a') (`ts`,`v`) VALUES (" +
+		tsLit + ",1.5) (" + tsLit + ",2.5) " +
+		"`iot`.`" + subB + "` USING `iot`.`meters` (`loc`) TAGS ('b') (`ts`,`v`) VALUES (NOW(),3.5)"
+	assert.Equal(t, []string{expected}, stmts)
+}
+
+// TestBuildInsertStatementsNormalTable 无 tags：写入同名普通表。
+func TestBuildInsertStatementsNormalTable(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"usage": float64(12)}, Timestamp: 0},
+	})
+	assert.Equal(t, []string{"INSERT INTO `iot`.`cpu` (`ts`,`usage`) VALUES (NOW(),12)"}, stmts)
+}
+
+// TestBuildInsertStatementsSkipsInvalid nil/NaN 字段跳过；无有效字段的点整体跳过。
+func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "m", Fields: map[string]interface{}{"a": nil, "b": 1.0}, Timestamp: 0},
+		{Measurement: "m2", Fields: map[string]interface{}{"a": nil}, Timestamp: 0},
+		{Measurement: "m3", Fields: map[string]interface{}{"a": math.NaN()}, Timestamp: 0},
+		{Measurement: "m4", Fields: map[string]interface{}{"a": 1.0}, Timestamp: -1},
+	})
+	assert.Equal(t, []string{"INSERT INTO `iot`.`m` (`ts`,`b`) VALUES (NOW(),1)"}, stmts)
+	assert.Empty(t, buildInsertStatements("iot", nil))
+}
+
+// TestBuildInsertStatementsColumnSuperset 同表段不同字段集：列取超集、缺失补 NULL、表段只出现一次。
+func TestBuildInsertStatementsColumnSuperset(t *testing.T) {
+	ts := int64(1700000000000000000)
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "meters", Tags: map[string]string{"loc": "a"}, Fields: map[string]interface{}{"v": 1.5}, Timestamp: ts},
+		{Measurement: "meters", Tags: map[string]string{"loc": "a"}, Fields: map[string]interface{}{"q": 2.0, "v": 3.0}, Timestamp: ts},
+	})
+	sub := subTableName("meters", map[string]string{"loc": "a"}, []string{"loc"})
+	tsLit := formatTimestamp(ts)
+	expected := "INSERT INTO `iot`.`" + sub + "` USING `iot`.`meters` (`loc`) TAGS ('a') (`ts`,`q`,`v`) VALUES (" +
+		tsLit + ",NULL,1.5) (" + tsLit + ",2,3)"
+	assert.Equal(t, []string{expected}, stmts)
+	assert.Equal(t, 1, strings.Count(stmts[0], "USING"))
+}
+
+// TestBuildInsertStatementsChunking 大批量按字节预算拆分为多条语句，行数不丢。
+func TestBuildInsertStatementsChunking(t *testing.T) {
+	const total = 20000
+	ts := int64(1700000000000000000)
+	points := make([]tsdb.SeriesPoint, 0, total)
+	for i := 0; i < total; i++ {
+		points = append(points, tsdb.SeriesPoint{
+			Measurement: "meters",
+			Tags:        map[string]string{"id": fmt.Sprintf("dev%05d", i)},
+			Fields:      map[string]interface{}{"v": float64(i)},
+			Timestamp:   ts,
+		})
+	}
+	stmts := buildInsertStatements("iot", points)
+	assert.Greater(t, len(stmts), 1)
+	rows := 0
+	for _, s := range stmts {
+		assert.LessOrEqual(t, len(s), maxStatementBytes+2048)
+		assert.True(t, strings.HasPrefix(s, "INSERT INTO "))
+		rows += strings.Count(s, formatTimestamp(ts)+",")
+	}
+	assert.Equal(t, total, rows)
+}
+
+// TestPointTarget 多 tag 时按 key 排序；时间戳越界或无有效字段时跳过。
+func TestPointTarget(t *testing.T) {
+	p := tsdb.SeriesPoint{
+		Measurement: "m",
+		Tags:        map[string]string{"z": "1", "a": "2"},
+		Fields:      map[string]interface{}{"f2": 2.0, "f1": 1.0},
+	}
+	key, target, ok := pointTarget("iot", p)
+	assert.True(t, ok)
+	assert.Equal(t, "m\x00a\x002\x00z\x001", key)
+	sub := subTableName("m", p.Tags, []string{"a", "z"})
+	assert.Equal(t, "`iot`.`"+sub+"` USING `iot`.`m` (`a`,`z`) TAGS ('2','1')", target)
+
+	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "m", Fields: map[string]interface{}{"f": 1.0}, Timestamp: -1})
+	assert.False(t, ok, "时间戳越界跳过")
+	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "m", Fields: map[string]interface{}{"f": math.NaN()}})
+	assert.False(t, ok, "无有效字段跳过")
+}
+
+func TestSubTableName(t *testing.T) {
+	tagsA := map[string]string{"id": "dev-01"}
+	tagsB := map[string]string{"id": "dev_01"}
+	nameA := subTableName("meters", tagsA, []string{"id"})
+	nameB := subTableName("meters", tagsB, []string{"id"})
+	// 净化前缀相同但哈希后缀不同，避免折叠碰撞串表
+	assert.True(t, strings.HasPrefix(nameA, "meters_dev_01_"), nameA)
+	assert.True(t, strings.HasPrefix(nameB, "meters_dev_01_"), nameB)
+	assert.NotEqual(t, nameA, nameB)
+	// 特殊字符替换为下划线、数字开头补下划线
+	assert.True(t, strings.HasPrefix(subTableName("m", map[string]string{"id": "dev-01", "site": "A."}, []string{"id", "site"}), "m_dev_01_A__"))
+	assert.True(t, strings.HasPrefix(subTableName("1a", nil, nil), "_1a_"))
+	// 总长不超过 192 字节
+	long := subTableName(strings.Repeat("x", 300), nil, nil)
+	assert.LessOrEqual(t, len(long), 192)
+}
+
+func TestFormatTimestamp(t *testing.T) {
+	assert.Equal(t, "NOW()", formatTimestamp(0))
+	ts := int64(1700000000000000000)
+	// 带时区偏移的 ISO8601 字面量（本地时区无关）
+	expected := "'" + time.Unix(0, ts).Format("2006-01-02T15:04:05.000000000-07:00") + "'"
+	assert.Equal(t, expected, formatTimestamp(ts))
+}
+
+// TestWritePointsAllSkipped 点全部无效时返回错误，不静默报成功；空输入为无操作。
+func TestWritePointsAllSkipped(t *testing.T) {
+	d := newDriver(&sql.DB{})
+	err := d.WritePoints(context.Background(), "iot", []tsdb.SeriesPoint{
+		{Measurement: "m", Fields: map[string]interface{}{"a": nil}},
+	})
+	assert.Error(t, err)
+	assert.Nil(t, d.WritePoints(context.Background(), "iot", nil))
 }
 
 // TestWriteNodeOnMsg verifies that invalid payloads are routed to Failure before database execution.

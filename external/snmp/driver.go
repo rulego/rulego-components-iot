@@ -58,7 +58,8 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 			continue
 		}
 		name := dd.Name
-		if dd.Address != "" && dd.Address != oidByName[dd.Name] {
+		// 实际 OID（去前导点）与配置不同时，点名并入 OID 后缀
+		if dd.Address != "" && strings.TrimPrefix(dd.Address, ".") != oidByName[dd.Name] {
 			name = dd.Name + "." + dd.Address
 		}
 		out = append(out, iot_points.Data{
