@@ -21,13 +21,17 @@ import (
 	"time"
 
 	"github.com/gopcua/opcua/ua"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/stretchr/testify/assert"
 )
 
-// ToPointsData：OK 点填 Value+Timestamp，坏点填 Error；Name 优先级 names → DisplayName → NodeID。
+// ToPointsData：OK 点填 Value+Timestamp，坏点填 Error；Name 优先级 points.Name → DisplayName → points.Addr。
 func TestToPointsData(t *testing.T) {
-	nodeIds := []string{"ns=2;s=A", "ns=2;s=B", "ns=2;s=C"}
-	names := []string{"温度", "", ""}
+	points := []iot_points.Point{
+		{Name: "温度", Addr: "ns=2;s=A"},
+		{Addr: "ns=2;s=B"},
+		{Addr: "ns=2;s=C"},
+	}
 	data := []Data{
 		{NodeId: "ns=2;s=A", DisplayName: "Temp"},
 		{NodeId: "ns=2;s=B", DisplayName: "Pressure"},
@@ -43,7 +47,7 @@ func TestToPointsData(t *testing.T) {
 		},
 	}
 
-	out := ToPointsData(nodeIds, names, data, resp)
+	out := ToPointsData(points, data, resp)
 	assert.Equal(t, 3, len(out))
 
 	// 配置点名最优先
@@ -55,14 +59,19 @@ func TestToPointsData(t *testing.T) {
 	// 无配置名时 DisplayName 次优
 	assert.Equal(t, "Pressure", out[1].Name)
 
-	// 坏点：无 DisplayName 时用 NodeID，Error 填入，Value/Timestamp 为零值
+	// 坏点：无 DisplayName 时用 Addr，Error 填入，Value/Timestamp 为零值
 	assert.Equal(t, "ns=2;s=C", out[2].Name)
 	assert.NotEmpty(t, out[2].Error)
 	assert.Nil(t, out[2].Value)
 	assert.Equal(t, int64(0), out[2].Timestamp)
 
-	// names 为 nil 时回退 DisplayName → NodeID（endpoint 调用场景）
-	out2 := ToPointsData(nodeIds, nil, data, resp)
+	// 无名点位（endpoint 场景仅 Addr）回退 DisplayName → Addr
+	out2 := ToPointsData([]iot_points.Point{{Addr: "ns=2;s=A"}, {Addr: "ns=2;s=B"}, {Addr: "ns=2;s=C"}}, data, resp)
 	assert.Equal(t, "Temp", out2[0].Name)
 	assert.Equal(t, "ns=2;s=C", out2[2].Name)
+
+	// 数值应用 Scale/Offset 工程量转换（23.5*2+1=48）
+	scaled := []iot_points.Point{{Name: "温度", Addr: "ns=2;s=A", Scale: 2, Offset: 1}, {Addr: "ns=2;s=B"}, {Addr: "ns=2;s=C"}}
+	out3 := ToPointsData(scaled, data, resp)
+	assert.Equal(t, 48.0, out3[0].Value)
 }

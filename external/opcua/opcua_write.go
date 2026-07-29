@@ -43,17 +43,19 @@ type WriteNodeConfiguration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
-	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256" group:"advanced"`
+	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256" ref:"shared" group:"advanced"`
 	//Security Mode: one of None, Sign, SignAndEncrypt
-	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt" group:"advanced"`
+	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt" ref:"shared" group:"advanced"`
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" group:"advanced"`
+	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" ref:"shared" group:"advanced"`
 	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared" group:"advanced"`
 	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared" group:"advanced"`
-	//OPC UA Server CertFile Path
+	//OPC UA 客户端证书文件
 	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared" group:"advanced"`
-	//OPC UA Server CertKeyFile Path
+	//OPC UA 客户端证书私钥文件
 	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared" group:"advanced"`
+	// 请求超时（秒）
+	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5" ref:"shared"`
 	// 默认点位表（addr=NodeID）；为空则从 msg.Data 解析点位（旧兼容）
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=NodeID; empty=parse from msg.Data"`
 }
@@ -82,6 +84,9 @@ func (c WriteNodeConfiguration) GetCertFile() string {
 func (c WriteNodeConfiguration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
+func (c WriteNodeConfiguration) GetTimeout() int {
+	return c.Timeout
+}
 
 // WriteNode 把点位值写入 OPC UA 服务器，成功走 Success 链，否则 Failure 链。
 //
@@ -97,10 +102,11 @@ type WriteNode struct {
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: WriteNodeConfiguration{
-			Server: "opc.tcp://127.0.0.1:53530/OPCUA/SimulationServer",
-			Policy: "None",
-			Mode:   "none",
-			Auth:   "anonymous",
+			Server:  "opc.tcp://127.0.0.1:53530/OPCUA/SimulationServer",
+			Policy:  "None",
+			Mode:    "none",
+			Auth:    "anonymous",
+			Timeout: 5,
 			Points: []iot_points.Point{
 				{Name: "setpoint", Addr: "ns=2;s=Setpoint", Type: "FLOAT64", Value: "${msg.value}"},
 			},

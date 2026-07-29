@@ -191,10 +191,12 @@ type OpcUaConfig struct {
 	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared"`
 	//Authentication Password
 	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared"`
-	//OPC UA Server CertFile Path
+	//OPC UA 客户端证书文件
 	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared"`
-	//OPC UA Server CertKeyFile Path
+	//OPC UA 客户端证书私钥文件
 	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared"`
+	// 请求超时（秒）
+	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
 	//Interval to read, supports cron expressions
 	//example: @every 1m (every 1 minute) 0 0 0 * * * (triggers at midnight)
 	Interval string `json:"interval" label:"Interval" desc:"Read interval, supports cron expression, e.g. @every 1m"`
@@ -225,6 +227,9 @@ func (c OpcUaConfig) GetCertFile() string {
 }
 func (c OpcUaConfig) GetCertKeyFile() string {
 	return c.CertKeyFile
+}
+func (c OpcUaConfig) GetTimeout() int {
+	return c.Timeout
 }
 
 type OpcUa struct {
@@ -258,6 +263,7 @@ func (x *OpcUa) New() types.Node {
 			Policy:   "None",
 			Mode:     "none",
 			Auth:     "anonymous",
+			Timeout:  5,
 		},
 	}
 }
@@ -394,12 +400,16 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 	}
 
 	nodeIds := x.Config.NodeIds
+	pts := make([]iot_points.Point, len(nodeIds))
+	for i, id := range nodeIds {
+		pts[i] = iot_points.Point{Addr: id}
+	}
 	data, resp, err := opcuaClient.Read(client, nodeIds, x.RuleConfig.Logger)
 	if err != nil {
 		x.Printf("read nodes error %v ", err)
 		return err
 	}
-	points := opcuaClient.ToPointsData(nodeIds, nil, data, resp)
+	points := opcuaClient.ToPointsData(pts, data, resp)
 	exchange := &endpointApi.Exchange{
 		In: &RequestMessage{points: points},
 		Out: &ResponseMessage{

@@ -43,17 +43,19 @@ type Configuration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
 	//Security Policy URL or one of None, Basic128Rsa15, Basic256, Basic256Sha256
-	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256" group:"advanced"`
+	Policy string `json:"policy" label:"Security Policy" desc:"Security policy: None, Basic128Rsa15, Basic256, Basic256Sha256" ref:"shared" group:"advanced"`
 	//Security Mode: one of None, Sign, SignAndEncrypt
-	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt" group:"advanced"`
+	Mode string `json:"mode" label:"Security Mode" desc:"Security mode: None, Sign, SignAndEncrypt" ref:"shared" group:"advanced"`
 	//Authentication Mode: one of Anonymous, UserName, Certificate
-	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" group:"advanced"`
+	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" ref:"shared" group:"advanced"`
 	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared" group:"advanced"`
 	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared" group:"advanced"`
-	//OPC UA Server CertFile Path
+	//OPC UA 客户端证书文件
 	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared" group:"advanced"`
-	//OPC UA Server CertKeyFile Path
+	//OPC UA 客户端证书私钥文件
 	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared" group:"advanced"`
+	// 请求超时（秒）
+	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5" ref:"shared"`
 	// 默认点位表（addr=NodeID，如 ns=2;s=Temperature）；为空则从 msg.Data 解析 nodeIds（旧兼容）
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=NodeID; empty=parse nodeIds from msg.Data"`
 }
@@ -82,6 +84,9 @@ func (c Configuration) GetCertFile() string {
 func (c Configuration) GetCertKeyFile() string {
 	return c.CertKeyFile
 }
+func (c Configuration) GetTimeout() int {
+	return c.Timeout
+}
 
 // ReadNode 批量读取 OPC UA 节点，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
 // gopcua SecureChannel 按 RequestID 匹配响应，天然并发安全，无需 opLock。
@@ -105,10 +110,11 @@ type ReadNode struct {
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
-			Server: "opc.tcp://127.0.0.1:53530/OPCUA/SimulationServer",
-			Policy: "None",
-			Mode:   "none",
-			Auth:   "anonymous",
+			Server:  "opc.tcp://127.0.0.1:53530/OPCUA/SimulationServer",
+			Policy:  "None",
+			Mode:    "none",
+			Auth:    "anonymous",
+			Timeout: 5,
 			Points: []iot_points.Point{
 				{Name: "temperature", Addr: "ns=2;s=Temperature"},
 			},

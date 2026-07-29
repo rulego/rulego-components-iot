@@ -114,6 +114,8 @@ type ConfigProp interface {
 	GetCertFile() string
 	// GetCertKeyFile 获取OPCUA证书私钥文件
 	GetCertKeyFile() string
+	// GetTimeout 获取请求超时（秒），<=0 用默认 5 秒
+	GetTimeout() int
 }
 
 // OpcUaClientHolder OPCUA客户端相关配置
@@ -156,6 +158,12 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	}
 	// Get the options to pass into the client based on the flags passed into the executable
 	opts := x.createOptions(endpoints)
+	// 请求超时，<=0 用默认 5 秒
+	timeout := x.Config.GetTimeout()
+	if timeout <= 0 {
+		timeout = iot_points.DefaultTimeoutSec
+	}
+	opts = append(opts, opcua.RequestTimeout(time.Duration(timeout)*time.Second))
 	// Create a Client with the selected options
 	c, err := opcua.NewClient(x.Config.GetServer(), opts...)
 	if err != nil {
@@ -438,24 +446,27 @@ func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, 
 }
 
 // ToPointsData 把 Read 的结果转为统一的 iot_points.Data 列表。供 read 节点与采集端点共用。
-// names 为用户配置的点名(与 nodeIds 对齐,可为 nil)；Name 优先级：names[i] → DisplayName → NodeID。
+// points 与 resp.Results 按序对齐（Name/Addr 用于命名，Scale/Offset 工程量转换）。
+// Name 优先级：points[i].Name → DisplayName → points[i].Addr。
 // 单点非 OK 标记 Error；OK 点填 Value 与 ServerTimestamp(ns)。
-func ToPointsData(nodeIds []string, names []string, data []Data, resp *ua.ReadResponse) []iot_points.Data {
-	out := make([]iot_points.Data, 0, len(nodeIds))
+func ToPointsData(points []iot_points.Point, data []Data, resp *ua.ReadResponse) []iot_points.Data {
+	out := make([]iot_points.Data, 0, len(points))
 	for i, result := range resp.Results {
-		name := ""
-		switch {
-		case i < len(names) && names[i] != "":
-			name = names[i]
-		case i < len(data) && data[i].DisplayName != "":
+		var p iot_points.Point
+		if i < len(points) {
+			p = points[i]
+		}
+		name := p.Name
+		if name == "" && i < len(data) && data[i].DisplayName != "" {
 			name = data[i].DisplayName
-		case i < len(nodeIds):
-			name = nodeIds[i]
+		}
+		if name == "" {
+			name = p.Addr
 		}
 		dd := iot_points.Data{Name: name}
 		switch {
 		case result != nil && result.Status == ua.StatusOK:
-			dd.Value = result.Value.Value()
+			dd.Value = iot_points.ScaleValue(result.Value.Value(), p)
 			if t := result.ServerTimestamp; !t.IsZero() {
 				dd.Timestamp = t.UnixNano()
 			}

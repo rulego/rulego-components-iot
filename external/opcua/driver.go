@@ -46,16 +46,14 @@ func newDriver(client *opcua.Client, logger types.Logger) *driver {
 // 单点非 OK 标记 Error；全部失败返回 error。
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	nodeIds := make([]string, len(points))
-	names := make([]string, len(points))
 	for i, p := range points {
 		nodeIds[i] = p.Addr
-		names[i] = p.Name
 	}
 	data, resp, err := opcuaClient.Read(d.client, nodeIds, d.logger)
 	if err != nil {
 		return nil, err
 	}
-	out := opcuaClient.ToPointsData(nodeIds, names, data, resp)
+	out := opcuaClient.ToPointsData(points, data, resp)
 	for _, dd := range out {
 		if dd.Error == "" { // 至少一个点成功
 			return out, nil
