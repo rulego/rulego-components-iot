@@ -40,7 +40,7 @@ func TestEipNodes(t *testing.T) {
 	assert.NotNil(t, w.New())
 
 	rn := r.New().(*ReadNode)
-	assert.Equal(t, "127.0.0.1", rn.Config.Server)
+	assert.Equal(t, "127.0.0.1:44818", rn.Config.Server)
 	assert.Equal(t, 0, rn.Config.Slot)
 }
 

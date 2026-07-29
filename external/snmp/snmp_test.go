@@ -39,8 +39,7 @@ func TestSnmpNodes(t *testing.T) {
 	assert.NotNil(t, w.New())
 
 	rn := r.New().(*ReadNode)
-	assert.Equal(t, "127.0.0.1", rn.Config.Server)
-	assert.Equal(t, 161, rn.Config.Port)
+	assert.Equal(t, "127.0.0.1:161", rn.Config.Server)
 	assert.Equal(t, "v2c", rn.Config.Version)
 	assert.Equal(t, "public", rn.Config.Community)
 }
@@ -64,17 +63,16 @@ func TestToSnmpClientPoint(t *testing.T) {
 // TestConfigPropImpl ConfigProp 接口实现
 func TestConfigPropImpl(t *testing.T) {
 	c := Configuration{
-		Server: "192.168.1.1", Port: 161, Version: "v3", Community: "private",
+		Server: "192.168.1.1:1161", Version: "v3", Community: "private",
 		Timeout: 3, SecurityLevel: "authPriv", UserName: "user",
 		AuthProtocol: "SHA", AuthPassword: "ap", PrivProtocol: "AES", PrivPassword: "pp",
 	}
-	assert.Equal(t, "192.168.1.1", c.GetServer())
-	assert.Equal(t, 161, c.GetPort())
+	assert.Equal(t, "192.168.1.1:1161", c.GetServer())
 	assert.Equal(t, "v3", c.GetVersion())
 	assert.Equal(t, "private", c.GetCommunity())
 	assert.Equal(t, 3, c.GetTimeout())
 	assert.Equal(t, "authPriv", c.GetSecurityLevel())
-	assert.Equal(t, "user", c.GetUserName())
+	assert.Equal(t, "user", c.GetUsername())
 	assert.Equal(t, "SHA", c.GetAuthProtocol())
 	assert.Equal(t, "ap", c.GetAuthPassword())
 	assert.Equal(t, "AES", c.GetPrivProtocol())

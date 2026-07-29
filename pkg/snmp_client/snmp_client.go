@@ -22,8 +22,6 @@ package snmpclient
 import (
 	"errors"
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 	"time"
 
@@ -56,13 +54,12 @@ type Point struct {
 
 // ConfigProp SNMP 连接配置接口
 type ConfigProp interface {
-	GetServer() string        // host
-	GetPort() int             // 默认 161
+	GetServer() string        // host or host:port，默认端口 161
 	GetVersion() string       // v1/v2c/v3
 	GetCommunity() string     // v1/v2c community
 	GetTimeout() int          // 秒
 	GetSecurityLevel() string // v3: noAuthNoPriv/authNoPriv/authPriv
-	GetUserName() string      // v3
+	GetUsername() string      // v3
 	GetAuthProtocol() string  // v3: None/MD5/SHA/SHA224/SHA256/SHA384/SHA512
 	GetAuthPassword() string  // v3
 	GetPrivProtocol() string  // v3: None/DES/AES/AES192/AES256
@@ -84,17 +81,9 @@ func (h *Holder) NewClient() (*gosnmp.GoSNMP, error) {
 	if h.Config == nil {
 		return nil, errors.New("snmp config is nil")
 	}
-	port := h.Config.GetPort()
-	if port <= 0 {
-		port = 161
-	}
-	// server 支持 host 或 host:port 格式
-	target := h.Config.GetServer()
-	if host, portStr, err := net.SplitHostPort(target); err == nil {
-		target = host
-		if p, err := strconv.Atoi(portStr); err == nil {
-			port = p
-		}
+	target, port, err := iot_points.ParseServer(h.Config.GetServer(), 161)
+	if err != nil {
+		return nil, err
 	}
 	timeout := h.Config.GetTimeout()
 	if timeout <= 0 {
@@ -145,7 +134,7 @@ func applyV3(g *gosnmp.GoSNMP, c ConfigProp) error {
 	}
 	g.MsgFlags = level
 	g.SecurityParameters = &gosnmp.UsmSecurityParameters{
-		UserName:                 c.GetUserName(),
+		UserName:                 c.GetUsername(),
 		AuthenticationPassphrase: c.GetAuthPassword(),
 		PrivacyPassphrase:        c.GetPrivPassword(),
 		AuthenticationProtocol:   parseAuthProtocol(c.GetAuthProtocol()),

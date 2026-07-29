@@ -177,22 +177,6 @@ func TestReadPointsMissingIOA(t *testing.T) {
 	assert.Equal(t, "bad", byName["缺点"].Quality)
 }
 
-// TestParseServer host:port 解析,缺省端口 2404
-func TestParseServer(t *testing.T) {
-	host, port, err := parseServer("192.168.1.10:2405")
-	assert.Nil(t, err)
-	assert.Equal(t, "192.168.1.10", host)
-	assert.Equal(t, 2405, port)
-
-	_, port, _ = parseServer("192.168.1.10")
-	assert.Equal(t, 2404, port)
-
-	_, _, err = parseServer("")
-	assert.NotNil(t, err)
-	_, _, err = parseServer("host:abc")
-	assert.NotNil(t, err)
-}
-
 // TestReadPointsNotConnected 连接失败时 NewClient 返回错误
 func TestNewClientConnectFail(t *testing.T) {
 	_, err := DefaultHolder(testConfig{server: "127.0.0.1:19999", timeout: 2}).NewClient()

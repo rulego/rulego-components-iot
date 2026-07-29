@@ -29,9 +29,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -63,29 +60,12 @@ type Configuration struct {
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// parseServer 解析 host:port；仅 host 时补默认端口 6000。
-func parseServer(server string) (string, int, error) {
-	server = strings.TrimSpace(server)
-	if server == "" {
-		return "", 0, errors.New("empty mc server")
-	}
-	host, portStr, err := net.SplitHostPort(server)
-	if err != nil {
-		return server, defaultPort, nil
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return "", 0, fmt.Errorf("invalid mc server %q", server)
-	}
-	return host, port, nil
-}
-
 // mcOpLocks 按底层 client 关联操作锁，串行化共享 client 的并发读写。
 var mcOpLocks iot_points.OpLocks
 
 // newClient 创建并连接 3E 帧二进制客户端。
 func newClient(config Configuration) (*gomcprotocol.Client3E, error) {
-	host, port, err := parseServer(config.Server)
+	host, port, err := iot_points.ParseServer(config.Server, defaultPort)
 	if err != nil {
 		return nil, err
 	}

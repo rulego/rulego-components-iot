@@ -27,8 +27,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -72,14 +70,9 @@ type Configuration struct {
 
 // initClient 建立 FINS 客户端(UDP 默认；transport=tcp 走 FINS/TCP 并自动握手)。
 func (c Configuration) initClient() (*finsclient.Client, error) {
-	host, portStr, err := net.SplitHostPort(c.Server)
+	host, port, err := iot_points.ParseServer(c.Server, defaultFinsPort)
 	if err != nil {
-		host = c.Server
-		portStr = strconv.Itoa(defaultFinsPort)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return nil, fmt.Errorf("fins server %q: invalid port", c.Server)
+		return nil, err
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -130,8 +123,9 @@ func (x *ReadNode) Type() string {
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
-			Server:  "127.0.0.1:9600",
-			Timeout: 5,
+			Server:    "127.0.0.1:9600",
+			Transport: "udp",
+			Timeout:   5,
 			Points: []iot_points.Point{
 				{Name: "point1", Addr: "D100", Type: "UINT16"},
 			},
@@ -283,8 +277,9 @@ func (x *WriteNode) Type() string {
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
-			Server:  "127.0.0.1:9600",
-			Timeout: 5,
+			Server:    "127.0.0.1:9600",
+			Transport: "udp",
+			Timeout:   5,
 			Points: []iot_points.Point{
 				{Name: "point1", Addr: "D100", Type: "UINT16", Value: "${msg.value}"},
 			},

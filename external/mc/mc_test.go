@@ -58,24 +58,6 @@ func TestMcNodes(t *testing.T) {
 	assert.Equal(t, 5, rn.Config.Timeout)
 }
 
-// TestParseServer host:port 解析与默认端口
-func TestParseServer(t *testing.T) {
-	host, port, err := parseServer("192.168.1.10:6001")
-	assert.Nil(t, err)
-	assert.Equal(t, "192.168.1.10", host)
-	assert.Equal(t, 6001, port)
-
-	host, port, err = parseServer("192.168.1.10")
-	assert.Nil(t, err)
-	assert.Equal(t, "192.168.1.10", host)
-	assert.Equal(t, defaultPort, port)
-
-	_, _, err = parseServer("")
-	assert.NotNil(t, err)
-	_, _, err = parseServer("host:abc")
-	assert.NotNil(t, err)
-}
-
 // TestParseAddr 三菱软元件地址解析
 func TestParseAddr(t *testing.T) {
 	// 字软元件（十进制编址）

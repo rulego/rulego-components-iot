@@ -50,8 +50,6 @@ func init() {
 type Configuration struct {
 	// 设备地址 host 或 host:port
 	Server string `json:"server" label:"Server" desc:"host or host:port, default port 161" required:"true" ref:"primary"`
-	// 端口，默认 161
-	Port int `json:"port" label:"Port" desc:"default 161"`
 	// SNMP 版本：v1/v2c/v3，默认 v2c
 	Version string `json:"version" label:"Version" desc:"v1/v2c/v3, default v2c"`
 	// community（v1/v2c）
@@ -61,7 +59,7 @@ type Configuration struct {
 	// v3 安全级别：noAuthNoPriv/authNoPriv/authPriv
 	SecurityLevel string `json:"securityLevel" label:"Security Level" desc:"v3 only: noAuthNoPriv/authNoPriv/authPriv"`
 	// v3 用户名
-	UserName string `json:"userName" label:"User Name" desc:"v3 only"`
+	UserName string `json:"username" label:"Username" desc:"v3 only"`
 	// v3 认证协议：None/MD5/SHA/SHA256/SHA512
 	AuthProtocol string `json:"authProtocol" label:"Auth Protocol" desc:"v3 only: None/MD5/SHA/SHA256/SHA512"`
 	// v3 认证密码
@@ -76,12 +74,11 @@ type Configuration struct {
 
 // ConfigProp 接口实现（GetServer 等略写法省空间）
 func (c Configuration) GetServer() string        { return c.Server }
-func (c Configuration) GetPort() int             { return c.Port }
 func (c Configuration) GetVersion() string       { return c.Version }
 func (c Configuration) GetCommunity() string     { return c.Community }
 func (c Configuration) GetTimeout() int          { return c.Timeout }
 func (c Configuration) GetSecurityLevel() string { return c.SecurityLevel }
-func (c Configuration) GetUserName() string      { return c.UserName }
+func (c Configuration) GetUsername() string      { return c.UserName }
 func (c Configuration) GetAuthProtocol() string  { return c.AuthProtocol }
 func (c Configuration) GetAuthPassword() string  { return c.AuthPassword }
 func (c Configuration) GetPrivProtocol() string  { return c.PrivProtocol }
@@ -127,11 +124,13 @@ func (x *ReadNode) Type() string {
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
-			Server:    "127.0.0.1",
-			Port:      161,
-			Version:   "v2c",
-			Community: "public",
-			Timeout:   5,
+			Server:        "127.0.0.1:161",
+			Version:       "v2c",
+			Community:     "public",
+			Timeout:       5,
+			SecurityLevel: "noAuthNoPriv",
+			AuthProtocol:  "None",
+			PrivProtocol:  "None",
 			Points: []iot_points.Point{
 				{Name: "sysName", Addr: "1.3.6.1.2.1.1.5.0"},
 			},
@@ -276,11 +275,13 @@ func (x *WriteNode) Type() string {
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
-			Server:    "127.0.0.1",
-			Port:      161,
-			Version:   "v2c",
-			Community: "public",
-			Timeout:   5,
+			Server:        "127.0.0.1:161",
+			Version:       "v2c",
+			Community:     "public",
+			Timeout:       5,
+			SecurityLevel: "noAuthNoPriv",
+			AuthProtocol:  "None",
+			PrivProtocol:  "None",
 			Points: []iot_points.Point{
 				{Name: "sysLocation", Addr: "1.3.6.1.2.1.1.6.0", Type: "OctetString", Value: "${msg.value}"},
 			},

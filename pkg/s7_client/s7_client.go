@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -96,7 +97,11 @@ func (h *Holder) NewHandler() (*gos7.TCPClientHandler, error) {
 	if timeout <= 0 {
 		timeout = iot_points.DefaultTimeoutSec
 	}
-	handler := gos7.NewTCPClientHandler(h.Config.GetServer(), h.Config.GetRack(), h.Config.GetSlot())
+	host, port, err := iot_points.ParseServer(h.Config.GetServer(), 102)
+	if err != nil {
+		return nil, err
+	}
+	handler := gos7.NewTCPClientHandler(net.JoinHostPort(host, strconv.Itoa(port)), h.Config.GetRack(), h.Config.GetSlot())
 	handler.Timeout = time.Duration(timeout) * time.Second
 	handler.IdleTimeout = time.Duration(timeout) * time.Second
 	if err := handler.Connect(); err != nil {

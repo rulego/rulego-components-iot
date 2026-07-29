@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/danomagnum/gologix"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 )
 
@@ -55,7 +56,7 @@ type Point struct {
 
 // ConfigProp EIP 连接配置接口
 type ConfigProp interface {
-	GetServer() string // host
+	GetServer() string // host or host:port，默认端口 44818
 	GetSlot() int      // CPU 槽位，自动生成 CIP 路径
 	GetPath() string   // 可选：手动覆盖 CIP 路径，如 1,0
 	GetTimeout() int   // 秒
@@ -76,7 +77,12 @@ func (h *Holder) NewClient() (*gologix.Client, error) {
 	if h.Config == nil {
 		return nil, errors.New("eip config is nil")
 	}
-	client := gologix.NewClient(h.Config.GetServer())
+	host, port, err := iot_points.ParseServer(h.Config.GetServer(), 44818)
+	if err != nil {
+		return nil, err
+	}
+	client := gologix.NewClient(host)
+	client.Controller.Port = uint(port)
 	// CIP 路径优先级：配置 path > 按 slot 自动生成
 	if path := strings.TrimSpace(h.Config.GetPath()); path != "" {
 		p, err := gologix.ParsePath(path)

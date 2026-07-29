@@ -24,8 +24,6 @@ package iec104client
 import (
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -95,7 +93,7 @@ func (h *Holder) NewClient() (*Client, error) {
 	if h.Config == nil {
 		return nil, errors.New("iec104 config is nil")
 	}
-	host, port, err := parseServer(h.Config.GetServer())
+	host, port, err := iot_points.ParseServer(h.Config.GetServer(), 2404)
 	if err != nil {
 		return nil, err
 	}
@@ -325,26 +323,4 @@ func (c *Client) SendControlCmd(typeId asdu.TypeID, ioa uint, value any) error {
 		return errors.New("iec104 link not active")
 	}
 	return c.c.SendCmd(c.common, typeId, asdu.InfoObjAddr(ioa), value)
-}
-
-// parseServer 解析 host:port,缺省端口 2404
-func parseServer(server string) (string, int, error) {
-	server = strings.TrimSpace(server)
-	if server == "" {
-		return "", 0, errors.New("empty iec104 server")
-	}
-	host := server
-	port := 2404
-	if i := strings.LastIndex(server, ":"); i >= 0 {
-		host = server[:i]
-		if p, err := strconv.Atoi(server[i+1:]); err == nil {
-			port = p
-		} else {
-			return "", 0, fmt.Errorf("invalid iec104 port in %q", server)
-		}
-	}
-	if host == "" {
-		return "", 0, fmt.Errorf("invalid iec104 server %q", server)
-	}
-	return host, port, nil
 }

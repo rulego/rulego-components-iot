@@ -49,8 +49,8 @@ func init() {
 
 // Configuration 连接配置（读/写节点共用）
 type Configuration struct {
-	// PLC 地址，格式 host，端口内置 44818
-	Server string `json:"server" label:"Server" desc:"host, port 44818 built-in" required:"true" ref:"primary"`
+	// PLC 地址，格式 host 或 host:port，默认端口 44818
+	Server string `json:"server" label:"Server" desc:"host or host:port, default port 44818" required:"true" ref:"primary"`
 	// CPU 在背板上的槽位号，默认 0，自动生成 CIP 路径
 	Slot int `json:"slot" label:"Slot" desc:"CPU slot on backplane, default 0"`
 	// 可选：手动覆盖 CIP 路径，如 1,0；留空则按 slot 自动生成
@@ -104,7 +104,7 @@ func (x *ReadNode) Type() string {
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
-			Server:  "127.0.0.1",
+			Server:  "127.0.0.1:44818",
 			Slot:    0,
 			Timeout: 5,
 			Points: []iot_points.Point{
@@ -258,7 +258,7 @@ func (x *WriteNode) Type() string {
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
-			Server:  "127.0.0.1",
+			Server:  "127.0.0.1:44818",
 			Slot:    0,
 			Timeout: 5,
 			Points: []iot_points.Point{
