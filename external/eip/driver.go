@@ -47,17 +47,12 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 		return nil, err
 	}
 	out := make([]iot_points.Data, 0, len(datas))
-	for _, dd := range datas {
-		// 单点质量坏标记 Error，与真实空值区分
-		if dd.Quality == "bad" {
-			out = append(out, iot_points.Data{Name: dd.Name, Error: "read failed (quality=bad)"})
-			continue
+	for i, dd := range datas {
+		var p iot_points.Point
+		if i < len(points) {
+			p = points[i]
 		}
-		out = append(out, iot_points.Data{
-			Name:      dd.Name,
-			Value:     dd.Value,
-			Timestamp: dd.Timestamp.UnixNano(),
-		})
+		out = append(out, iot_points.NewData(dd.Name, dd.Value, dd.Quality == "bad", dd.Timestamp, p))
 	}
 	return out, nil
 }

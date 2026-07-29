@@ -16,7 +16,11 @@
 
 package iot_points
 
-import "time"
+import (
+	"time"
+
+	"github.com/rulego/rulego/utils/cast"
+)
 
 // 采集节点共享常量
 const (
@@ -71,6 +75,26 @@ func ApplyScale(raw float64, p Point) float64 {
 		return raw
 	}
 	return raw*p.Scale + p.Offset
+}
+
+// ScaleValue 对数值型采集值应用点位工程量转换，结果为 float64。
+// Scale/Offset 均为 0、或值非数值类型（布尔等）时原样返回。
+func ScaleValue(v interface{}, p Point) interface{} {
+	if p.Scale == 0 && p.Offset == 0 {
+		return v
+	}
+	if f, err := cast.ToFloat64E(v); err == nil {
+		return ApplyScale(f, p)
+	}
+	return v
+}
+
+// NewData 组装单点采集结果：qualityBad 标记坏点；否则对数值应用点位工程量转换。
+func NewData(name string, value interface{}, qualityBad bool, timestamp time.Time, p Point) Data {
+	if qualityBad {
+		return Data{Name: name, Error: "read failed (quality=bad)"}
+	}
+	return Data{Name: name, Value: ScaleValue(value, p), Timestamp: timestamp.UnixNano()}
 }
 
 // RenderPoint 渲染 Point 的字符串字段模板（Name/Addr/Type/Endian/Value），Scale/Offset 透传。
