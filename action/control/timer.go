@@ -17,6 +17,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"sync"
@@ -30,6 +31,9 @@ import (
 
 // timerAlarmMsgType 内部闹钟消息类型,用于在 OnMsg 里区分"定时到期回调"与"业务输入"。
 const timerAlarmMsgType = "CONTROL_TIMER_ALARM"
+
+// timerCommitMsgType 闹钟到点提交后重新注入、用于透传的消息类型（走全新 ctx）。
+const timerCommitMsgType = "CONTROL_TIMER_COMMIT"
 
 func init() {
 	_ = rulego.Registry.Register(&TimerNode{})
@@ -73,8 +77,12 @@ func (x *TimerNode) Init(ruleConfig types.Config, configuration types.Configurat
 }
 
 func (x *TimerNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	if msg.Type == timerAlarmMsgType {
+	switch msg.Type {
+	case timerAlarmMsgType:
 		x.onAlarm(ctx, msg)
+		return
+	case timerCommitMsgType:
+		ctx.TellSuccess(msg) // 闹钟提交消息透传（来自全新 ctx）
 		return
 	}
 	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
@@ -120,15 +128,18 @@ func (x *TimerNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	q := x.q
 	x.mu.Unlock()
 
-	// 按当前 q 转发(原 Type);框架按值复制给下游,本 msg 仍归本节点
+	// 先输出当前 q，并为闹钟准备独立副本（改副本而非原 msg）。
+	// TellSuccess 异步派发到下游，转发后不再修改 msg，避免与下游并发读取竞态。
 	msg.Metadata.PutValue(x.Config.Out, strconv.FormatBool(q))
-	ctx.TellSuccess(msg)
-
+	var alarmMsg types.RuleMsg
 	if schedule {
-		// 复用本 msg 作为闹钟:改类型 + 记代次,延时后喂回自己
-		msg.Type = timerAlarmMsgType
-		msg.Metadata.PutValue(genKey, strconv.FormatUint(g, 10))
-		ctx.TellSelf(msg, ptMs)
+		alarmMsg = msg.Copy()
+		alarmMsg.Type = timerAlarmMsgType
+		alarmMsg.Metadata.PutValue(genKey, strconv.FormatUint(g, 10))
+	}
+	ctx.TellSuccess(msg)
+	if schedule {
+		ctx.TellSelf(alarmMsg, ptMs)
 	}
 }
 
@@ -144,9 +155,10 @@ func (x *TimerNode) onAlarm(ctx types.RuleContext, msg types.RuleMsg) {
 	q := x.q
 	x.mu.Unlock()
 
-	msg.Type = "" // 归一化输出类型(原类型已被闹钟覆盖)
+	// 经全新 ctx 重新注入提交消息再透传，避免与踢消息的业务派发复用同一 ctx 产生数据竞争
 	msg.Metadata.PutValue(x.Config.Out, strconv.FormatBool(q))
-	ctx.TellSuccess(msg)
+	msg.Type = timerCommitMsgType
+	ctx.TellNode(context.Background(), ctx.GetSelfId(), msg, false, nil, nil)
 }
 
 // targetQ 定时提交的目标输出:TON 延时到置 true,TOF 延时到置 false。

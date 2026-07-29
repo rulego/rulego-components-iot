@@ -17,6 +17,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,6 +32,9 @@ import (
 
 // watchdogAlarmMsgType 内部超时检查消息类型。
 const watchdogAlarmMsgType = "CONTROL_WATCHDOG_ALARM"
+
+// watchdogFailsafeMsgType 超时触发后重新注入、用于透传故障安全值的消息类型（走全新 ctx）。
+const watchdogFailsafeMsgType = "CONTROL_WATCHDOG_FAILSAFE"
 
 func init() {
 	_ = rulego.Registry.Register(&WatchdogNode{})
@@ -76,8 +80,12 @@ func (x *WatchdogNode) Init(ruleConfig types.Config, configuration types.Configu
 }
 
 func (x *WatchdogNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	if msg.Type == watchdogAlarmMsgType {
+	switch msg.Type {
+	case watchdogAlarmMsgType:
 		x.onAlarm(ctx, msg)
+		return
+	case watchdogFailsafeMsgType:
+		ctx.TellSuccess(msg) // 故障安全消息透传（来自全新 ctx），不再武装
 		return
 	}
 	timeoutMs, err := x.resolveTimeout(ctx, msg)
@@ -90,15 +98,18 @@ func (x *WatchdogNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	g := x.gen
 	x.mu.Unlock()
 
-	// 正常透传(原 Type);框架按值复制给下游,本 msg 仍归本节点
-	ctx.TellSuccess(msg)
-	if timeoutMs <= 0 {
-		return
+	// 先为超时检查准备独立副本（改副本而非原 msg）。TellSuccess 异步派发到下游，
+	// 透传后不再修改 msg，避免与下游并发读取竞态。
+	var alarmMsg types.RuleMsg
+	if timeoutMs > 0 {
+		alarmMsg = msg.Copy()
+		alarmMsg.Type = watchdogAlarmMsgType
+		alarmMsg.Metadata.PutValue(genKey, strconv.FormatUint(g, 10))
 	}
-	// 复用本 msg 作为超时检查:改类型 + 记代次,延时后喂回自己
-	msg.Type = watchdogAlarmMsgType
-	msg.Metadata.PutValue(genKey, strconv.FormatUint(g, 10))
-	ctx.TellSelf(msg, timeoutMs)
+	ctx.TellSuccess(msg)
+	if timeoutMs > 0 {
+		ctx.TellSelf(alarmMsg, timeoutMs)
+	}
 }
 
 // onAlarm 超时检查到期:仅当代次未被新喂狗作废时下发故障安全值。
@@ -111,7 +122,10 @@ func (x *WatchdogNode) onAlarm(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 	x.mu.Unlock()
 
-	ctx.TellSuccess(types.NewMsgWithJsonData(x.Config.Failsafe))
+	// 经全新 ctx 重新注入故障安全消息再透传，避免与踢消息的业务派发复用同一 ctx 产生数据竞争
+	failsafe := types.NewMsgWithJsonData(x.Config.Failsafe)
+	failsafe.Type = watchdogFailsafeMsgType
+	ctx.TellNode(context.Background(), ctx.GetSelfId(), failsafe, false, nil, nil)
 }
 
 func (x *WatchdogNode) resolveTimeout(ctx types.RuleContext, msg types.RuleMsg) (int64, error) {

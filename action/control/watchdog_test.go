@@ -16,20 +16,15 @@
 
 package control
 
+// 看门狗的时序行为（透传、失联触发、重新武装）由 e2e_test.go 通过真实规则引擎覆盖；
+// 这里只测不依赖引擎的基础行为。
+
 import (
 	"testing"
-	"time"
 
 	"github.com/rulego/rulego/api/types"
-	"github.com/rulego/rulego/test"
 	"github.com/stretchr/testify/assert"
 )
-
-func newWatchdog(timeout, failsafe string) types.Node {
-	node := (&WatchdogNode{}).New()
-	_ = node.Init(types.NewConfig(), types.Configuration{"timeout": timeout, "failsafe": failsafe})
-	return node
-}
 
 func TestWatchdogBasics(t *testing.T) {
 	n := (&WatchdogNode{}).New()
@@ -48,62 +43,8 @@ func TestWatchdogInit(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, int64(2000), n.(*WatchdogNode).staticTimeoutMs)
 
-	// 模板 timeout → -1(每次渲染)
+	// 模板 timeout → -1（每次渲染）
 	err = n.Init(types.NewConfig(), types.Configuration{"timeout": "${metadata.to}", "failsafe": "{}"})
 	assert.Nil(t, err)
 	assert.Equal(t, int64(-1), n.(*WatchdogNode).staticTimeoutMs)
-}
-
-// 正常透传:消息原样下发。
-func TestWatchdogPassthrough(t *testing.T) {
-	node := newWatchdog("300ms", `{"valve":0}`)
-	c := newCollector()
-	test.NodeOnMsg(t, node, []test.Msg{{Data: `{"valve":1}`}}, c.callback())
-	got := c.drain(120 * time.Millisecond) // 短于超时,只看透传
-
-	assert.GreaterOrEqual(t, len(got), 1)
-	assert.Equal(t, types.Success, got[0].rel)
-	assert.Equal(t, `{"valve":1}`, got[0].data)
-}
-
-// 失联触发:超时未喂狗 → 下发故障安全值。
-func TestWatchdogTrip(t *testing.T) {
-	node := newWatchdog("100ms", `{"valve":0}`)
-	c := newCollector()
-	test.NodeOnMsg(t, node, []test.Msg{{Data: `{"valve":1}`}}, c.callback())
-	got := c.drain(500 * time.Millisecond)
-
-	sawFailsafe := false
-	for _, o := range got {
-		if o.data == `{"valve":0}` {
-			sawFailsafe = true
-		}
-	}
-	assert.True(t, sawFailsafe, "超时后应下发故障安全值")
-}
-
-// 重新武装:窗口内持续喂狗 → 不触发。
-func TestWatchdogReArm(t *testing.T) {
-	node := newWatchdog("400ms", `{"valve":0}`)
-	c := newCollector()
-	test.NodeOnMsg(t, node, []test.Msg{
-		{Data: `{"valve":1}`, AfterSleep: 50 * time.Millisecond},
-		{Data: `{"valve":1}`, AfterSleep: 50 * time.Millisecond},
-		{Data: `{"valve":1}`},
-	}, c.callback())
-	// NodeOnMsg 约 100ms 返回;最后喂狗在 ~100ms,其超时触发在 ~500ms。
-	// drain 250ms 窗口约覆盖 [100,350]ms,早于触发点,期间不应出现故障安全。
-	got := c.drain(250 * time.Millisecond)
-
-	passthrough, failsafe := 0, 0
-	for _, o := range got {
-		if o.data == `{"valve":1}` {
-			passthrough++
-		}
-		if o.data == `{"valve":0}` {
-			failsafe++
-		}
-	}
-	assert.Equal(t, 3, passthrough)
-	assert.Equal(t, 0, failsafe, "持续喂狗不应触发故障安全")
 }
