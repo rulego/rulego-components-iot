@@ -50,7 +50,7 @@ func startEndpoint(t *testing.T, cfg map[string]interface{}) *ModbusServerEndpoi
 		t.Fatalf("start endpoint: %v", err)
 	}
 	// 等待端口就绪
-	listen := cfg["listen"].(string)
+	listen := cfg["server"].(string)
 	addr := listen[len("tcp://"):]
 	for range 20 {
 		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
@@ -82,7 +82,7 @@ func newTestClient(t *testing.T, port int) *modbus.ModbusClient {
 func TestModbusServerReadWrite(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
-		"listen": fmt.Sprintf("tcp://127.0.0.1:%d", port),
+		"server": fmt.Sprintf("tcp://127.0.0.1:%d", port),
 	})
 	defer node.Close()
 	client := newTestClient(t, port)
@@ -123,7 +123,7 @@ func TestModbusServerReadWrite(t *testing.T) {
 func TestModbusServerWriteTrigger(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
-		"listen": fmt.Sprintf("tcp://127.0.0.1:%d", port),
+		"server": fmt.Sprintf("tcp://127.0.0.1:%d", port),
 	})
 	defer node.Close()
 	client := newTestClient(t, port)
@@ -140,7 +140,7 @@ func TestModbusServerWriteTrigger(t *testing.T) {
 func TestModbusServerSetRegisters(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
-		"listen": fmt.Sprintf("tcp://127.0.0.1:%d", port),
+		"server": fmt.Sprintf("tcp://127.0.0.1:%d", port),
 	})
 	defer node.Close()
 
@@ -159,7 +159,7 @@ func TestModbusServerSetRegisters(t *testing.T) {
 func TestModbusServerUnitIdFilter(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
-		"listen": fmt.Sprintf("tcp://127.0.0.1:%d", port),
+		"server": fmt.Sprintf("tcp://127.0.0.1:%d", port),
 		"unitId": 1,
 	})
 	defer node.Close()

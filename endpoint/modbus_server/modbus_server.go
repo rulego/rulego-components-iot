@@ -110,7 +110,7 @@ func (r *ResponseMessage) GetError() error     { return nil }
 // Config Modbus 从站端点配置
 type Config struct {
 	// 监听地址，格式 tcp://host:port，如 tcp://:502
-	Listen string `json:"listen" label:"Listen" desc:"listen URL, e.g. tcp://:502" required:"true" ref:"primary"`
+	Server string `json:"server" label:"Server" desc:"listen URL, e.g. tcp://:502" required:"true" ref:"primary"`
 	// 从站地址(Unit ID)，0 表示接受所有
 	UnitId int `json:"unitId" label:"Unit ID" desc:"slave unit ID, 0 = accept all"`
 	// 最大并发客户端连接数，默认 10
@@ -141,7 +141,7 @@ func (x *ModbusServerEndpoint) Type() string { return Type }
 func (x *ModbusServerEndpoint) New() types.Node {
 	return &ModbusServerEndpoint{
 		Config: Config{
-			Listen:     "tcp://:502",
+			Server:     "tcp://:502",
 			MaxClients: 10,
 			Coils:      2000,
 			Registers:  2000,
@@ -198,7 +198,7 @@ func (x *ModbusServerEndpoint) Def() types.ComponentForm {
 }
 
 // Id 返回端点 ID
-func (x *ModbusServerEndpoint) Id() string { return x.Config.Listen }
+func (x *ModbusServerEndpoint) Id() string { return x.Config.Server }
 
 // Close 停止服务器
 func (x *ModbusServerEndpoint) Close() error {
@@ -237,7 +237,7 @@ func (x *ModbusServerEndpoint) RemoveRouter(routerId string, params ...interface
 func (x *ModbusServerEndpoint) Start() error {
 	var err error
 	x.server, err = modbus.NewServer(&modbus.ServerConfiguration{
-		URL:        x.Config.Listen,
+		URL:        x.Config.Server,
 		Timeout:    60 * time.Second,
 		MaxClients: x.Config.MaxClients,
 	}, x.handler)
