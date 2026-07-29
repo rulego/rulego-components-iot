@@ -52,6 +52,8 @@ func browseLevel(ctx context.Context, client *opcua.Client, id *ua.NodeID, depth
 			NodeID:          id,
 			BrowseDirection: ua.BrowseDirectionForward,
 			ReferenceTypeID: ua.NewNumericNodeID(0, idHierarchicalReferences),
+			// 抽象引用类型(HierarchicalReferences)需包含子类型引用，否则合规服务端返回空
+			IncludeSubtypes: true,
 			ResultMask:      uint32(browseResultMask),
 		}},
 	}
