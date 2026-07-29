@@ -14,22 +14,13 @@
  * limitations under the License.
  */
 
-// Package tsdbwrite 保留旧导入路径：导入即注册 x/tsdbWrite 与 x/tsdbQuery，
-// 并经类型别名保持 Config/Node 的源码兼容。
-//
-// Deprecated: 请改用 github.com/rulego/rulego-components-iot/external/tsdb。
-package tsdbwrite
+// Package tsdb ensures all supported TSDB drivers are registered.
+package tsdb
 
 import (
-	"github.com/rulego/rulego-components-iot/external/tsdb"
+	_ "github.com/rulego/rulego-components-iot/external/influxdb"
+	_ "github.com/rulego/rulego-components-iot/external/opengemini"
+	_ "github.com/rulego/rulego-components-iot/external/promremote"
+	_ "github.com/rulego/rulego-components-iot/external/tdengine"
+	_ "github.com/rulego/rulego-components-iot/external/timescaledb"
 )
-
-// Node 通用时序写节点的兼容别名。
-//
-// Deprecated: 改用 tsdb.Node。
-type Node = tsdb.Node
-
-// Config 通用时序写配置的兼容别名。
-//
-// Deprecated: 改用 tsdb.Config。
-type Config = tsdb.Config

@@ -79,7 +79,7 @@ func (d *driver) Query(ctx context.Context, org, flux string) (*tsdb.QueryResult
 	if err != nil {
 		return nil, err
 	}
-	return toQueryResult(result), nil
+	return toQueryResult(result)
 }
 
 // Close closes underlying client.
@@ -88,25 +88,28 @@ func (d *driver) Close() error {
 }
 
 // toQueryResult converts InfluxDB query result to generic QueryResult (columns + rows).
-func toQueryResult(result *api.QueryTableResult) *tsdb.QueryResult {
-	out := &tsdb.QueryResult{}
+// Columns 取自 Flux 表元数据（按 CSV 注解序），多表结果按首次出现顺序取并集；Rows 为列名→值的 map。
+// 查询中途出错时经 result.Err() 返回。
+func toQueryResult(result *api.QueryTableResult) (*tsdb.QueryResult, error) {
+	out := &tsdb.QueryResult{Columns: []string{}, Rows: []map[string]interface{}{}}
 	if result == nil {
-		return out
+		return out, nil
 	}
-	columnsSet := false
+	seen := make(map[string]struct{})
 	for result.Next() {
-		record := result.Record()
-		row := make(map[string]interface{})
-		for k, v := range record.Values() {
-			row[k] = v
-		}
-		if !columnsSet {
-			for k := range row {
-				out.Columns = append(out.Columns, k)
+		if meta := result.TableMetadata(); meta != nil {
+			for _, col := range meta.Columns() {
+				if _, ok := seen[col.Name()]; !ok {
+					seen[col.Name()] = struct{}{}
+					out.Columns = append(out.Columns, col.Name())
+				}
 			}
-			columnsSet = true
+		}
+		row := make(map[string]interface{})
+		for k, v := range result.Record().Values() {
+			row[k] = v
 		}
 		out.Rows = append(out.Rows, row)
 	}
-	return out
+	return out, result.Err()
 }

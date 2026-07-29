@@ -4,6 +4,8 @@
 
 [RuleGo](https://github.com/rulego/rulego) 的 IoT 协议组件库 — 统一采集（读/写）、时序落盘与软 PLC 式逻辑控制，覆盖 9 种工业协议和 5 种时序数据库。
 
+[文档](https://rulego.cc/pages/iot-overview/)
+
 ## 架构
 
 ```

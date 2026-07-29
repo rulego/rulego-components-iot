@@ -17,12 +17,15 @@
 package influxdb
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/influxdata/influxdb-client-go/v2/api"
 	"github.com/rulego/rulego-components-iot/pkg/tsdb"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/test"
@@ -125,6 +128,43 @@ func TestWriteNodeOnMsg(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for influxdb write request")
 	}
+}
+
+// TestToQueryResultColumnsOrder verifies Columns follow the Flux CSV annotation order.
+func TestToQueryResultColumnsOrder(t *testing.T) {
+	csv := `#datatype,string,long,dateTime:RFC3339,double,string,string
+#group,false,false,true,false,false,true
+#default,_result,,,,,
+,result,table,_time,_value,_field,_measurement
+,,0,2020-02-18T10:34:08.135814545Z,1.4,f,test
+,,0,2020-02-18T22:08:44.850214724Z,6.6,f,test
+
+`
+	result := api.NewQueryTableResult(io.NopCloser(strings.NewReader(csv)))
+	res, err := toQueryResult(result)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"result", "table", "_time", "_value", "_field", "_measurement"}, res.Columns)
+	assert.Equal(t, 2, len(res.Rows))
+	assert.Equal(t, 1.4, res.Rows[0]["_value"])
+	assert.Equal(t, "test", res.Rows[0]["_measurement"])
+}
+
+// TestToQueryResultEmpty verifies empty results serialize as empty arrays instead of null.
+func TestToQueryResultEmpty(t *testing.T) {
+	csv := `#datatype,string,long,dateTime:RFC3339,double,string,string
+#group,false,false,true,false,false,true
+#default,_result,,,,,
+,result,table,_time,_value,_field,_measurement
+
+`
+	result := api.NewQueryTableResult(io.NopCloser(strings.NewReader(csv)))
+	res, err := toQueryResult(result)
+	assert.Nil(t, err)
+	assert.NotNil(t, res.Columns)
+	assert.Equal(t, 0, len(res.Rows))
+	data, merr := json.Marshal(res)
+	assert.Nil(t, merr)
+	assert.Contains(t, string(data), `"Rows":[]`)
 }
 
 // TestQueryNodeOnMsg verifies that the query node routes remote query errors to Failure.

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-// Package tsdbwrite provides a universal time-series database write node,
-// supporting multiple TSDB backends through a unified configuration.
-package tsdbwrite
+// Package tsdb provides universal time-series database write (x/tsdbWrite)
+// and query (x/tsdbQuery) nodes, supporting multiple TSDB backends through a unified configuration.
+package tsdb
 
 import (
 	"fmt"

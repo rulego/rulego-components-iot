@@ -98,7 +98,7 @@ func hasError(result *opengemini.QueryResult) error {
 
 // toQueryResult 把 OpenGemini 查询结果转为通用 QueryResult（列+行）。
 func toQueryResult(result *opengemini.QueryResult) *tsdb.QueryResult {
-	out := &tsdb.QueryResult{}
+	out := &tsdb.QueryResult{Columns: []string{}, Rows: []map[string]interface{}{}}
 	if result == nil {
 		return out
 	}

@@ -4,7 +4,7 @@
 
 IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write), time-series storage, and soft-PLC logic control across 9 industrial protocols and 5 TSDB backends.
 
-[中文文档](README_zh.md)
+[Doc](https://rulego.cc/en/pages/iot-overview/)
 
 ## Architecture
 

@@ -97,7 +97,7 @@ func FormatValue(v interface{}, backslashEscape bool) string {
 
 // ScanRows 扫描 database/sql 查询结果为 QueryResult（[]byte 列转为 string）。
 func ScanRows(rows *sql.Rows) (*QueryResult, error) {
-	result := &QueryResult{}
+	result := &QueryResult{Rows: []map[string]interface{}{}}
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
