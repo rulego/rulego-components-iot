@@ -45,6 +45,7 @@ func TestWriteNode(t *testing.T) {
 			"password":    "",
 			"certFile":    "",
 			"certKeyFile": "",
+			"timeout":     5,
 		}, Registry)
 	})
 
