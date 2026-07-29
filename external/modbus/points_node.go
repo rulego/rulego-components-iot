@@ -50,14 +50,14 @@ type PointsConfiguration struct {
 	Server string `json:"server" label:"Server" desc:"Modbus server address, format: tcp://host:port or rtu:///dev/ttyUSB0" required:"true" ref:"primary"`
 	// UnitId 从机编号
 	UnitId uint8 `json:"unitId" label:"Unit ID" desc:"Modbus slave unit ID"`
+	// 默认点位表（addr=Modicon 地址如 40001；为空则从 msg.Data 解析点位）
+	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=Modicon e.g. 40001; empty=parse from msg.Data"`
 	// TCP 连接配置
 	TcpConfig TcpConfig `json:"tcpConfig" label:"TCP Config" desc:"TCP connection configuration"`
 	// RTU 串口配置
 	RtuConfig RtuConfig `json:"rtuConfig" label:"RTU Config" desc:"RTU serial configuration"`
 	// 数据编码（多寄存器字节序/字序）
 	EncodingConfig EncodingConfig `json:"encodingConfig" label:"Encoding Config" desc:"Data encoding configuration"`
-	// 默认点位表（addr=Modicon 地址如 40001；为空则从 msg.Data 解析点位）
-	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=Modicon e.g. 40001; empty=parse from msg.Data"`
 }
 
 // modbusConn 连接管理（read/write 节点共用）。
@@ -105,12 +105,12 @@ func (x *modbusConn) initClient() (*modbus.ModbusClient, error) {
 		Parity:   x.Config.RtuConfig.Parity,
 	}
 	if strings.HasPrefix(x.Config.Server, "tcp+tls://") {
-		clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertPath, x.Config.TcpConfig.KeyPath)
+		clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertFile, x.Config.TcpConfig.CertKeyFile)
 		if err != nil {
 			return nil, err
 		}
 		config.TLSClientCert = &clientKeyPair
-		config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CaPath)
+		config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CAFile)
 		if err != nil {
 			return nil, err
 		}

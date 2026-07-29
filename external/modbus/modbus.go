@@ -105,12 +105,12 @@ type EncodingConfig struct {
 type TcpConfig struct {
 	// Timeout sets the request timeout value,单位秒
 	Timeout int64 `json:"timeout" label:"Timeout" desc:"Request timeout in seconds"`
-	// CertPath
-	CertPath string `json:"certPath" label:"Cert Path" desc:"TLS client certificate file path"`
-	// KeyPath
-	KeyPath string `json:"keyPath" label:"Key Path" desc:"TLS client private key file path"`
-	// CaPath
-	CaPath string `json:"caPath" label:"CA Path" desc:"TLS CA certificate file path"`
+	// CertFile TLS 客户端证书文件
+	CertFile string `json:"certFile" label:"Cert File" desc:"TLS client certificate file path"`
+	// CertKeyFile TLS 客户端私钥文件
+	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"TLS client private key file path"`
+	// CAFile TLS CA 证书文件
+	CAFile string `json:"caFile" label:"CA File" desc:"TLS CA certificate file path"`
 }
 
 type RtuConfig struct {
@@ -119,7 +119,7 @@ type RtuConfig struct {
 	// DataBits sets the number of bits per serial character (rtu only)
 	DataBits uint `json:"dataBits" label:"Data Bits" desc:"Bits per serial character: 5, 6, 7, 8"`
 	// Parity sets the serial link parity mode (rtu only)
-	Parity uint `json:"parity" label:"Parity" desc:"Parity mode: 0=None, 1=Odd, 2=Even"`
+	Parity uint `json:"parity" label:"Parity" desc:"Parity mode: 0=None, 1=Even, 2=Odd"`
 	// StopBits sets the number of serial stop bits (rtu only)
 	StopBits uint `json:"stopBits" label:"Stop Bits" desc:"Stop bits: 1, 2"`
 }
@@ -1090,14 +1090,14 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 		x.Config.Server, x.Config.TcpConfig.Timeout, x.Config.UnitId)
 	// handle TLS options
 	if strings.HasPrefix(x.Config.Server, "tcp+tls://") {
-		clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertPath, x.Config.TcpConfig.KeyPath)
+		clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertFile, x.Config.TcpConfig.CertKeyFile)
 		if err != nil {
 			x.errorf("failed to load client tls key pair: %v", err)
 			return nil, err
 		}
 		config.TLSClientCert = &clientKeyPair
 
-		config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CaPath)
+		config.TLSRootCAs, err = modbus.LoadCertPool(x.Config.TcpConfig.CAFile)
 		if err != nil {
 			x.errorf("failed to load tls CA/server certificate: %v", err)
 			return nil, err
