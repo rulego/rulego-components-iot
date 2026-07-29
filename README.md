@@ -2,16 +2,16 @@
 
 [![Test](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml/badge.svg)](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml)
 
-IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write) and time-series storage across 9 industrial protocols and 5 TSDB backends.
+IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write), time-series storage, and soft-PLC logic control across 9 industrial protocols and 5 TSDB backends.
 
 [中文文档](README_zh.md)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Universal Nodes: x/iotRead · x/iotWrite · x/tsdbWrite  │
-└────────────┬──────────────────────────────┬─────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│  Universal Nodes: x/iotRead · x/iotWrite · x/tsdbWrite · x/tsdbQuery  │
+└────────────┬──────────────────────────────┬───────────────────────────┘
              │  driver=modbus/s7/eip/...    │  driver=opengemini/influxdb/...
 ┌────────────▼────────────┐   ┌─────────────▼─────────────┐
 │  Protocol Read/Write    │   │  TSDB Write/Query          │
@@ -34,6 +34,11 @@ IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unifi
 │  fins_client · mc (Hsl) │   │  Transform                 │
 │  iec104_client          │   │  x/iotToSeries             │
 └─────────────────────────┘   └────────────────────────────┘
+┌─────────────────────────┐
+│  Logic Control          │
+│  x/control/timer        │
+│  x/control/watchdog     │
+└─────────────────────────┘
 ```
 
 ## Supported Protocols
@@ -61,12 +66,24 @@ IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unifi
 | TimescaleDB | ✅ | ✅ | PostgreSQL |
 | Prometheus Remote Write | ✅ | — | Write-only |
 
+## Logic Control Components
+
+Protocol-agnostic soft-PLC logic control nodes; wire them with `x/iotRead` / `x/iotWrite` for delayed actions and link-loss protection:
+
+| Node | Description |
+|------|-------------|
+| `x/control/timer` | Timer (TON on-delay / TOF off-delay), cancellable and retriggerable; writes the boolean output to `metadata[out]` (default `q`) |
+| `x/control/watchdog` | Watchdog: forwards each message and re-arms; emits the failsafe JSON if no message arrives within the timeout |
+
+> For filtering, counting, windowed timing, and CEP patterns, reuse RuleGo's `exprFilter` / `x/streamAggregator` / `cache` / `endpoint/schedule`; this package only adds the two "fires on its own timer" primitives — timer and watchdog.
+
 ## Quick Start
 
 ```go
 import (
     _ "github.com/rulego/rulego-components-iot/external/deviceio" // x/iotRead + x/iotWrite
-    _ "github.com/rulego/rulego-components-iot/external/tsdbwrite" // x/tsdbWrite
+    _ "github.com/rulego/rulego-components-iot/external/tsdb" // x/tsdbWrite + x/tsdbQuery
+    _ "github.com/rulego/rulego-components-iot/action/control"    // x/control/timer + x/control/watchdog
     // Or import specific protocols:
     _ "github.com/rulego/rulego-components-iot/external/modbus"
     _ "github.com/rulego/rulego-components-iot/external/s7"
@@ -172,6 +189,37 @@ Use `x/iotToSeries` to bridge acquisition output → TSDB input.
   }
 }
 ```
+
+### Watchdog Link-Loss Protection
+
+```json
+{
+  "ruleChain": {"name": "watchdog-guard", "root": true},
+  "metadata": {
+    "nodes": [
+      {"id": "e1", "type": "endpoint/modbusServer", "configuration": {
+        "listen": "tcp://:5020", "unitId": 1
+      }},
+      {"id": "wd", "type": "x/control/watchdog", "configuration": {
+        "timeout": "10s", "failsafe": "{\"valve\":0,\"motor\":0}"
+      }},
+      {"id": "w1", "type": "x/iotWrite", "configuration": {
+        "driver": "modbus", "server": "tcp://192.168.1.100:502",
+        "points": [
+          {"name": "valve", "addr": "40001", "type": "UINT16", "value": "${msg.valve}"},
+          {"name": "motor", "addr": "40002", "type": "UINT16", "value": "${msg.motor}"}
+        ]
+      }}
+    ],
+    "connections": [
+      {"fromId": "e1", "toId": "wd", "type": "ip"},
+      {"fromId": "wd", "toId": "w1", "type": "Success"}
+    ]
+  }
+}
+```
+
+> While heartbeats arrive, the watchdog forwards the setpoints; after 10s of silence it emits the `failsafe` (close valve, stop motor). For delayed start, use `x/control/timer` (TON).
 
 ## Build Tags
 
