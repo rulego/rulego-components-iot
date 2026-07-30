@@ -17,54 +17,142 @@
 package timescaledb
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/rulego/rulego-components-iot/pkg/tsdb"
 	"github.com/stretchr/testify/assert"
 )
 
-// TestBuildInsertSQLTagsFieldsTime verifies tags, fields and time column are all present.
-func TestBuildInsertSQLTagsFieldsTime(t *testing.T) {
-	point := tsdb.SeriesPoint{
+const testTS = int64(1700000000000000000)
+
+// TestBuildInsertStatementsSinglePoint 单点：tags/fields/time 列齐全，与单点 INSERT 格式一致。
+func TestBuildInsertStatementsSinglePoint(t *testing.T) {
+	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{{
 		Measurement: "cpu",
 		Tags:        map[string]string{"host": "srv1"},
 		Fields:      map[string]interface{}{"value": 72.5},
-		Timestamp:   1700000000000000000,
-	}
-	sqlStr := buildInsertSQL("public", point)
-	assert.Equal(t, "INSERT INTO \"public\".\"cpu\" (\"host\",\"value\",\"time\") VALUES ('srv1',72.5,to_timestamp(1700000000000000000/1000000000.0))", sqlStr)
+		Timestamp:   testTS,
+	}})
+	assert.Equal(t, []string{
+		"INSERT INTO \"public\".\"cpu\" (\"host\",\"value\",\"time\") VALUES ('srv1',72.5,to_timestamp(1700000000000000000/1000000000.0))",
+	}, stmts)
 }
 
-// TestBuildInsertSQLZeroTimestamp verifies ts=0 uses NOW().
-func TestBuildInsertSQLZeroTimestamp(t *testing.T) {
-	point := tsdb.SeriesPoint{
-		Measurement: "cpu",
-		Fields:      map[string]interface{}{"value": 1},
-	}
-	sqlStr := buildInsertSQL("public", point)
-	assert.Contains(t, sqlStr, "NOW()")
-	assert.NotContains(t, sqlStr, "to_timestamp")
+// TestBuildInsertStatementsZeroTimestamp ts=0 用 NOW()。
+func TestBuildInsertStatementsZeroTimestamp(t *testing.T) {
+	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"value": 1}},
+	})
+	assert.Contains(t, stmts[0], "NOW()")
+	assert.NotContains(t, stmts[0], "to_timestamp")
 }
 
-// TestBuildInsertSQLNonZeroTimestamp verifies ts!=0 uses to_timestamp.
-func TestBuildInsertSQLNonZeroTimestamp(t *testing.T) {
-	point := tsdb.SeriesPoint{
-		Measurement: "cpu",
-		Fields:      map[string]interface{}{"value": 1},
-		Timestamp:   1700000000000000000,
-	}
-	sqlStr := buildInsertSQL("public", point)
-	assert.Contains(t, sqlStr, "to_timestamp(1700000000000000000/1000000000.0)")
-	assert.NotContains(t, sqlStr, "NOW()")
+// TestBuildInsertStatementsNonZeroTimestamp ts!=0 用 to_timestamp。
+func TestBuildInsertStatementsNonZeroTimestamp(t *testing.T) {
+	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"value": 1}, Timestamp: testTS},
+	})
+	assert.Contains(t, stmts[0], "to_timestamp(1700000000000000000/1000000000.0)")
+	assert.NotContains(t, stmts[0], "NOW()")
 }
 
-// TestBuildInsertSQLEscapesStrings verifies single quotes in string values are escaped.
-func TestBuildInsertSQLEscapesStrings(t *testing.T) {
-	point := tsdb.SeriesPoint{
-		Measurement: "cpu",
-		Tags:        map[string]string{"note": "O'Neil"},
-		Fields:      map[string]interface{}{"value": 1},
+// TestBuildInsertStatementsEscapesStrings 字符串值单引号翻倍转义（PG 方言）。
+func TestBuildInsertStatementsEscapesStrings(t *testing.T) {
+	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Tags: map[string]string{"note": "O'Neil"}, Fields: map[string]interface{}{"value": 1}},
+	})
+	assert.Contains(t, stmts[0], "'O''Neil'")
+}
+
+// TestBuildInsertStatementsMultiRows 同表多行合并为一条语句的多行 VALUES。
+func TestBuildInsertStatementsMultiRows(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"v": 1.0}, Timestamp: testTS},
+		{Measurement: "cpu", Fields: map[string]interface{}{"v": 2.0}, Timestamp: testTS},
+	})
+	tsLit := formatTimestamp(testTS)
+	assert.Equal(t, []string{
+		"INSERT INTO \"iot\".\"cpu\" (\"v\",\"time\") VALUES (1," + tsLit + "),(2," + tsLit + ")",
+	}, stmts)
+}
+
+// TestBuildInsertStatementsColumnSuperset 同表不同字段集：列取超集、缺失补 NULL、列头只出现一次。
+func TestBuildInsertStatementsColumnSuperset(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"v": 1.5}, Timestamp: testTS},
+		{Measurement: "cpu", Fields: map[string]interface{}{"q": 2.0, "v": 3.0}, Timestamp: testTS},
+	})
+	tsLit := formatTimestamp(testTS)
+	assert.Equal(t, []string{
+		"INSERT INTO \"iot\".\"cpu\" (\"q\",\"v\",\"time\") VALUES (NULL,1.5," + tsLit + "),(2,3," + tsLit + ")",
+	}, stmts)
+	assert.Equal(t, 1, strings.Count(stmts[0], "\"cpu\" ("))
+}
+
+// TestBuildInsertStatementsMultipleMeasurements 不同 measurement 各自成独立 INSERT（PG 单表限制）。
+func TestBuildInsertStatementsMultipleMeasurements(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"v": 1.0}},
+		{Measurement: "mem", Fields: map[string]interface{}{"v": 2.0}},
+	})
+	assert.Len(t, stmts, 2)
+	assert.True(t, strings.HasPrefix(stmts[0], "INSERT INTO \"iot\".\"cpu\" "))
+	assert.True(t, strings.HasPrefix(stmts[1], "INSERT INTO \"iot\".\"mem\" "))
+}
+
+// TestBuildInsertStatementsSkipsInvalid nil/NaN 字段跳过；无有效列的点整体跳过。
+func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "m", Fields: map[string]interface{}{"a": nil, "b": 1.0}},
+		{Measurement: "m2", Fields: map[string]interface{}{"a": math.NaN()}},
+	})
+	assert.Equal(t, []string{
+		"INSERT INTO \"iot\".\"m\" (\"b\",\"time\") VALUES (1,NOW())",
+	}, stmts)
+	assert.Empty(t, buildInsertStatements("iot", nil))
+}
+
+// TestBuildInsertStatementsChunking 大批量按字节预算拆分多条语句，行数不丢。
+func TestBuildInsertStatementsChunking(t *testing.T) {
+	const total = 30000
+	points := make([]tsdb.SeriesPoint, 0, total)
+	for i := 0; i < total; i++ {
+		points = append(points, tsdb.SeriesPoint{
+			Measurement: "cpu",
+			Tags:        map[string]string{"id": fmt.Sprintf("dev%05d", i)},
+			Fields:      map[string]interface{}{"v": float64(i)},
+			Timestamp:   testTS,
+		})
 	}
-	sqlStr := buildInsertSQL("public", point)
-	assert.Contains(t, sqlStr, "'O''Neil'")
+	stmts := buildInsertStatements("iot", points)
+	assert.Greater(t, len(stmts), 1)
+	tsLit := formatTimestamp(testTS)
+	rows := 0
+	for _, s := range stmts {
+		assert.LessOrEqual(t, len(s), maxStatementBytes+2048)
+		assert.True(t, strings.HasPrefix(s, "INSERT INTO "))
+		rows += strings.Count(s, tsLit)
+	}
+	assert.Equal(t, total, rows)
+}
+
+// TestFormatTimestamp ts=0 为 NOW()，否则为 to_timestamp 字面量。
+func TestFormatTimestamp(t *testing.T) {
+	assert.Equal(t, "NOW()", formatTimestamp(0))
+	assert.Equal(t, "to_timestamp(1700000000000000000/1000000000.0)", formatTimestamp(testTS))
+}
+
+// TestWritePointsAllSkipped 点全部无效时返回错误；空输入无操作。
+func TestWritePointsAllSkipped(t *testing.T) {
+	d := newDriver(&sql.DB{})
+	err := d.WritePoints(context.Background(), "iot", []tsdb.SeriesPoint{
+		{Measurement: "m", Fields: map[string]interface{}{"a": nil}},
+	})
+	assert.Error(t, err)
+	assert.Nil(t, d.WritePoints(context.Background(), "iot", nil))
 }
