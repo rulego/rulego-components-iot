@@ -85,6 +85,9 @@ const maxStatementBytes = 512 * 1024
 
 const insertPrefix = "INSERT INTO "
 
+// reservedColumn 与硬编码时间戳列重名的业务列名，剔除避免列重复。
+const reservedColumn = "ts"
+
 // buildInsertStatements 拼装批量 INSERT 语句，按 maxStatementBytes 拆分，同表段字段取超集。
 func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 	groups := make(map[string]*tableGroup)
@@ -101,7 +104,7 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 			order = append(order, key)
 		}
 		for k, v := range points[i].Fields {
-			if validFieldValue(v) {
+			if k != reservedColumn && validFieldValue(v) {
 				g.fieldSet[k] = struct{}{}
 			}
 		}
@@ -182,12 +185,15 @@ func renderRow(row seriesRow, cols []string) string {
 
 // pointTarget 生成点的分组键与表段目标；时间戳越界或无有效字段时 ok=false。
 func pointTarget(db string, point tsdb.SeriesPoint) (string, string, bool) {
+	if point.Measurement == "" {
+		return "", "", false
+	}
 	if point.Timestamp != 0 && point.Timestamp < minTimestamp {
 		return "", "", false
 	}
 	valid := false
-	for _, v := range point.Fields {
-		if validFieldValue(v) {
+	for k, v := range point.Fields {
+		if k != reservedColumn && validFieldValue(v) {
 			valid = true
 			break
 		}
@@ -196,14 +202,16 @@ func pointTarget(db string, point tsdb.SeriesPoint) (string, string, bool) {
 		return "", "", false
 	}
 	qdb := quoteIdentifier(db)
-	if len(point.Tags) == 0 {
-		return point.Measurement + "\x00", qdb + "." + quoteIdentifier(point.Measurement), true
-	}
 	tagKeys := make([]string, 0, len(point.Tags))
 	for k := range point.Tags {
-		tagKeys = append(tagKeys, k)
+		if k != reservedColumn {
+			tagKeys = append(tagKeys, k)
+		}
 	}
 	sort.Strings(tagKeys)
+	if len(tagKeys) == 0 {
+		return point.Measurement + "\x00", qdb + "." + quoteIdentifier(point.Measurement), true
+	}
 	tagCols := make([]string, 0, len(tagKeys))
 	tagVals := make([]string, 0, len(tagKeys))
 	keyParts := make([]string, 0, len(tagKeys)*2+1)

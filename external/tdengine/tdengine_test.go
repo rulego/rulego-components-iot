@@ -136,6 +136,24 @@ func TestBuildInsertStatementsNormalTable(t *testing.T) {
 	assert.Equal(t, []string{"INSERT INTO `iot`.`cpu` (`ts`,`usage`) VALUES (NOW(),12)"}, stmts)
 }
 
+// TestBuildInsertStatementsReservedColumn 名为 ts 的业务列被剔除，避免与时间戳列重复。
+func TestBuildInsertStatementsReservedColumn(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"ts": 1, "v": 2.0}},
+	})
+	assert.Equal(t, []string{"INSERT INTO `iot`.`cpu` (`ts`,`v`) VALUES (NOW(),2)"}, stmts)
+}
+
+// TestBuildInsertStatementsReservedTag 唯一 tag 为 ts 被剔除后退化为普通表。
+func TestBuildInsertStatementsReservedTag(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Tags: map[string]string{"ts": "x"}, Fields: map[string]interface{}{"v": 2.0}},
+	})
+	assert.Len(t, stmts, 1)
+	assert.NotContains(t, stmts[0], "USING")
+	assert.Equal(t, "INSERT INTO `iot`.`cpu` (`ts`,`v`) VALUES (NOW(),2)", stmts[0])
+}
+
 // TestBuildInsertStatementsSkipsInvalid nil/NaN 字段跳过；无有效字段的点整体跳过。
 func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
@@ -204,6 +222,8 @@ func TestPointTarget(t *testing.T) {
 	assert.False(t, ok, "时间戳越界跳过")
 	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "m", Fields: map[string]interface{}{"f": math.NaN()}})
 	assert.False(t, ok, "无有效字段跳过")
+	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "", Fields: map[string]interface{}{"f": 1.0}})
+	assert.False(t, ok, "空 measurement 跳过")
 }
 
 func TestSubTableName(t *testing.T) {

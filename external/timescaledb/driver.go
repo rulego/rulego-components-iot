@@ -58,6 +58,9 @@ const maxStatementBytes = 1024 * 1024
 
 const insertPrefix = "INSERT INTO "
 
+// reservedColumn 与硬编码时间列重名的业务列名，剔除避免列重复。
+const reservedColumn = "time"
+
 // rowGroup 同一 measurement 的一组点（tags 与 fields 均作为普通列）。
 type rowGroup struct {
 	measurement string
@@ -79,16 +82,24 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 	var order []string
 	for i := range points {
 		p := points[i]
-		// 跳过无任何可写列的点（无 tag 且 field 全部无效）
-		hasTag := len(p.Tags) > 0
-		hasValidField := false
-		for _, v := range p.Fields {
-			if validFieldValue(v) {
-				hasValidField = true
-				break
-			}
+		if p.Measurement == "" {
+			continue
 		}
-		if !hasTag && !hasValidField {
+		// 先收集可写列（剔除保留列名与无效值），无可写列则跳过且不创建组
+		row := groupRow{ts: p.Timestamp, values: make(map[string]interface{}, len(p.Tags)+len(p.Fields))}
+		for k, v := range p.Tags {
+			if k == reservedColumn {
+				continue
+			}
+			row.values[k] = v
+		}
+		for k, v := range p.Fields {
+			if k == reservedColumn || !validFieldValue(v) {
+				continue
+			}
+			row.values[k] = v
+		}
+		if len(row.values) == 0 {
 			continue
 		}
 		g, exists := groups[p.Measurement]
@@ -97,16 +108,8 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 			groups[p.Measurement] = g
 			order = append(order, p.Measurement)
 		}
-		row := groupRow{ts: p.Timestamp, values: make(map[string]interface{}, len(p.Tags)+len(p.Fields))}
-		for k, v := range p.Tags {
+		for k := range row.values {
 			g.colSet[k] = struct{}{}
-			row.values[k] = v
-		}
-		for k, v := range p.Fields {
-			if validFieldValue(v) {
-				g.colSet[k] = struct{}{}
-				row.values[k] = v
-			}
 		}
 		g.rows = append(g.rows, row)
 	}

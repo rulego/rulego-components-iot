@@ -156,3 +156,26 @@ func TestWritePointsAllSkipped(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, d.WritePoints(context.Background(), "iot", nil))
 }
+
+// TestBuildInsertStatementsSkipsEmptyMeasurement 空 measurement 的点跳过。
+func TestBuildInsertStatementsSkipsEmptyMeasurement(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "", Fields: map[string]interface{}{"v": 1.0}},
+		{Measurement: "cpu", Fields: map[string]interface{}{"v": 2.0}},
+	})
+	assert.Equal(t, []string{
+		"INSERT INTO \"iot\".\"cpu\" (\"v\",\"time\") VALUES (2,NOW())",
+	}, stmts)
+}
+
+// TestBuildInsertStatementsReservedColumn 名为 time 的业务列被剔除，避免与时间列重复。
+func TestBuildInsertStatementsReservedColumn(t *testing.T) {
+	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
+		{Measurement: "cpu", Fields: map[string]interface{}{"time": 1, "v": 2.0}},
+		{Measurement: "cpu", Tags: map[string]string{"time": "x"}, Fields: map[string]interface{}{"v": 3.0}},
+	})
+	assert.Equal(t, []string{
+		"INSERT INTO \"iot\".\"cpu\" (\"v\",\"time\") VALUES (2,NOW()),(3,NOW())",
+	}, stmts)
+	assert.Equal(t, 1, strings.Count(stmts[0], "\"time\""))
+}
