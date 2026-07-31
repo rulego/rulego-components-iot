@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/textproto"
 	"sync"
 	"time"
@@ -387,9 +388,11 @@ func (x *ModbusServerEndpoint) onWrite(regType, clientAddr string, unitId uint8,
 		"type":       regType,
 		"unitId":     unitId,
 		"addr":       addr,
+		"modbusAddr": modiconAddr(regType, addr),
 		"quantity":   quantity,
 		"values":     values,
 		"clientAddr": clientAddr,
+		"timestamp":  time.Now().UnixNano(),
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -403,6 +406,20 @@ func (x *ModbusServerEndpoint) onWrite(regType, clientAddr string, unitId uint8,
 	md.PutValue("modbusType", regType)
 	md.PutValue("clientAddr", clientAddr)
 	x.DoProcess(x.ctx, x.Router, exchange)
+}
+
+// modiconAddr 把 PDU 地址按寄存器区段换算成 Modicon 友好地址（5 位字符串）。
+func modiconAddr(regType string, addr uint16) string {
+	base := 1
+	switch regType {
+	case "holding_register":
+		base = 40001
+	case "input_register":
+		base = 30001
+	case "discrete_input":
+		base = 10001
+	}
+	return fmt.Sprintf("%05d", base+int(addr))
 }
 
 func boolsToAny(vals []bool) []interface{} {
