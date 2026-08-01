@@ -223,19 +223,6 @@ import (
 
 > 心跳正常时 watchdog 透传设定值；10 秒无消息则下发 `failsafe`（阀关、电机停）。延时启动可用 `x/control/timer`（TON）。
 
-## 构建标签
-
-- 默认编译：**零 IoT 依赖**（组件不注册）
-- `with_iot` 或 `with_all`：注册所有 IoT 组件
-
-## 测试
-
-```bash
-GOTOOLCHAIN=go1.24.7 go test -p 1 ./...
-```
-
-CI 在 Go 1.24.7 + 1.25.x 上运行，含真实 TimescaleDB/InfluxDB/TDengine/VictoriaMetrics 服务。
-
 ## 许可证
 
 Apache 2.0

@@ -18,8 +18,8 @@
 // 组件自身的驱动级 e2e 测试仍放在各组件包下（如 external/opengemini/e2e_real_test.go）。
 package e2e
 
-// 链路：TCP 二进制帧接入(endpoint/net) -> JS 脚本解协议(jsTransform) -> JSON
-//       -> x/iotToSeries -> x/tsdbWrite(tdengine driver) -> TDengine 查询读回。
+// 链路：TCP 二进制帧接入(endpoint/net) -> JS 脚本解协议(jsTransform) -> 扁平 JSON
+//       -> x/tsdbWrite(tdengine driver，配置 measurement 直接消费扁平 map) -> TDengine 查询读回。
 // 引擎配置对齐 rulego server（独立用户池 + 自定义组件注册表 + 节点池）。
 // 需要真实 TDengine：E2E_TDENGINE_DSN（如 root:taosdata@http(127.0.0.1:6041)/），未设置则跳过。
 // 可选：E2E_TDENGINE_DB（默认 iot_e2e）、E2E_BIN_TCP_ADDR（默认 :19703）。
@@ -35,7 +35,6 @@ import (
 
 	"github.com/rulego/rulego"
 	"github.com/rulego/rulego/api/types"
-	_ "github.com/rulego/rulego-components-iot/transform/iot_to_series"
 	_ "github.com/rulego/rulego-components-iot/external/tsdb"
 	"github.com/rulego/rulego/engine"
 	"github.com/rulego/rulego/node_pool"
@@ -118,20 +117,17 @@ func TestE2EChain_BinaryTCP_JS_TDengine(t *testing.T) {
 			}},
 			"nodes": []map[string]interface{}{
 				{"id": "js_parse", "type": "jsTransform", "configuration": map[string]interface{}{"jsScript": jsParseScript}},
-				{"id": "to_series", "type": "x/iotToSeries", "configuration": map[string]interface{}{
-					"measurement": measurement,
-					"tags":        map[string]interface{}{"device_id": "${msg.deviceId}"},
-					"fields":      map[string]interface{}{"temperature": "temperature", "humidity": "humidity"},
-				}},
 				{"id": "tsdb_write", "type": "x/tsdbWrite", "configuration": map[string]interface{}{
-					"driver": "tdengine",
-					"dsn":    dsn,
-					"db":     db,
+					"driver":      "tdengine",
+					"dsn":         dsn,
+					"db":          db,
+					"measurement": measurement,
+					"tags":        []map[string]interface{}{{"key": "device_id", "value": "${msg.deviceId}"}},
+					"fields":      []map[string]interface{}{{"key": "temperature", "source": "temperature"}, {"key": "humidity", "source": "humidity"}},
 				}},
 			},
 			"connections": []map[string]interface{}{
-				{"fromId": "js_parse", "toId": "to_series", "type": "Success"},
-				{"fromId": "to_series", "toId": "tsdb_write", "type": "Success"},
+				{"fromId": "js_parse", "toId": "tsdb_write", "type": "Success"},
 			},
 		},
 	}

@@ -221,19 +221,6 @@ Use `x/iotToSeries` to bridge acquisition output → TSDB input.
 
 > While heartbeats arrive, the watchdog forwards the setpoints; after 10s of silence it emits the `failsafe` (close valve, stop motor). For delayed start, use `x/control/timer` (TON).
 
-## Build Tags
-
-- Default build: **zero IoT dependency** (components not registered)
-- `with_iot` or `with_all`: registers all IoT components
-
-## Testing
-
-```bash
-GOTOOLCHAIN=go1.24.7 go test -p 1 ./...
-```
-
-CI runs on Go 1.24.7 + 1.25.x with real TimescaleDB/InfluxDB/TDengine/VictoriaMetrics services.
-
 ## License
 
 Apache 2.0

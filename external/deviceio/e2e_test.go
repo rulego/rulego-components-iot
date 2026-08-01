@@ -50,7 +50,6 @@ import (
 	_ "github.com/rulego/rulego/endpoint/schedule"
 
 	_ "github.com/rulego/rulego-components-iot/external/tsdb"
-	_ "github.com/rulego/rulego-components-iot/transform/iot_to_series"
 )
 
 // e2eHandler 内存 modbus server，仅 holding register 读。

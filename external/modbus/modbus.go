@@ -1019,9 +1019,9 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 	params.Value = val
 	params.RegType = regType
 
-	// 校验必要参数
-	if address == 0 {
-		return nil, fmt.Errorf("modbus address cannot be 0 or empty, template result: %s", x.addressTemplate.Execute(evn))
+	// 校验必要参数：仅当 address 模板渲染为空才算未填；协议地址 0 合法（各寄存器区第一个寄存器，如 holding 的 40001）
+	if strings.TrimSpace(x.addressTemplate.Execute(evn)) == "" {
+		return nil, fmt.Errorf("modbus address cannot be empty")
 	}
 	// 写操作需要 value 参数
 	if strings.HasPrefix(params.Cmd, "Write") && strings.TrimSpace(val) == "" {

@@ -76,3 +76,81 @@ func TestMapDataFieldsMappingMiss(t *testing.T) {
 	assert.False(t, ok)
 	assert.Equal(t, data, out)
 }
+
+// TestMapDataFlatMap 扁平 map 输入，整个 map 作为 fields 生成 SeriesPoint。
+func TestMapDataFlatMap(t *testing.T) {
+	m := AcquisitionMapping{
+		Measurement: "sensor",
+		Tags:        []TagPair{{Key: "device", Value: "${metadata.deviceId}"}},
+	}
+	data := `{"temperature":25.3,"humidity":60}`
+	env := map[string]interface{}{"metadata": map[string]interface{}{"deviceId": "dev-01"}}
+	out, ok := m.MapData(data, env)
+	assert.True(t, ok)
+
+	var points []SeriesPoint
+	assert.Nil(t, json.Unmarshal([]byte(out), &points))
+	assert.Equal(t, 1, len(points))
+	assert.Equal(t, "sensor", points[0].Measurement)
+	assert.Equal(t, "dev-01", points[0].Tags["device"])
+	assert.Equal(t, 25.3, points[0].Fields["temperature"])
+	assert.Equal(t, float64(60), points[0].Fields["humidity"])
+	assert.True(t, points[0].Timestamp > 0)
+}
+
+// TestMapDataFlatMapArray 扁平 map 数组，逐行生成 SeriesPoint。
+func TestMapDataFlatMapArray(t *testing.T) {
+	m := AcquisitionMapping{Measurement: "agg"}
+	data := `[{"avg_temp":25.3,"max_humi":80},{"avg_temp":26.1,"max_humi":75}]`
+	out, ok := m.MapData(data, nil)
+	assert.True(t, ok)
+
+	var points []SeriesPoint
+	assert.Nil(t, json.Unmarshal([]byte(out), &points))
+	assert.Equal(t, 2, len(points))
+	assert.Equal(t, 25.3, points[0].Fields["avg_temp"])
+	assert.Equal(t, 26.1, points[1].Fields["avg_temp"])
+	assert.Equal(t, "agg", points[0].Measurement)
+	assert.Equal(t, "agg", points[1].Measurement)
+}
+
+// TestMapDataSeriesPointPassthrough 已经是 SeriesPoint 形状时不二次映射。
+func TestMapDataSeriesPointPassthrough(t *testing.T) {
+	m := AcquisitionMapping{Measurement: "dev"}
+	data := `[{"measurement":"dev","tags":{"d":"1"},"fields":{"temp":25},"timestamp":123}]`
+	out, ok := m.MapData(data, nil)
+	assert.False(t, ok)
+	assert.Equal(t, data, out)
+}
+
+// TestMapDataNotEnabled 未配置 measurement 时直接透传。
+func TestMapDataNotEnabled(t *testing.T) {
+	m := AcquisitionMapping{}
+	data := `{"temperature":25}`
+	out, ok := m.MapData(data, nil)
+	assert.False(t, ok)
+	assert.Equal(t, data, out)
+}
+
+// TestMapDataFlatMapWithFields 扁平 map + Fields 配置：按 key->source 筛选/重命名。
+func TestMapDataFlatMapWithFields(t *testing.T) {
+	m := AcquisitionMapping{
+		Measurement: "sensor",
+		Fields: []FieldPair{
+			{Key: "temperature", Source: "temperature"},
+			{Key: "humidity", Source: "humidity"},
+		},
+	}
+	// deviceId 不在 Fields 配置中，应被过滤掉
+	data := `{"deviceId":"dev-07","temperature":25.6,"humidity":60.5}`
+	out, ok := m.MapData(data, nil)
+	assert.True(t, ok)
+
+	var points []SeriesPoint
+	assert.Nil(t, json.Unmarshal([]byte(out), &points))
+	assert.Equal(t, 1, len(points))
+	assert.Equal(t, 25.6, points[0].Fields["temperature"])
+	assert.Equal(t, 60.5, points[0].Fields["humidity"])
+	_, hasDeviceId := points[0].Fields["deviceId"]
+	assert.False(t, hasDeviceId)
+}

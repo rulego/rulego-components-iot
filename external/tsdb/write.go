@@ -44,8 +44,11 @@ type Config struct {
 //
 // 输入(msg.Data)：
 //   - 未配置 measurement：SeriesPoint JSON 数组/单对象（见 pkg/tsdb.SeriesPoint），非 JSON 按 line protocol 解析。
-//   - 配置了 measurement：采集点数组 [{"name","value","timestamp","error"}]，内部透视为单个 SeriesPoint
-//     （measurement=配置值，fields=各点 name→value，tags=配置模板渲染，timestamp=各点最大时间戳）。
+//   - 配置了 measurement：
+//     a) 采集点数组 [{"name","value","timestamp","error"}] → 透视为单个 SeriesPoint
+//     （fields=各点 name→value，timestamp=各点最大时间戳）；
+//     b) 扁平 map/map 数组 {"temp":25} 或 [{"avg":25},{"avg":26}] → 逐行转换为 SeriesPoint
+//     （fields=整个 map，timestamp=当前时间）。
 type Node struct {
 	Config Config
 	// delegate holds the concrete write node selected at init time.
