@@ -197,14 +197,7 @@ func (x *ReadNode) Desc() string {
 
 // Def returns the component form definition
 func (x *ReadNode) Def() types.ComponentForm {
-	return types.ComponentForm{
-		Groups: map[string]types.ComponentGroup{
-			"advanced": {
-				Label:     "Advanced Configuration",
-				Collapsed: true,
-			},
-		},
-	}
+	return types.ComponentForm{}
 }
 
 func (x *ReadNode) initClient() (*opcua.Client, error) {

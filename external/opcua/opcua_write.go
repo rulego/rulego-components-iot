@@ -182,14 +182,7 @@ func (x *WriteNode) Desc() string {
 
 // Def returns the component form definition
 func (x *WriteNode) Def() types.ComponentForm {
-	return types.ComponentForm{
-		Groups: map[string]types.ComponentGroup{
-			"advanced": {
-				Label:     "Advanced Configuration",
-				Collapsed: true,
-			},
-		},
-	}
+	return types.ComponentForm{}
 }
 
 func (x *WriteNode) initClient() (*opcua.Client, error) {
