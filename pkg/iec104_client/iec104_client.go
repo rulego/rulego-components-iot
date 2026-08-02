@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-// Package iec104client 封装 wendy512/iec104，提供 IEC 60870-5-104 主站(控制站)
-// 连接子站(被控站)、总召唤批量采集遥信/遥测/遥脉的能力。
+// Package iec104client wraps third_party/iec104, providing IEC 60870-5-104 master (control station)
+// connection to slave (controlled station) and general interrogation bulk acquisition of
+// signals/measurements/counter values.
 //
-// 采集模型：主站发起总召唤(GI)，子站以多个 ASDU 上送全数据，本包按信息体地址(IOA)
-// 缓存最新值。ReadPoints 触发一次总召唤并等待所需 IOA 刷新后返回。
+// Acquisition model: master initiates general interrogation (GI), slave sends full data
+// via multiple ASDUs, this package caches latest values by information object address (IOA).
+// ReadPoints triggers one GI and waits for required IOAs to refresh before returning.
+
 package iec104client
 
 import (
@@ -30,65 +33,65 @@ import (
 
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/wendy512/go-iecp5/asdu"
-	iec104client "github.com/wendy512/iec104/client"
+	iec104client "github.com/rulego/rulego-components-iot/third_party/iec104/client"
 )
 
-// Point IEC 104 采集点位
+// Point IEC 104 acquisition point
 type Point struct {
-	Name string `json:"name"` // 点位名称
-	Ioa  uint   `json:"ioa"`  // 信息体地址(IOA)
-	Type string `json:"type"` // 期望类型标识(可选,仅说明,如 M_ME_NC_1)
+	Name string `json:"name"` // Point name
+	Ioa  uint   `json:"ioa"`  // Information object address (IOA)
+	Type string `json:"type"` // Expected type identifier (optional, for info only, e.g. M_ME_NC_1)
 }
 
-// Data 采集结果
+// Data acquisition result
 type Data struct {
 	Name      string      `json:"name"`
 	Address   uint        `json:"address"` // IOA
 	Value     interface{} `json:"value"`
-	Type      string      `json:"type"`    // 类型标识,如 M_SP_NA_1
+	Type      string      `json:"type"`    // Type identifier, e.g. M_SP_NA_1
 	Quality   string      `json:"quality"` // good/bad
 	Timestamp time.Time   `json:"timestamp"`
 }
 
-// ConfigProp IEC 104 连接配置接口
+// ConfigProp IEC 104 connection configuration interface
 type ConfigProp interface {
-	GetServer() string  // host:port,默认端口 2404
-	GetCommonAddr() int // 公共地址(CA),默认 1
-	GetTimeout() int    // 总召唤等待超时(秒),默认 5
+	GetServer() string  // host:port, default port 2404
+	GetCommonAddr() int // Common address (CA), default 1
+	GetTimeout() int    // General interrogation wait timeout (seconds), default 5
 }
 
-// Holder IEC 104 客户端配置持有者
+// Holder IEC 104 client configuration holder
 type Holder struct {
 	Config ConfigProp
 }
 
-// DefaultHolder 默认配置
+// DefaultHolder default configuration
 func DefaultHolder(c ConfigProp) *Holder {
 	return &Holder{Config: c}
 }
 
-// entry 单个 IOA 的最新值
+// entry latest value of single IOA
 type entry struct {
 	value interface{}
 	typ   string
 	ts    time.Time
 }
 
-// Client IEC 104 主站客户端。自身实现 ASDUCall 回调,持续缓存子站上送数据。
+// Client IEC 104 master client. Implements ASDUCall callback itself, continuously caches slave-sent data.
 type Client struct {
 	c       *iec104client.Client
 	common  uint16
 	timeout time.Duration
-	active  atomic.Bool // 链路激活(STARTDT 确认后)
+	active  atomic.Bool // Link active (after STARTDT confirmed)
 
 	mu       sync.RWMutex
-	cache    map[uint]*entry // IOA -> 最新值
-	giDoneAt time.Time       // 本次总召唤完成(ActTerm)时间
+	cache    map[uint]*entry // IOA -> latest value
+	giDoneAt time.Time       // Current general interrogation completion (ActTerm) time
 }
 
 var _ iec104client.ASDUCall = (*Client)(nil)
 
-// NewClient 创建并连接 IEC 104 主站客户端
+// NewClient creates and connects IEC 104 master client
 func (h *Holder) NewClient() (*Client, error) {
 	if h.Config == nil {
 		return nil, errors.New("iec104 config is nil")
@@ -129,12 +132,12 @@ func (h *Holder) NewClient() (*Client, error) {
 	return c, nil
 }
 
-// IsConnected 连接是否建立
+// IsConnected whether connection is established
 func (c *Client) IsConnected() bool {
 	return c.c != nil && c.c.IsConnected()
 }
 
-// Close 关闭连接
+// Close closes connection
 func (c *Client) Close() error {
 	if c.c != nil {
 		return c.c.Close()
@@ -142,12 +145,12 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// ReadPoints 发起总召唤并采集点位。单点未上送标记 quality=bad,全部失败返回 error。
+// ReadPoints initiates general interrogation and collects points. Non-uploaded points marked quality=bad, all failures return error.
 func (c *Client) ReadPoints(points []Point) ([]Data, error) {
 	if c.c == nil || !c.c.IsConnected() {
 		return nil, errors.New("iec104 client not connected")
 	}
-	// 等待链路激活(首次连接 STARTDT 确认前无法发召唤)
+	// Wait for link activation (cannot send interrogation before first connection STARTDT confirmed)
 	if !c.waitActive() {
 		return nil, errors.New("iec104 link not active")
 	}
@@ -159,14 +162,14 @@ func (c *Client) ReadPoints(points []Point) ([]Data, error) {
 
 	giAt := time.Now()
 	c.mu.Lock()
-	c.giDoneAt = time.Time{} // 重置本轮完成标记
+	c.giDoneAt = time.Time{} // Reset current round completion flag
 	c.mu.Unlock()
 
 	if err := c.c.SendInterrogationCmd(c.common); err != nil {
 		return nil, err
 	}
 
-	// 等待所需 IOA 刷新或本轮总召唤完成,超时兜底
+	// Wait for required IOAs to refresh or current round GI to complete, timeout as fallback
 	deadline := time.Now().Add(c.timeout)
 	for !c.ready(requested, giAt) && time.Now().Before(deadline) {
 		time.Sleep(30 * time.Millisecond)
@@ -175,7 +178,7 @@ func (c *Client) ReadPoints(points []Point) ([]Data, error) {
 	return c.collect(points, giAt)
 }
 
-// waitActive 等待链路激活,最多 timeout
+// waitActive waits for link activation, max timeout
 func (c *Client) waitActive() bool {
 	if c.active.Load() {
 		return true
@@ -187,7 +190,7 @@ func (c *Client) waitActive() bool {
 	return c.active.Load()
 }
 
-// ready 所需 IOA 均已刷新,或本轮总召唤已完成(剩余点子上送不会再来)
+// ready all required IOAs refreshed, or current round GI completed (remaining points won't come again)
 func (c *Client) ready(requested map[uint]bool, giAt time.Time) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -203,7 +206,7 @@ func (c *Client) ready(requested map[uint]bool, giAt time.Time) bool {
 	return true
 }
 
-// collect 从缓存按点位收集结果
+// collect collects results from cache by points
 func (c *Client) collect(points []Point, giAt time.Time) ([]Data, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -225,21 +228,21 @@ func (c *Client) collect(points []Point, giAt time.Time) ([]Data, error) {
 	return out, nil
 }
 
-// --- ASDUCall 回调:解析上送 ASDU 写入缓存 ---
+// --- ASDUCall callbacks: parse uploaded ASDU and write to cache --
 
-// OnASDU 数据上送(遥信/遥测/遥脉等)
+// OnASDU data upload (signal/measurement/counter, etc.)
 func (c *Client) OnASDU(a *asdu.ASDU) error {
 	c.store(a)
 	return nil
 }
 
-// OnRead 读定值回复(同数据上送处理)
+// OnRead read setpoint response (same as data upload handling)
 func (c *Client) OnRead(a *asdu.ASDU) error {
 	c.store(a)
 	return nil
 }
 
-// OnInterrogation 总召唤确认/停止。收到激活停止(ActTerm)标记本轮完成。
+// OnInterrogation general interrogation confirmation/stop. Activation termination (ActTerm) marks current round completion.
 func (c *Client) OnInterrogation(a *asdu.ASDU) error {
 	if a.Coa.Cause == asdu.ActivationTerm {
 		c.mu.Lock()
@@ -249,22 +252,22 @@ func (c *Client) OnInterrogation(a *asdu.ASDU) error {
 	return nil
 }
 
-// OnCounterInterrogation 累积量召唤回复
+// OnCounterInterrogation counter interrogation response
 func (c *Client) OnCounterInterrogation(*asdu.ASDU) error { return nil }
 
-// OnTestCommand 测试命令回复
+// OnTestCommand test command response
 func (c *Client) OnTestCommand(*asdu.ASDU) error { return nil }
 
-// OnClockSync 时钟同步回复
+// OnClockSync clock sync response
 func (c *Client) OnClockSync(*asdu.ASDU) error { return nil }
 
-// OnResetProcess 进程重置回复
+// OnResetProcess process reset response
 func (c *Client) OnResetProcess(*asdu.ASDU) error { return nil }
 
-// OnDelayAcquisition 延迟获取回复
+// OnDelayAcquisition delayed acquisition response
 func (c *Client) OnDelayAcquisition(*asdu.ASDU) error { return nil }
 
-// store 按类型标识解析 ASDU 信息体,按 IOA 写入缓存
+// store parses ASDU information body by type identifier, writes to cache by IOA
 func (c *Client) store(a *asdu.ASDU) {
 	typ := a.Type.String()
 	now := time.Now()
@@ -312,9 +315,9 @@ func (c *Client) store(a *asdu.ASDU) {
 	}
 }
 
-// SendControlCmd 发送遥控/遥调命令(直接执行,非选择-执行两步)。
-// typeId 取值：asdu.C_SC_NA_1(单命令,value=bool) / asdu.C_DC_NA_1(双命令,value=uint8:1合/2分) /
-// asdu.C_SE_NB_1(标度化设点,value=int16) / asdu.C_SE_NC_1(短浮点设点,value=float32)。
+// SendControlCmd sends remote control/command command (direct execution, not select-execute two-step).
+// typeId values: asdu.C_SC_NA_1 (single command, value=bool) / asdu.C_DC_NA_1 (double command, value=uint8:1 close/2 open) /
+// asdu.C_SE_NB_1 (scaled setpoint, value=int16) / asdu.C_SE_NC_1 (short floating point setpoint, value=float32).
 func (c *Client) SendControlCmd(typeId asdu.TypeID, ioa uint, value any) error {
 	if c.c == nil || !c.c.IsConnected() {
 		return errors.New("iec104 client not connected")

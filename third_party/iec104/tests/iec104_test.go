@@ -3,8 +3,8 @@ package tests
 import (
 	"fmt"
 	"github.com/wendy512/go-iecp5/asdu"
-	"github.com/wendy512/iec104/client"
-	"github.com/wendy512/iec104/server"
+	"github.com/rulego/rulego-components-iot/third_party/iec104/client"
+	"github.com/rulego/rulego-components-iot/third_party/iec104/server"
 	"sync"
 	"testing"
 	"time"
@@ -21,19 +21,19 @@ func TestClient(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	c.SetOnConnectHandler(func(c *client.Client) {
-		// 连接成功以后做的操作
+// Operation after successful connection
 		fmt.Printf("connected %s iec104 server\n", settings.Host)
 	})
 
-	// server active确认后回调
+	// Callback after server active confirmation
 	c.SetServerActiveHandler(func(c *client.Client) {
-		//// 发送总召唤
+		//// Send total call
 		if err := c.SendInterrogationCmd(commonAddr); err != nil {
 			t.Errorf("send interrogation cmd error %v\n", err)
 			t.FailNow()
 		}
 
-		// 累积量召唤
+// Cumulative interrogation
 		if err := c.SendCounterInterrogationCmd(commonAddr); err != nil {
 			t.Errorf("send counter interrogation cmd error %v\n", err)
 			t.FailNow()
@@ -45,7 +45,7 @@ func TestClient(t *testing.T) {
 			t.FailNow()
 		}
 
-		// 时钟同步
+// Clock synchronization
 		if err := c.SendClockSynchronizationCmd(commonAddr, time.Now()); err != nil {
 			t.Errorf("send clock sync cmd error %v\n", err)
 			t.FailNow()
@@ -57,18 +57,18 @@ func TestClient(t *testing.T) {
 			t.FailNow()
 		}
 
-		// 单点控制
+// Single point control
 		if err := c.SendCmd(commonAddr, asdu.C_SC_NA_1, asdu.InfoObjAddr(1000), false); err != nil {
 			t.Errorf("send single cmd error %v\n", err)
 			t.FailNow()
 		}
 
-		// 测试等待回复，不能结束太快
+// Test wait for reply, cannot finish too quickly
 		time.Sleep(time.Second * 15)
 		wg.Done()
 	})
 
-	// Connect后会发送server active
+	// Sends server active after Connect
 	if err := c.Connect(); err != nil {
 		t.Errorf("client connect error %v\n", err)
 		t.FailNow()
@@ -85,5 +85,6 @@ func TestClient(t *testing.T) {
 func startServer() *server.Server {
 	s := server.New(server.NewSettings(), &myServerHandler{})
 	s.Start()
+	time.Sleep(500 * time.Millisecond) // let listener bind; -race slows startup
 	return s
 }

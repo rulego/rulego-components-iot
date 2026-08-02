@@ -17,12 +17,12 @@ require (
 	github.com/prometheus/prometheus v0.304.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
-	github.com/rulego/rulego v0.35.3-0.20260527090622-d8b29d722bac
+	github.com/rulego/rulego v0.36.1-0.20260802040353-2ec085f29027
 	github.com/simonvetter/modbus v1.6.4
+	github.com/spf13/cast v1.6.0
 	github.com/stretchr/testify v1.11.1
 	github.com/taosdata/driver-go/v3 v3.8.2
 	github.com/wendy512/go-iecp5 v1.2.6
-	github.com/wendy512/iec104 v1.0.4
 	go.bug.st/serial v1.6.4
 )
 
@@ -63,7 +63,6 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.63.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/spf13/cast v1.6.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
@@ -81,6 +80,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/rulego/rulego => ../rulego
-
-replace github.com/wendy512/iec104 => ./third_party/iec104
+// replace github.com/rulego/rulego => ../rulego

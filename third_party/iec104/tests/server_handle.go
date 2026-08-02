@@ -284,7 +284,7 @@ func (ms *myServerHandler) OnInterrogation(conn asdu.Connect, pack *asdu.ASDU, q
 func (ms *myServerHandler) OnCounterInterrogation(conn asdu.Connect, pack *asdu.ASDU, quality asdu.QualifierCountCall) error {
 	//_ = pack.SendReplyMirror(conn, asdu.ActivationCon)
 	// TODO
-	_ = asdu.CounterInterrogationCmd(conn, asdu.CauseOfTransmission{Cause: asdu.Activation}, commonAddr, asdu.QualifierCountCall{asdu.QCCGroup1, asdu.QCCFrzRead})
+	_ = asdu.CounterInterrogationCmd(conn, asdu.CauseOfTransmission{Cause: asdu.Activation}, commonAddr, asdu.QualifierCountCall{Request: asdu.QCCGroup1, Freeze: asdu.QCCFrzRead})
 	//_ = pack.SendReplyMirror(conn, asdu.ActivationTerm)
 	return nil
 }

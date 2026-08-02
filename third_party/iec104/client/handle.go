@@ -3,18 +3,18 @@ package client
 import "github.com/wendy512/go-iecp5/asdu"
 
 const (
-	SinglePoint                            DataType = iota // 单点信息
-	DoublePoint                                            // 双点信息
-	MeasuredValueScaled                                    // 测量值，标度化值信息
-	MeasuredValueNormal                                    // 测量值,规一化值信息
-	StepPosition                                           // 步位置信息
-	BitString32                                            // 比特位串信息
-	MeasuredValueFloat                                     // 测量值,短浮点数信息
-	IntegratedTotals                                       // 累计量信息
-	EventOfProtectionEquipment                             // 继电器保护设备事件信息
-	PackedStartEventsOfProtectionEquipment                 // 继电器保护设备事件信息
-	PackedOutputCircuitInfo                                // 继电器保护设备成组输出电路信息
-	PackedSinglePointWithSCD                               // 带变位检出的成组单点信息
+	SinglePoint                            DataType = iota // Single point information
+	DoublePoint                                            // Double point information
+	MeasuredValueScaled                                    // Measured value, scaled value information
+	MeasuredValueNormal                                    // Measured value, normalized value information
+	StepPosition                                           // Step position information
+	BitString32                                            // Bitstring information
+	MeasuredValueFloat                                     // Measured value, short floating point information
+	IntegratedTotals                                       // Integrated totals information
+	EventOfProtectionEquipment                             // Protection equipment event information
+	PackedStartEventsOfProtectionEquipment                 // Protection equipment event information
+	PackedOutputCircuitInfo                                // Protection equipment packed output circuit information
+	PackedSinglePointWithSCD                               // Packed single point with change detection
 	SingleCommandInfo
 	DoubleCommandInfo
 	StepCommandInfo
@@ -22,7 +22,7 @@ const (
 	SetPointCommandScaledInfo
 	SetPointCommandFloatInfo
 	BitsString32CommandInfo
-	UNKNOWN // 未知的
+	UNKNOWN // Unknown
 )
 
 type DataType int
@@ -31,42 +31,42 @@ type clientHandler struct {
 	call ASDUCall
 }
 
-// InterrogationHandler 总召唤回复
+// InterrogationHandler total interrogation response
 func (h *clientHandler) InterrogationHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnInterrogation(rxAsdu)
 }
 
-// CounterInterrogationHandler 总计数器回复
+// CounterInterrogationHandler counter interrogation response
 func (h *clientHandler) CounterInterrogationHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnCounterInterrogation(rxAsdu)
 }
 
-// ReadHandler 读定值回复
+// ReadHandler read setpoint response
 func (h *clientHandler) ReadHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnRead(rxAsdu)
 }
 
-// TestCommandHandler 测试下发回复
+// TestCommandHandler test command response
 func (h *clientHandler) TestCommandHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnTestCommand(rxAsdu)
 }
 
-// ClockSyncHandler 时钟同步回复
+// ClockSyncHandler clock synchronization response
 func (h *clientHandler) ClockSyncHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnClockSync(rxAsdu)
 }
 
-// ResetProcessHandler 进程重置回复
+// ResetProcessHandler process reset response
 func (h *clientHandler) ResetProcessHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnResetProcess(rxAsdu)
 }
 
-// DelayAcquisitionHandler 延迟获取回复
+// DelayAcquisitionHandler delayed acquisition response
 func (h *clientHandler) DelayAcquisitionHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnDelayAcquisition(rxAsdu)
 }
 
-// ASDUHandler ASDU上报，ASDU数据
+// ASDUHandler ASDU upload, ASDU data
 func (h *clientHandler) ASDUHandler(_ asdu.Connect, rxAsdu *asdu.ASDU) error {
 	return h.call.OnASDU(rxAsdu)
 }

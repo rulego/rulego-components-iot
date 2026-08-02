@@ -9,17 +9,17 @@ import (
 	"github.com/wendy512/go-iecp5/cs104"
 )
 
-// Settings 连接配置
+// Settings connection configuration
 type Settings struct {
 	Host   string
 	Port   int
-	Cfg104 *cs104.Config //104协议规范配置
-	Params *asdu.Params  //ASDU相关特定参数
+	Cfg104 *cs104.Config // IEC 104 protocol standard config
+	Params *asdu.Params  // ASDO specific parameters
 	LogCfg *LogCfg
 }
 
 type LogCfg struct {
-	Enable      bool //是否开启log
+	Enable      bool // Whether to enable logging
 	LogProvider clog.LogProvider
 }
 

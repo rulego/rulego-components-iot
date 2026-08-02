@@ -3,7 +3,7 @@ package client
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/wendy512/iec104/pkg/waitgroup"
+	"github.com/rulego/rulego-components-iot/third_party/iec104/pkg/waitgroup"
 	"net"
 	"net/url"
 	"strconv"
@@ -23,20 +23,20 @@ type Client struct {
 	connectionLostHandler func(c *Client)
 }
 
-// Settings 连接配置
+// Settings connection configuration
 type Settings struct {
 	Host              string
 	Port              int
-	AutoConnect       bool          //自动重连
-	ReconnectInterval time.Duration //重连间隔
-	Cfg104            *cs104.Config //104协议规范配置
-	TLS               *tls.Config   // tls配置
-	Params            *asdu.Params  //ASDU相关特定参数
+	AutoConnect       bool          // Auto reconnect
+	ReconnectInterval time.Duration // Reconnect interval
+	Cfg104            *cs104.Config // IEC 104 protocol standard config
+	TLS               *tls.Config   // TLS configuration
+	Params            *asdu.Params  // ASDO specific parameters
 	LogCfg            *LogCfg
 }
 
 type LogCfg struct {
-	Enable      bool //是否开启log
+	Enable      bool // Whether to enable logging
 	LogProvider clog.LogProvider
 }
 
@@ -85,9 +85,9 @@ func (c *Client) Connect() error {
 
 	wg := &waitgroup.WaitGroup{}
 	wg.Add(1)
-	// 标记是不是第一次
+// Mark if this is the first time
 	var firstConnect atomic.Bool
-	// 连接状态事件。PATCH: 须在 Start 之前设置（修复 data race，见 PATCHES.md）
+// Connection status event. PATCH: must be set before Start (fixes data race, see PATCHES.md)
 	c.client104.SetOnConnectHandler(func(cs *cs104.Client) {
 		if firstConnect.CompareAndSwap(false, true) {
 			wg.Done()
@@ -118,19 +118,19 @@ func (c *Client) SetLogCfg(cfg LogCfg) {
 	c.client104.SetLogProvider(cfg.LogProvider)
 }
 
-// SetOnConnectHandler 连接成功后回调，如果连接断开重新连接上也会回调，所以存在多次调用的情况
+// SetOnConnectHandler callback after successful connection, also called on reconnect, so multiple invocations possible
 func (c *Client) SetOnConnectHandler(f func(c *Client)) {
 	c.onConnectHandler = f
 }
 
-// SetConnectionLostHandler 连接断开后回调，如果连接重复断开也会回调，所以存在多次调用的情况
+// SetConnectionLostHandler callback after connection lost, also called on repeated disconnects, so multiple invocations possible
 func (c *Client) SetConnectionLostHandler(f func(c *Client)) {
 	c.client104.SetConnectionLostHandler(func(_ *cs104.Client) {
 		f(c)
 	})
 }
 
-// SetServerActiveHandler 激活确认后回调，如果连接断开重新连接上也会回调，所以存在多次调用的情况
+// SetServerActiveHandler callback after activation confirmed, also called on reconnect, so multiple invocations possible
 func (c *Client) SetServerActiveHandler(f func(c *Client)) {
 	c.client104.SetServerActiveHandler(func(_ *cs104.Client) {
 		f(c)
@@ -141,7 +141,7 @@ func (c *Client) IsConnected() bool {
 	return c.client104.IsConnected()
 }
 
-// SendCmd 双点遥控
+// SendCmd double point control
 func (c *Client) SendCmd(addr uint16, typeId asdu.TypeID, ioa asdu.InfoObjAddr, value any) error {
 	cmd := &command{
 		typeId: typeId,
@@ -162,37 +162,37 @@ func (c *Client) SendCmd(addr uint16, typeId asdu.TypeID, ioa asdu.InfoObjAddr, 
 	return c.doSend(cmd)
 }
 
-// SendInterrogationCmd 发起总召唤
+// SendInterrogationCmd initiate total interrogation
 func (c *Client) SendInterrogationCmd(addr uint16) error {
 	cmd := &command{typeId: asdu.C_IC_NA_1, ca: asdu.CommonAddr(addr)}
 	return c.doSend(cmd)
 }
 
-// SendClockSynchronizationCmd 发起时钟同步
+// SendClockSynchronizationCmd initiate clock synchronization
 func (c *Client) SendClockSynchronizationCmd(addr uint16, t time.Time) error {
 	cmd := &command{typeId: asdu.C_CS_NA_1, ca: asdu.CommonAddr(addr), t: t}
 	return c.doSend(cmd)
 }
 
-// SendCounterInterrogationCmd 发起累积量召唤
+// SendCounterInterrogationCmd initiate cumulative interrogation
 func (c *Client) SendCounterInterrogationCmd(addr uint16) error {
 	cmd := &command{typeId: asdu.C_CI_NA_1, ca: asdu.CommonAddr(addr)}
 	return c.doSend(cmd)
 }
 
-// SendReadCmd 发起读命令
+// SendReadCmd initiate read command
 func (c *Client) SendReadCmd(addr uint16, ioa uint) error {
 	cmd := &command{typeId: asdu.C_RD_NA_1, ioa: asdu.InfoObjAddr(ioa), ca: asdu.CommonAddr(addr)}
 	return c.doSend(cmd)
 }
 
-// SendResetProcessCmd 发起复位进程命令
+// SendResetProcessCmd initiate reset process command
 func (c *Client) SendResetProcessCmd(addr uint16) error {
 	cmd := &command{typeId: asdu.C_RP_NA_1, ca: asdu.CommonAddr(addr)}
 	return c.doSend(cmd)
 }
 
-// SendTestCmd 发送带时标的测试命令
+// SendTestCmd send test command with timestamp
 func (c *Client) SendTestCmd(addr uint16) error {
 	cmd := &command{typeId: asdu.C_TS_TA_1, ca: asdu.CommonAddr(addr)}
 	return c.doSend(cmd)
@@ -338,7 +338,7 @@ func activationCoa() asdu.CauseOfTransmission {
 	}
 }
 
-// testConnect 测试端口连通性
+// testConnect test port connectivity
 func (c *Client) testConnect() error {
 	url, _ := url.Parse(formatServerUrl(c.settings))
 	var (
