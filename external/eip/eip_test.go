@@ -19,6 +19,7 @@ package eip
 import (
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,45 +64,45 @@ func TestMapType(t *testing.T) {
 	assert.Equal(t, "CUSTOM", mapType("CUSTOM")) // unknown pass-through
 }
 
-// startTestServer starts in-process gologix server to simulate ControlLogix (skip if port 44818 occupied)
-func startTestServer(t *testing.T) (*gologix.MapTagProvider, func()) {
-	if probe, err := net.Listen("tcp", "0.0.0.0:44818"); err != nil {
-		t.Skipf("port 44818 unavailable (skip EIP rule-chain test): %v", err)
-	} else {
-		probe.Close()
-	}
-	router := gologix.PathRouter{}
-	provider := gologix.MapTagProvider{}
-	path, err := gologix.ParsePath("1,0")
-	if err != nil {
-		t.Fatalf("parse path: %v", err)
-	}
-	router.Handle(path.Bytes(), &provider)
-	srv := gologix.NewServer(&router)
-	go func() { _ = srv.Serve() }()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:44818", 100*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			break
+// eipServerOnce starts the gologix mock server once per process. It is intentionally never
+// stopped: closing the listener sends gologix serveTCP into a tight accept-error loop (library bug).
+var (
+	eipServerOnce sync.Once
+	eipProvider   *gologix.MapTagProvider
+)
+
+// startTestServer returns the shared mock server's tag provider.
+func startTestServer(t *testing.T) *gologix.MapTagProvider {
+	eipServerOnce.Do(func() {
+		if probe, err := net.Listen("tcp", "0.0.0.0:44818"); err != nil {
+			t.Skipf("port 44818 unavailable (skip EIP rule-chain test): %v", err)
+		} else {
+			probe.Close()
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return &provider, func() {
-		if srv.TCPListener != nil {
-			srv.TCPListener.Close()
+		router := gologix.PathRouter{}
+		eipProvider = &gologix.MapTagProvider{}
+		path, err := gologix.ParsePath("1,0")
+		if err != nil {
+			t.Fatalf("parse path: %v", err)
 		}
-		if srv.UDPListener != nil {
-			srv.UDPListener.Close()
+		router.Handle(path.Bytes(), eipProvider)
+		srv := gologix.NewServer(&router)
+		go func() { _ = srv.Serve() }()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if conn, err := net.DialTimeout("tcp", "127.0.0.1:44818", 100*time.Millisecond); err == nil {
+				conn.Close()
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-	}
+	})
+	return eipProvider
 }
 
 // TestEipReadNode eipRead node end-to-end: connect to mock PLC -> read tags -> output Data list.
 func TestEipReadNode(t *testing.T) {
-	provider, cleanup := startTestServer(t)
-	defer cleanup()
+	provider := startTestServer(t)
 	provider.TagWrite("Temp", float32(23.5))
 	provider.TagWrite("Count", int32(7))
 
@@ -141,8 +142,7 @@ func TestEipReadNode(t *testing.T) {
 
 // TestEipWriteNode eipWrite node end-to-end: read points from msg.Data -> write to mock PLC -> verify server data updated.
 func TestEipWriteNode(t *testing.T) {
-	provider, cleanup := startTestServer(t)
-	defer cleanup()
+	provider := startTestServer(t)
 	provider.TagWrite("Count", int32(0))
 	provider.TagWrite("Temp", float32(0))
 

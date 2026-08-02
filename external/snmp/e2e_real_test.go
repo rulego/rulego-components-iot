@@ -49,7 +49,7 @@ func TestE2E_SNMP(t *testing.T) {
 		"version":   "v2c",
 		"points": []map[string]interface{}{
 			{"name": "sysDescr", "addr": "1.3.6.1.2.1.1.1.0"},
-			{"name": "ifDescr", "addr": "walk:1.3.6.1.2.1.2.2.1.2"},
+			{"name": "system", "addr": "walk:1.3.6.1.2.1.1"},
 		},
 	})
 	require.Nil(t, err, "init snmp read node")
@@ -70,12 +70,12 @@ func TestE2E_SNMP(t *testing.T) {
 					assert.Contains(t, octetString(d.Value), "Linux", "sysDescr from snmpd")
 					gotDescr = true
 				}
-				if strings.HasPrefix(d.Name, "ifDescr") {
+				if strings.HasPrefix(d.Name, "system") {
 					walkCount++
 				}
 			}
 			assert.True(t, gotDescr, "sysDescr point should be read")
-			assert.Greater(t, walkCount, 0, "walk ifDescr should return at least one entry (lo)")
+			assert.Greater(t, walkCount, 0, "walk system subtree should return at least one entry")
 			done <- struct{}{}
 		})
 

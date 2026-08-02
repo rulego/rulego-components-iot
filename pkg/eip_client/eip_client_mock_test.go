@@ -18,6 +18,7 @@ package eipclient
 
 import (
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,47 +28,44 @@ import (
 
 // startMockServer starts an in-process gologix server simulating ControlLogix.
 // Returns tag provider (for pre-filling/validation) and cleanup function. Skips test if port 44818 is occupied.
-func startMockServer(t *testing.T) (*gologix.MapTagProvider, func()) {
-	if probe, err := net.Listen("tcp", "0.0.0.0:44818"); err != nil {
-		t.Skipf("port 44818 unavailable (skip EIP mock test): %v", err)
-	} else {
-		probe.Close()
-	}
-	router := gologix.PathRouter{}
-	provider := gologix.MapTagProvider{}
-	path, err := gologix.ParsePath("1,0")
-	if err != nil {
-		t.Fatalf("parse path: %v", err)
-	}
-	router.Handle(path.Bytes(), &provider)
-	srv := gologix.NewServer(&router)
-	go func() { _ = srv.Serve() }()
+var (
+	mockServerOnce sync.Once
+	mockProvider   *gologix.MapTagProvider
+)
 
-	// Wait for listener ready
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:44818", 100*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			break
+// startMockServer returns the shared mock server's tag provider. Started once (sync.Once) and
+// never closed — closing the listener triggers gologix serveTCP's accept-error tight loop (library bug).
+func startMockServer(t *testing.T) *gologix.MapTagProvider {
+	mockServerOnce.Do(func() {
+		if probe, err := net.Listen("tcp", "0.0.0.0:44818"); err != nil {
+			t.Skipf("port 44818 unavailable (skip EIP mock test): %v", err)
+		} else {
+			probe.Close()
 		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	cleanup := func() {
-		if srv.TCPListener != nil {
-			srv.TCPListener.Close()
+		router := gologix.PathRouter{}
+		mockProvider = &gologix.MapTagProvider{}
+		path, err := gologix.ParsePath("1,0")
+		if err != nil {
+			t.Fatalf("parse path: %v", err)
 		}
-		if srv.UDPListener != nil {
-			srv.UDPListener.Close()
+		router.Handle(path.Bytes(), mockProvider)
+		srv := gologix.NewServer(&router)
+		go func() { _ = srv.Serve() }()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if conn, err := net.DialTimeout("tcp", "127.0.0.1:44818", 100*time.Millisecond); err == nil {
+				conn.Close()
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-	}
-	return &provider, cleanup
+	})
+	return mockProvider
 }
 
 // TestReadPointsMockServer end-to-end: gologix server pre-fills various type tags -> ReadPoints reads -> verify value and type mapping
 func TestReadPointsMockServer(t *testing.T) {
-	provider, cleanup := startMockServer(t)
-	defer cleanup()
+	provider := startMockServer(t)
 
 	// Pre-fill: REAL / DINT / STRING (BOOL tested separately due to CIP BOOL bit addressing semantics)
 	assert.Nil(t, provider.TagWrite("Temp", float32(23.5)))
@@ -105,8 +103,7 @@ func TestReadPointsMockServer(t *testing.T) {
 
 // TestWritePointsMockServer end-to-end: WritePoints writes -> provider data updated
 func TestWritePointsMockServer(t *testing.T) {
-	provider, cleanup := startMockServer(t)
-	defer cleanup()
+	provider := startMockServer(t)
 
 	assert.Nil(t, provider.TagWrite("Count", int32(0)))
 	assert.Nil(t, provider.TagWrite("Temp", float32(0)))
@@ -138,8 +135,7 @@ func TestWritePointsMockServer(t *testing.T) {
 
 // TestReadPointsBadTag missing point marked quality=bad, does not affect others
 func TestReadPointsBadTag(t *testing.T) {
-	provider, cleanup := startMockServer(t)
-	defer cleanup()
+	provider := startMockServer(t)
 
 	assert.Nil(t, provider.TagWrite("Good", int32(1)))
 

@@ -277,6 +277,8 @@ func TestEndToEnd_S7ToTDengine(t *testing.T) {
 	require.Nil(t, err)
 	defer db.Close()
 	m := fmt.Sprintf("e2e_s7chain_%d", time.Now().UnixNano())
+	_, err = db.Exec("CREATE DATABASE IF NOT EXISTS iot_e2e")
+	require.Nil(t, err, "create database")
 	_, err = db.Exec(fmt.Sprintf(
 		"CREATE STABLE iot_e2e.%s (ts TIMESTAMP, temp_c DOUBLE, press DOUBLE) TAGS (`host` NCHAR(32))", m))
 	require.Nil(t, err, "create stable")
@@ -364,12 +366,12 @@ func TestEndToEnd_S7ToOpenGemini(t *testing.T) {
 	triggerAndWait(t, "e2e_s7_opengemini", s7ChainDSL("e2e_s7_opengemini", s7Addr, writeCfg), 15*time.Second, found)
 }
 
-// TestEndToEnd_S7ToSeriesToTimescaleDB tests three-node chain: S7 collect -> x/iotToSeries transform -> x/tsdbWrite -> read back verification.
+// TestEndToEnd_S7ToSeriesToTimescaleDB tests two-node chain: S7 collect -> x/tsdbWrite (acquisition mapping) -> read back verification.
 func TestEndToEnd_S7ToSeriesToTimescaleDB(t *testing.T) {
 	s7Addr := os.Getenv("E2E_S7_ADDR")
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
 	if s7Addr == "" || dsn == "" {
-		t.Skip("set E2E_S7_ADDR and E2E_TIMESCALEDB_DSN to enable s7->iotToSeries->timescaledb e2e")
+		t.Skip("set E2E_S7_ADDR and E2E_TIMESCALEDB_DSN to enable s7->timescaledb e2e")
 	}
 	db, err := sql.Open("postgres", dsn)
 	require.Nil(t, err)
@@ -386,13 +388,11 @@ func TestEndToEnd_S7ToSeriesToTimescaleDB(t *testing.T) {
 			{"id":"read","type":"x/iotRead","configuration":{"driver":"s7","server":"%s","rack":0,"slot":1,"points":[
 				{"name":"temp","addr":"DB1.DBD0","type":"FLOAT32"}
 			]}},
-			{"id":"conv","type":"x/iotToSeries","configuration":{"measurement":"%s","tags":{"host":"e2e"},"fields":{"temp_c":"value"},"timestampField":"timestamp"}},
-			{"id":"w","type":"x/tsdbWrite","configuration":{"driver":"timescaledb","dsn":"%s","db":"public"}}
+			{"id":"w","type":"x/tsdbWrite","configuration":{"driver":"timescaledb","dsn":"%s","db":"public","measurement":"%s","tags":[{"key":"host","value":"e2e"}],"fields":[{"key":"temp_c","source":"temp"}]}}
 		],"connections":[
-			{"fromId":"read","toId":"conv","type":"Success"},
-			{"fromId":"conv","toId":"w","type":"Success"}
+			{"fromId":"read","toId":"w","type":"Success"}
 		]}
-	}`, s7Addr, m, dsn)
+	}`, s7Addr, dsn, m)
 	found := func() bool {
 		var host string
 		var tempC float64

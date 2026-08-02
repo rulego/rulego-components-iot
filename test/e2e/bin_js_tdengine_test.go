@@ -81,6 +81,16 @@ func TestE2EChain_BinaryTCP_JS_TDengine(t *testing.T) {
 	measurement := "e2e_bin_js"
 	chainID := "e2e_chain_bin_js_tdengine"
 
+	// Ensure the database exists before connecting to it (taosRestful needs the DB present).
+	initTds, err := sql.Open("taosRestful", dsn)
+	if err != nil {
+		t.Fatalf("open tdengine (init): %v", err)
+	}
+	if _, err := initTds.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", db)); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	initTds.Close()
+
 	tds, err := sql.Open("taosRestful", dsn+db)
 	if err != nil {
 		t.Fatalf("open tdengine: %v", err)

@@ -30,10 +30,10 @@ IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unifi
 │  pkg/ (protocol clients)│   │  endpoint/modbusServer     │
 │  iot_points · tsdb      │   └────────────────────────────┘
 │  s7_client · eip_client │
-│  snmp_client · opcua    │   ┌────────────────────────────┐
-│  fins_client · mc (Hsl) │   │  Transform                 │
-│  iec104_client          │   │  x/iotToSeries             │
-└─────────────────────────┘   └────────────────────────────┘
+│  snmp_client · opcua    │
+│  fins_client · mc (Hsl) │
+│  iec104_client          │
+└─────────────────────────┘
 ┌─────────────────────────┐
 │  Logic Control          │
 │  x/control/timer        │
@@ -102,7 +102,7 @@ import (
 [{"measurement":"device1","tags":{"site":"A"},"fields":{"temp":25.3},"timestamp":0}]
 ```
 
-Use `x/iotToSeries` to bridge acquisition output → TSDB input.
+With `measurement` set on `x/tsdbWrite`, the acquisition array flows in directly — no bridge node needed.
 
 ### Why Unified?
 
@@ -119,6 +119,8 @@ Use `x/iotToSeries` to bridge acquisition output → TSDB input.
 
 ### Acquisition → TSDB Pipeline
 
+`x/tsdbWrite` ingests the acquisition array directly when `measurement` is set; `fields` omitted expands every point as a field.
+
 ```json
 {
   "ruleChain": {"name": "iot-pipeline", "root": true},
@@ -131,60 +133,14 @@ Use `x/iotToSeries` to bridge acquisition output → TSDB input.
           {"name": "current", "addr": "40003", "type": "FLOAT32", "scale": 0.001}
         ]
       }},
-      {"id": "n2", "type": "x/iotToSeries", "configuration": {
+      {"id": "n2", "type": "x/tsdbWrite", "configuration": {
+        "driver": "timescaledb", "dsn": "postgres://user:pass@localhost:5432/iot?sslmode=disable",
         "measurement": "power_meter",
-        "tags": {"deviceId": "${metadata.deviceId}"}
-      }},
-      {"id": "n3", "type": "x/tsdbWrite", "configuration": {
-        "driver": "timescaledb", "dsn": "postgres://user:pass@localhost:5432/iot?sslmode=disable"
+        "tags": [{"key": "deviceId", "value": "${metadata.deviceId}"}]
       }}
     ],
     "connections": [
-      {"fromId": "n1", "toId": "n2", "type": "Success"},
-      {"fromId": "n2", "toId": "n3", "type": "Success"}
-    ]
-  }
-}
-```
-
-### Remote Control (Write)
-
-```json
-{
-  "ruleChain": {"name": "iot-control", "root": false},
-  "metadata": {
-    "nodes": [
-      {"id": "w1", "type": "x/iotWrite", "configuration": {
-        "driver": "iec104", "server": "192.168.1.20:2404", "commonAddr": 1,
-        "points": [
-          {"name": "breaker", "addr": "100", "type": "C_SC_NA_1", "value": "${msg.action}"}
-        ]
-      }}
-    ],
-    "connections": []
-  }
-}
-```
-
-### Modbus Server Endpoint (Write-Triggered)
-
-```json
-{
-  "ruleChain": {"name": "modbus-bridge", "root": true},
-  "metadata": {
-    "nodes": [
-      {"id": "e1", "type": "endpoint/modbusServer", "configuration": {
-        "listen": "tcp://:5020", "unitId": 1
-      }},
-      {"id": "p1", "type": "log", "configuration": {"jsScript": "return msg;"}},
-      {"id": "w1", "type": "x/tsdbWrite", "configuration": {
-        "driver": "influxdb", "url": "http://localhost:8086",
-        "token": "my-token", "org": "rulego", "bucket": "iot"
-      }}
-    ],
-    "connections": [
-      {"fromId": "e1", "toId": "p1", "type": "ip"},
-      {"fromId": "p1", "toId": "w1", "type": "Success"}
+      {"fromId": "n1", "toId": "n2", "type": "Success"}
     ]
   }
 }
@@ -198,7 +154,7 @@ Use `x/iotToSeries` to bridge acquisition output → TSDB input.
   "metadata": {
     "nodes": [
       {"id": "e1", "type": "endpoint/modbusServer", "configuration": {
-        "listen": "tcp://:5020", "unitId": 1
+        "server": "tcp://:5020", "unitId": 1
       }},
       {"id": "wd", "type": "x/control/watchdog", "configuration": {
         "timeout": "10s", "failsafe": "{\"valve\":0,\"motor\":0}"
