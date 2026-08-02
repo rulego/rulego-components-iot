@@ -33,34 +33,34 @@ import (
 	"github.com/simonvetter/modbus"
 )
 
-// 注册节点
+// Register node
 func init() {
 	_ = rulego.Registry.Register(&ReadPointsNode{})
 	_ = rulego.Registry.Register(&WritePointsNode{})
 }
 
-// modbusPointsReconnecter 连接重建能力接口。
+// modbusPointsReconnecter connection rebuild capability interface.
 type modbusPointsReconnecter interface {
 	reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, error)
 }
 
-// PointsConfiguration 点位式 modbus 节点配置（读/写共用）。
+// PointsConfiguration point-based modbus node configuration (read/write shared).
 type PointsConfiguration struct {
-	// 服务器地址，格式 tcp://host:port 或 rtu:///dev/ttyUSB0
+	// Server address, format tcp://host:port or rtu:///dev/ttyUSB0
 	Server string `json:"server" label:"Server" desc:"Modbus server address, format: tcp://host:port or rtu:///dev/ttyUSB0" required:"true" ref:"primary"`
-	// UnitId 从机编号
+	// UnitId slave unit ID
 	UnitId uint8 `json:"unitId" label:"Unit ID" desc:"Modbus slave unit ID"`
-	// 默认点位表（addr=Modicon 地址如 40001；为空则从 msg.Data 解析点位）
+	// Default points table (addr=Modicon e.g. 40001; empty=parse from msg.Data)
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=Modicon e.g. 40001; empty=parse from msg.Data"`
-	// TCP 连接配置
+	// TCP connection configuration
 	TcpConfig TcpConfig `json:"tcpConfig" label:"TCP Config" desc:"TCP connection configuration"`
-	// RTU 串口配置
+	// RTU serial configuration
 	RtuConfig RtuConfig `json:"rtuConfig" label:"RTU Config" desc:"RTU serial configuration"`
-	// 数据编码（多寄存器字节序/字序）
+	// Data encoding (multi-register byte order/word order)
 	EncodingConfig EncodingConfig `json:"encodingConfig" label:"Encoding Config" desc:"Data encoding configuration"`
 }
 
-// modbusConn 连接管理（read/write 节点共用）。
+// modbusConn connection management (read/write nodes shared).
 type modbusConn struct {
 	base.SharedNode[*modbus.ModbusClient]
 	Config          PointsConfiguration
@@ -84,7 +84,7 @@ func (x *modbusConn) setUnitId(client *modbus.ModbusClient, unitId uint8) {
 	}
 }
 
-// newRetryableClient 为本次请求创建带重试/重连的客户端封装。
+// newRetryableClient creates client wrapper with retry/reconnect for this request.
 func (x *modbusConn) newRetryableClient(client *modbus.ModbusClient) *RetryableModbusClient {
 	return NewRetryableModbusClient(
 		client, 3, x.RuleConfig.Logger, x.reconnect,
@@ -94,7 +94,7 @@ func (x *modbusConn) newRetryableClient(client *modbus.ModbusClient) *RetryableM
 	)
 }
 
-// initClient 构建并打开 modbus 连接。
+// initClient builds and opens modbus connection.
 func (x *modbusConn) initClient() (*modbus.ModbusClient, error) {
 	config := &modbus.ClientConfiguration{
 		URL:      x.Config.Server,
@@ -127,12 +127,12 @@ func (x *modbusConn) initClient() (*modbus.ModbusClient, error) {
 	return conn, nil
 }
 
-// reconnect 安全重建连接。ref:// 借用方委托源节点或返回错误；本地 owner 重建后 Refresh 更新 holder。
+// reconnect safely rebuilds connection. ref:// borrower delegates to source node or returns error; local owner rebuilds then Refresh updates holder.
 func (x *modbusConn) reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(modbusPointsReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(modbusPointsReconnecter); ok { // Cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -150,7 +150,7 @@ func (x *modbusConn) reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, 
 	}
 	if old != nil {
 		_ = old.Close()
-		modbusOpLocks.Delete(old) // 清理旧连接的操作锁条目
+		modbusOpLocks.Delete(old) // Clean up old connection operation lock entry
 		time.Sleep(iot_points.ReconnectDelay)
 	}
 	newClient, err := x.initClient()
@@ -162,13 +162,13 @@ func (x *modbusConn) reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, 
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadPointsNode modbus 点位读取节点
+// ReadPointsNode modbus point read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadPointsNode 批量读取 Modicon 点位，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadPointsNode batch reads Modicon points, results (unified Data list) written back to msg.Data, routed via Success chain.
 //
-// 点位来源（双入口，msg.Data 优先）：配置 points(addr=Modicon)；或 msg.Data 带点位。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]
+// Points sources (dual entry, msg.Data takes priority): configure points(addr=Modicon); or msg.Data with points.
+// Output(msg.Data): [{"name","value","timestamp","error"}]
 type ReadPointsNode struct {
 	modbusConn
 }
@@ -205,7 +205,7 @@ func (x *ReadPointsNode) Init(ruleConfig types.Config, configuration types.Confi
 		}
 		return nil
 	})
-	// 启用同链连接池：本地连接按节点ID注册到链目录
+	// Enable same-chain connection pool: local connections registered to chain directory by node ID
 	x.SharedNode.BindChain(configuration)
 	return err
 }
@@ -242,7 +242,7 @@ func (x *ReadPointsNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 func (x *ReadPointsNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理自己的操作锁
+	if !x.SharedNode.IsFromPool() { // Only owner cleans up its own operation lock
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
 			modbusOpLocks.Delete(c)
 		}
@@ -255,12 +255,12 @@ func (x *ReadPointsNode) Desc() string {
 }
 
 // ------------------------------------------------------------------------------------------------
-// WritePointsNode modbus 点位写入节点
+// WritePointsNode modbus point write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 把点位值写入 Modbus（addr=Modicon），成功走 Success 链，否则 Failure 链。
+// WriteNode writes point values to Modbus (addr=Modicon), routes to Success on success, Failure otherwise.
 //
-// 点位来源（双入口，msg.Data 优先）：配置 points；或 msg.Data 带点位（value 为写入值）。
+// Points sources (dual entry, msg.Data takes priority): configure points; or msg.Data with points (value is write value).
 type WritePointsNode struct {
 	modbusConn
 }

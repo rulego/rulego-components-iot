@@ -30,19 +30,19 @@ func newPointsMsg(data string) types.RuleMsg {
 	return types.NewMsg(0, "test", types.JSON, types.NewMetadata(), data)
 }
 
-// resolvePoints 双入口：兼容旧 read nodeIds 数组、旧 write {nodeId,value}、新 points，回退配置。
+// resolvePoints dual entry: compat legacy read nodeIds array, legacy write {nodeId,value}, new points, fallback config.
 func TestResolvePoints(t *testing.T) {
 	sentinel := errors.New("empty")
 	config := []iot_points.Point{{Name: "cfg", Addr: "ns=2;s=Cfg"}}
 
-	// 旧 read 格式：nodeId 字符串数组
+	// Legacy read format: nodeId string array
 	pts, err := resolvePoints(config, newPointsMsg(`["ns=2;s=A","ns=2;s=B"]`), sentinel)
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(pts))
 	assert.Equal(t, "ns=2;s=A", pts[0].Addr)
 	assert.Equal(t, "ns=2;s=B", pts[1].Addr)
 
-	// 旧 write 格式：{nodeId,value,dataType}
+	// Legacy write format: {nodeId,value,dataType}
 	pts, err = resolvePoints(config, newPointsMsg(`[{"nodeId":"ns=2;s=X","value":1.5,"dataType":"Double"}]`), sentinel)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(pts))
@@ -50,7 +50,7 @@ func TestResolvePoints(t *testing.T) {
 	assert.Equal(t, "1.5", pts[0].Value)
 	assert.Equal(t, "Double", pts[0].Type)
 
-	// 新点位格式：{name,addr,type}
+	// New point format: {name,addr,type}
 	pts, err = resolvePoints(config, newPointsMsg(`[{"name":"t","addr":"ns=2;s=T","type":"FLOAT64"}]`), sentinel)
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(pts))
@@ -58,12 +58,12 @@ func TestResolvePoints(t *testing.T) {
 	assert.Equal(t, "ns=2;s=T", pts[0].Addr)
 	assert.Equal(t, "FLOAT64", pts[0].Type)
 
-	// msg.Data 空 -> 配置
+	// msg.Data empty -> config
 	pts, err = resolvePoints(config, newPointsMsg(""), sentinel)
 	assert.Nil(t, err)
 	assert.Equal(t, "cfg", pts[0].Name)
 
-	// null/[] -> 配置
+	// null/[] -> config
 	pts, err = resolvePoints(config, newPointsMsg("null"), sentinel)
 	assert.Nil(t, err)
 	assert.Equal(t, "cfg", pts[0].Name)
@@ -71,29 +71,29 @@ func TestResolvePoints(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "cfg", pts[0].Name)
 
-	// 都空 -> sentinel；emptyErr=nil -> 默认错误
+	// Both empty -> sentinel; emptyErr=nil -> default error
 	_, err = resolvePoints(nil, newPointsMsg(""), sentinel)
 	assert.Equal(t, sentinel, err)
 	_, err = resolvePoints(nil, newPointsMsg(""), nil)
 	assert.NotNil(t, err)
 }
 
-// parseValue 把字符串值还原为 Go 值（标量/数组），复用 castValue。
+// parseValue converts string value back to Go value (scalar/array), reusing castValue.
 func TestParseValue(t *testing.T) {
-	assert.Equal(t, float64(1.5), parseValue("1.5", "double")) // 标量 double
-	assert.Equal(t, int32(1), parseValue("1", "int32"))        // json 数值 -> float64 -> int32
-	assert.Equal(t, true, parseValue("true", "boolean"))       // 布尔
-	assert.Equal(t, "abc", parseValue(`"abc"`, "string"))      // JSON 字符串
-	assert.Equal(t, "abc", parseValue("abc", "string"))        // 纯文本兜底
-	assert.Equal(t, "", parseValue("", "string"))              // 空串
+	assert.Equal(t, float64(1.5), parseValue("1.5", "double")) // scalar double
+	assert.Equal(t, int32(1), parseValue("1", "int32"))        // json number -> float64 -> int32
+	assert.Equal(t, true, parseValue("true", "boolean"))       // boolean
+	assert.Equal(t, "abc", parseValue(`"abc"`, "string"))      // JSON string
+	assert.Equal(t, "abc", parseValue("abc", "string"))        // plain text fallback
+	assert.Equal(t, "", parseValue("", "string"))              // empty string
 
-	// 数组 double
+	// Array double
 	v := parseValue("[1,2,3]", "double")
 	arr, ok := v.([]float64)
 	assert.True(t, ok)
 	assert.Equal(t, []float64{1, 2, 3}, arr)
 
-	// 数组 int32
+	// Array int32
 	v = parseValue("[1,2,3]", "int32")
 	iarr, ok := v.([]int32)
 	assert.True(t, ok)
@@ -105,11 +105,11 @@ func TestMapType(t *testing.T) {
 	assert.Equal(t, "boolean", mapType(iot_points.TypeBool))
 	assert.Equal(t, "int32", mapType(iot_points.TypeInt32))
 	assert.Equal(t, "uint16", mapType(iot_points.TypeUint16))
-	assert.Equal(t, "Double", mapType("Double")) // 未知/旧 dataType 透传
+	assert.Equal(t, "Double", mapType("Double")) // unknown/legacy dataType passthrough
 	assert.Equal(t, "", mapType(""))
 }
 
-// legacyDataToPoints 数组值经 json 序列化往返无损。
+// legacyDataToPoints array values survive json serialization roundtrip lossless.
 func TestLegacyDataToPoints(t *testing.T) {
 	ds := []opcuaClient.Data{
 		{NodeId: "ns=2;s=Arr", Value: []interface{}{float64(0), float64(60), float64(0)}, DataType: "Double"},
@@ -120,11 +120,11 @@ func TestLegacyDataToPoints(t *testing.T) {
 	assert.Equal(t, "ns=2;s=Arr", pts[0].Addr)
 	assert.Equal(t, "Double", pts[0].Type)
 
-	// 数组往返：Value 序列化为 JSON 数组，parseValue 还原为 []float64
+	// Array roundtrip: Value serialized as JSON array, parseValue restores to []float64
 	arr, ok := parseValue(pts[0].Value, mapType(pts[0].Type)).([]float64)
 	assert.True(t, ok)
 	assert.Equal(t, []float64{0, 60, 0}, arr)
 
-	// 标量往返
+	// Scalar roundtrip
 	assert.Equal(t, float64(3.5), parseValue(pts[1].Value, mapType(pts[1].Type)))
 }

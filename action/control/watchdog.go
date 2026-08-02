@@ -30,29 +30,29 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// watchdogAlarmMsgType 内部超时检查消息类型。
+// watchdogAlarmMsgType internal timeout check message type.
 const watchdogAlarmMsgType = "CONTROL_WATCHDOG_ALARM"
 
-// watchdogFailsafeMsgType 超时触发后重新注入、用于透传故障安全值的消息类型（走全新 ctx）。
+// watchdogFailsafeMsgType message type for reinjection after timeout trigger for failsafe value passthrough (via new ctx).
 const watchdogFailsafeMsgType = "CONTROL_WATCHDOG_FAILSAFE"
 
 func init() {
 	_ = rulego.Registry.Register(&WatchdogNode{})
 }
 
-// WatchdogConfig 看门狗配置。
+// WatchdogConfig watchdog configuration.
 type WatchdogConfig struct {
 	Timeout  string `json:"timeout" label:"Timeout" desc:"kick timeout, e.g. 10s; if no message arrives within this window the failsafe is emitted, supports ${metadata.xx}" required:"true"`
 	Failsafe string `json:"failsafe" label:"Failsafe" desc:"JSON emitted downstream on timeout, e.g. {\"valve\":0,\"motor\":0}" required:"true"`
 }
 
-// WatchdogNode 软 PLC 看门狗:协议/数据形状无关。每条消息透传并重新武装;
-// 超时未再收到消息则下发故障安全值。用代次计数区分"已重新武装"与"过期检查"。
+// WatchdogNode soft-PLC watchdog: protocol/data shape agnostic. Each message passes through and re-arms;
+// If no message received within timeout, emit failsafe value. Uses generation count to distinguish "re-armed" from "expired check".
 type WatchdogNode struct {
 	Config          WatchdogConfig
 	mu              sync.Mutex
 	gen             uint64
-	staticTimeoutMs int64 // -1 = timeout 含模板,需每次渲染
+	staticTimeoutMs int64 // -1 = timeout contains template, needs rendering each time
 }
 
 func (x *WatchdogNode) New() types.Node {
@@ -85,7 +85,7 @@ func (x *WatchdogNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		x.onAlarm(ctx, msg)
 		return
 	case watchdogFailsafeMsgType:
-		ctx.TellSuccess(msg) // 故障安全消息透传（来自全新 ctx），不再武装
+		ctx.TellSuccess(msg) // Failsafe message pass-through (from fresh ctx), no re-arm
 		return
 	}
 	timeoutMs, err := x.resolveTimeout(ctx, msg)
@@ -98,8 +98,8 @@ func (x *WatchdogNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	g := x.gen
 	x.mu.Unlock()
 
-	// 先为超时检查准备独立副本（改副本而非原 msg）。TellSuccess 异步派发到下游，
-	// 透传后不再修改 msg，避免与下游并发读取竞态。
+// First prepare independent copy for timeout check (modify copy, not original msg). TellSuccess asynchronously dispatches to downstream,
+// After passthrough, no longer modify msg to avoid race condition with downstream concurrent reads.
 	var alarmMsg types.RuleMsg
 	if timeoutMs > 0 {
 		alarmMsg = msg.Copy()
@@ -112,17 +112,17 @@ func (x *WatchdogNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 }
 
-// onAlarm 超时检查到期:仅当代次未被新喂狗作废时下发故障安全值。
+// onAlarm timeout check expiry: only emit failsafe value when generation not invalidated by new feed.
 func (x *WatchdogNode) onAlarm(ctx types.RuleContext, msg types.RuleMsg) {
 	g, _ := strconv.ParseUint(msg.Metadata.GetValue(genKey), 10, 64)
 	x.mu.Lock()
 	if g != x.gen {
 		x.mu.Unlock()
-		return // 期间已喂狗,重新武装
+		return // Fed during period, re-arm
 	}
 	x.mu.Unlock()
 
-	// 经全新 ctx 重新注入故障安全消息再透传，避免与踢消息的业务派发复用同一 ctx 产生数据竞争
+// Reinject failsafe message via new ctx then passthrough, avoid data race from reusing same ctx with business dispatch of kick message
 	failsafe := types.NewMsgWithJsonData(x.Config.Failsafe)
 	failsafe.Type = watchdogFailsafeMsgType
 	ctx.TellNode(context.Background(), ctx.GetSelfId(), failsafe, false, nil, nil)

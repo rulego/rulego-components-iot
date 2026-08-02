@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-// Package dlt645 的节点层：DL/T 645-2007 电能表读取节点。
+// Package dlt645 node layer: DL/T 645-2007 power meter read nodes.
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule，点位在下方 points 配置（addr=数据标识 DI）。
-//   - 按需读：msg.Data 带点位列表则优先使用（动态场景）。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule, configure points below (addr=Data ID DI).
+//   - On-demand read: msg.Data points take precedence (dynamic scenarios).
 //
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
+// Point fields support ${msg.xx} / ${metadata.xx} template variables.
 package dlt645
 
 import (
@@ -39,49 +39,49 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration DLT645 读节点配置
+// Configuration DLT645 read node configuration
 type Configuration struct {
-	// TCP 地址，格式 host:port（可选 tcp:// 前缀）
+	// TCP address, format host:port (tcp:// prefix optional)
 	Server string `json:"server" label:"Server" desc:"TCP address, host:port (tcp:// prefix optional)" required:"true" ref:"primary"`
-	// 表地址：12 位十进制 BCD，如 000000000001
+	// Meter address: 12-digit decimal BCD, e.g. 000000000001
 	Addr string `json:"addr" label:"Meter Address" desc:"12-digit BCD meter address, e.g. 000000000001" required:"true"`
-	// 请求超时(秒)，默认 5
+	// Request timeout in seconds, default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
-	// 默认点位表。addr=数据标识 DI（如 "00-01-00-00"）；msg.Data 带点位则优先
+	// Default points table. addr=Data ID DI (e.g. "00-01-00-00"); msg.Data points take precedence
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// dlt645OpLocks 按连接关联操作锁。
+// dlt645OpLocks operation locks per connection.
 var dlt645OpLocks iot_points.OpLocks
 
-// dlt645Reconnecter 连接重建能力接口。
+// dlt645Reconnecter reconnection capability interface.
 type dlt645Reconnecter interface {
 	reconnect(old net.Conn) (net.Conn, error)
 }
 
-// ReadNode 批量读取 DLT645 电能表点位，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadNode batch reads DLT645 power meter points, results (unified Data list) written to msg.Data, routed via Success link.
 //
-// 输入(msg.Data 可选)：点位列表 JSON，格式同 points 配置（addr=DI）。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp"}]
+// Input (msg.Data optional): point list JSON, same format as points config (addr=DI). Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp"}]
 type ReadNode struct {
 	base.SharedNode[net.Conn]
 	Config Configuration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnection
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/dlt645Read"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -89,13 +89,13 @@ func (x *ReadNode) New() types.Node {
 			Addr:    "000000000001",
 			Timeout: 5,
 			Points: []iot_points.Point{
-				{Name: "正向有功总电能", Addr: "00-01-00-00"},
+				{Name: "total_active_energy", Addr: "00-01-00-00"},
 			},
 		},
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (net.Conn, error) {
@@ -106,12 +106,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败（全部点位失败）自动重连重试 maxRetries 次。
+// OnMsg handles messages. Connection-level failure (all points failed) auto-reconnects with maxRetries.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	conn, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -156,14 +156,14 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			dlt645OpLocks.Delete(oldConn) // 清理旧连接操作锁
+			dlt645OpLocks.Delete(oldConn) // Clean up old connection operation lock
 			conn = newConn
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// timeout 请求超时，默认 5 秒
+// timeout request timeout, default 5 seconds
 func (x *ReadNode) timeout() time.Duration {
 	t := x.Config.Timeout
 	if t <= 0 {
@@ -172,7 +172,7 @@ func (x *ReadNode) timeout() time.Duration {
 	return time.Duration(t) * time.Second
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old net.Conn) (net.Conn, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
@@ -211,9 +211,9 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
 			dlt645OpLocks.Delete(c)
 		}
@@ -221,18 +221,18 @@ func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "DL/T 645-2007 power meter client for batch reading points. Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode DL/T 645 写节点
+// WriteNode DL/T 645 write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 向电表下发写数据项命令（如写时间、写地址、写参数）。
+// WriteNode sends write data item commands to meter (e.g. write time, address, parameters).
 //
-// 输入(msg.Data)：点位列表 JSON [{"name","addr","type","value"}]，addr=DI 数据标识。
+// Input (msg.Data): point list JSON [{"name","addr","type","value"}], addr=DI Data ID.
 type WriteNode struct {
 	base.SharedNode[net.Conn]
 	Config          Configuration
@@ -302,7 +302,7 @@ func (x *WriteNode) Desc() string {
 	return "DL/T 645-2007 power meter client for writing data items. Routes to Success/Failure"
 }
 
-// dialTCP 建立 TCP 连接。server 可带 tcp:// 前缀。
+// dialTCP establishes TCP connection. server may have tcp:// prefix.
 func dialTCP(server string, timeoutSec int) (net.Conn, error) {
 	addr := strings.TrimPrefix(strings.TrimSpace(server), "tcp://")
 	if addr == "" {

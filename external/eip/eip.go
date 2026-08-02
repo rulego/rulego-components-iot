@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-// Package eip 提供罗克韦尔 ControlLogix/CompactLogix 通过 EtherNet/IP(CIP) 的
-// 读取(ReadNode)与写入(WriteNode)节点。
+// Package eip provides Rockwell ControlLogix/CompactLogix read (ReadNode) and write (WriteNode) nodes via EtherNet/IP (CIP).
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule，标签在下方 points 配置。
-//   - 按需读/写：msg.Data 带点位列表则优先使用（动态场景）。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule upstream, configure tags in points field.
+//   - On-demand read/write: msg.Data with point list takes priority (dynamic scenarios).
 //
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
-// 因 gologix 的 Read 需要具体类型指针，点位需指定 type（BOOL/INT/DINT/REAL/STRING/...）。
+// All point fields support ${msg.xx} / ${metadata.xx} template variables.
+// Since gologix Read requires specific type pointers, points must specify type (BOOL/INT/DINT/REAL/STRING/...).
 package eip
 
 import (
@@ -41,66 +40,66 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration 连接配置（读/写节点共用）
+// Configuration connection config (shared by read/write nodes)
 type Configuration struct {
-	// PLC 地址，格式 host 或 host:port，默认端口 44818
+	// PLC address, format host or host:port, default port 44818
 	Server string `json:"server" label:"Server" desc:"host or host:port, default port 44818" required:"true" ref:"primary"`
-	// CPU 在背板上的槽位号，默认 0，自动生成 CIP 路径
+	// CPU slot on backplane, default 0, auto-generates CIP path
 	Slot int `json:"slot" label:"Slot" desc:"CPU slot on backplane, default 0"`
-	// 可选：手动覆盖 CIP 路径，如 1,0；留空则按 slot 自动生成
+	// Optional: manually override CIP path, e.g. 1,0; empty=auto from slot
 	Path string `json:"path" label:"Path" desc:"CIP path override, e.g. 1,0; empty=auto from slot"`
-	// 请求超时(秒)，默认 5
+	// Request timeout (seconds), default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
-	// 默认点位表。定时采集(schedule 触发)时使用；msg.Data 带点位则优先
+	// Default points table. Used for scheduled collection (schedule trigger); msg.Data points take precedence
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// GetServer 实现 eipclient.ConfigProp
+// GetServer implements eipclient.ConfigProp
 func (c Configuration) GetServer() string { return c.Server }
 
-// GetSlot 实现 eipclient.ConfigProp
+// GetSlot implements eipclient.ConfigProp
 func (c Configuration) GetSlot() int { return c.Slot }
 
-// GetPath 实现 eipclient.ConfigProp
+// GetPath implements eipclient.ConfigProp
 func (c Configuration) GetPath() string { return c.Path }
 
-// GetTimeout 实现 eipclient.ConfigProp
+// GetTimeout implements eipclient.ConfigProp
 func (c Configuration) GetTimeout() int { return c.Timeout }
 
-// eipOpLocks 按底层 client 关联操作锁，串行化共享 client 的并发读写。
+// eipOpLocks associates operation locks by underlying client, serializes concurrent read/write on shared client.
 var eipOpLocks iot_points.OpLocks
 
-// eipReconnecter 连接重建能力接口。
+// eipReconnecter connection rebuild capability interface.
 type eipReconnecter interface {
 	reconnect(old *gologix.Client) (*gologix.Client, error)
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadNode EtherNet/IP 读节点
+// ReadNode EtherNet/IP read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadNode 批量读取 ControlLogix 标签，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadNode batch reads ControlLogix tags, writes results (unified Data list) back to msg.Data, routes via Success.
 //
-// 输入(msg.Data 可选)：点位列表 JSON，格式同 points 配置。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]（timestamp 为 ns；error 仅单点失败时存在）
+// Input (msg.Data optional): point list JSON, same format as points config. Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp","error"}] (timestamp in ns; error only present on single-point failure)
 type ReadNode struct {
 	base.SharedNode[*gologix.Client]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/eipRead"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -114,7 +113,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gologix.Client, error) {
@@ -125,12 +124,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败（全部标签失败）自动重连重试 maxRetries 次。
+// OnMsg processes message. Auto reconnect retry maxRetries times on connection-level failure (all tags failed).
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -175,19 +174,19 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			eipOpLocks.Delete(oldClient) // 清理旧连接操作锁
+			eipOpLocks.Delete(oldClient) // clean up old connection operation lock
 			client = newClient
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *gologix.Client) (*gologix.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(eipReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(eipReconnecter); ok { // cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -221,9 +220,9 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
 			eipOpLocks.Delete(c)
 		}
@@ -231,30 +230,30 @@ func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "EtherNet/IP client for batch reading ControlLogix tags. Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode EtherNet/IP 写节点
+// WriteNode EtherNet/IP write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 把 msg.Data 的标签值列表写入 ControlLogix，成功走 Success 链。
+// WriteNode writes tag value list from msg.Data to ControlLogix, routes via Success on success.
 //
-// 输入(msg.Data)：[{"name","addr","type","value"}]（addr 为 CIP tag 名），value 支持 ${msg.xx}
+// Input (msg.Data): [{"name","addr","type","value"}] (addr is CIP tag name), value supports ${msg.xx}
 type WriteNode struct {
 	base.SharedNode[*gologix.Client]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/eipWrite"
 }
 
-// New 默认配置
+// New default configuration
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
@@ -268,7 +267,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gologix.Client, error) {
@@ -279,12 +278,12 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。写入失败自动重连重试 maxRetries 次。
+// OnMsg processes message. Auto reconnect retry maxRetries times on write failure.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -323,19 +322,19 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			eipOpLocks.Delete(oldClient) // 清理旧连接操作锁
+			eipOpLocks.Delete(oldClient) // clean up old connection operation lock
 			client = newClient
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接（语义同 ReadNode.reconnect）
+// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
 func (x *WriteNode) reconnect(old *gologix.Client) (*gologix.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(eipReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(eipReconnecter); ok { // cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -369,7 +368,7 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	if !x.SharedNode.IsFromPool() {
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
@@ -379,7 +378,7 @@ func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *WriteNode) Desc() string {
 	return "EtherNet/IP client for writing ControlLogix tags. Routes to Success/Failure"
 }

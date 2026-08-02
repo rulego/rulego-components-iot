@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-// Package mc 提供三菱 MC Protocol(3E 帧, 二进制)PLC 的读取(ReadNode)与写入(WriteNode)节点，
-// 适用 Q/L/R/iQ-R/iQ-F 系列。
+// Package mc provides ReadNode and WriteNode for Mitsubishi MC Protocol (3E frame, binary) PLCs,
+// applicable to Q/L/R/iQ-R/iQ-F series.
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule，点位在下方 points 配置。
-//   - 按需读/写：msg.Data 带点位列表则优先使用（动态场景）。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule, configure points below.
+//   - On-demand read/write: msg.Data points take precedence (dynamic scenarios).
 //
-// 点位 Addr 为三菱软元件地址：字软元件 D100/W10/R200/ZR10/TN5，位软元件 M0/X1F/Y0/B4。
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
+// Point Addr is Mitsubishi device address: word devices D100/W10/R200/ZR10/TN5, bit devices M0/X1F/Y0/B4.
+// Point fields support ${msg.xx} / ${metadata.xx} template variables.
 package mc
 
 import (
@@ -40,30 +40,30 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// defaultPort MC 协议默认端口
+// defaultPort MC protocol default port
 const defaultPort = 6000
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration 连接配置（读/写节点共用）。
-// 注：网络号/PC号等站号参数由底层库固定为自局(00/FF/FF03/00)，覆盖以太网直连场景。
+// Configuration connection config (shared by read/write nodes).
+// Note: station numbers like network/PC are fixed by underlying library to local (00/FF/FF03/00), covering Ethernet direct connection.
 type Configuration struct {
-	// PLC 地址，格式 host:port，默认端口 6000
+	// PLC address in host:port format, default port 6000
 	Server string `json:"server" label:"Server" desc:"Mitsubishi PLC host:port, MC default port 6000" required:"true" ref:"primary"`
-	// 请求超时(秒)，默认 5
+	// Request timeout in seconds, default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
-	// 默认点位表。定时采集(schedule 触发)时使用；msg.Data 带点位则优先
+	// Default point list. Used when schedule triggered; msg.Data points take priority
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// mcOpLocks 按底层 client 关联操作锁，串行化共享 client 的并发读写。
+// mcOpLocks operation locks per underlying client, serializes concurrent read/write with shared client.
 var mcOpLocks iot_points.OpLocks
 
-// newClient 创建并连接 3E 帧二进制客户端。
+// newClient creates and connects 3E frame binary client.
 func newClient(config Configuration) (*gomcprotocol.Client3E, error) {
 	host, port, err := iot_points.ParseServer(config.Server, defaultPort)
 	if err != nil {
@@ -82,32 +82,32 @@ func newClient(config Configuration) (*gomcprotocol.Client3E, error) {
 	return client, nil
 }
 
-// mcReconnecter 连接重建能力接口。
+// mcReconnecter reconnection capability interface.
 type mcReconnecter interface {
 	reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E, error)
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadNode MC 读节点
+// ReadNode MC read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadNode 批量读取三菱 PLC 点位，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadNode batch reads Mitsubishi PLC points, results (unified Data list) written to msg.Data, routed via Success link.
 //
-// 输入(msg.Data 可选)：点位列表 JSON，格式同 points 配置。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]
+// Input (msg.Data optional): point list JSON, same format as points config. Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp","error"}]
 type ReadNode struct {
 	base.SharedNode[*gomcprotocol.Client3E]
 	Config Configuration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnection
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/mcRead"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -120,7 +120,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gomcprotocol.Client3E, error) {
@@ -131,12 +131,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable chain-scoped connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败（全部点位失败）自动重连重试 maxRetries 次。
+// OnMsg handles messages. Connection-level failure (all points failed) auto-reconnects with maxRetries.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -188,7 +188,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
@@ -227,7 +227,7 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
 	if !x.SharedNode.IsFromPool() {
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
@@ -237,30 +237,30 @@ func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "Mitsubishi MC protocol client for batch reading PLC points. Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode MC 写节点
+// WriteNode MC write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 把 msg.Data 的点位值列表写入三菱 PLC，成功走 Success 链。
+// WriteNode writes point value list from msg.Data to Mitsubishi PLC, routes via Success on success.
 //
-// 输入(msg.Data)：[{"name","addr","type","value"}]，value 支持 ${msg.xx}
+// Input (msg.Data): [{"name","addr","type","value"}], value supports ${msg.xx}
 type WriteNode struct {
 	base.SharedNode[*gomcprotocol.Client3E]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/mcWrite"
 }
 
-// New 默认配置
+// New default configuration
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
@@ -273,7 +273,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gomcprotocol.Client3E, error) {
@@ -284,12 +284,12 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable chain-scoped connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。写入失败自动重连重试 maxRetries 次。
+// OnMsg handles messages. Write failure auto-reconnects with maxRetries.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -334,7 +334,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接（语义同 ReadNode.reconnect）
+// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
 func (x *WriteNode) reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
@@ -373,7 +373,7 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	if !x.SharedNode.IsFromPool() {
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
@@ -383,7 +383,7 @@ func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *WriteNode) Desc() string {
 	return "Mitsubishi MC protocol client for writing PLC points. Routes to Success/Failure"
 }

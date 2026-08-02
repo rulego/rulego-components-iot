@@ -33,7 +33,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestFinsNodes 节点类型与默认配置
+// TestFinsNodes node types and default configurations
 func TestFinsNodes(t *testing.T) {
 	r := &ReadNode{}
 	assert.Equal(t, "x/finsRead", r.Type())
@@ -48,7 +48,7 @@ func TestFinsNodes(t *testing.T) {
 	assert.Equal(t, 5, rn.Config.Timeout)
 }
 
-// TestParseAddr 欧姆龙内存区地址解析(含 CIO 区)。
+// TestParseAddr Omron memory area address parsing (including CIO area).
 func TestParseAddr(t *testing.T) {
 	cases := []struct {
 		addr      string
@@ -58,7 +58,7 @@ func TestParseAddr(t *testing.T) {
 		isBit     bool
 	}{
 		{"CIO100", finsclient.MemoryAreaCIOWord, 100, 0, false},
-		{"cio0", finsclient.MemoryAreaCIOWord, 0, 0, false}, // 大小写不敏感
+		{"cio0", finsclient.MemoryAreaCIOWord, 0, 0, false}, // case-insensitive
 		{"CIO10.7", finsclient.MemoryAreaCIOBit, 10, 7, true},
 		{"D100", finsclient.MemoryAreaDMWord, 100, 0, false},
 		{"d100", finsclient.MemoryAreaDMWord, 100, 0, false},
@@ -82,7 +82,7 @@ func TestParseAddr(t *testing.T) {
 	}
 }
 
-// TestParseAddrError 非法地址。
+// TestParseAddrError invalid addresses.
 func TestParseAddrError(t *testing.T) {
 	bad := []string{"", "X100", "D", "D1.2.3", "D1.16", "D65536"}
 	for _, addr := range bad {
@@ -91,7 +91,7 @@ func TestParseAddrError(t *testing.T) {
 	}
 }
 
-// TestWordConversion 字序转换往返。
+// TestWordConversion word order conversion round-trip.
 func TestWordConversion(t *testing.T) {
 	assert.Equal(t, uint32(0x12345678), wordsToUint32([]uint16{0x1234, 0x5678}))
 	assert.Equal(t, []uint16{0x1234, 0x5678}, uint32ToWords(0x12345678))
@@ -99,7 +99,7 @@ func TestWordConversion(t *testing.T) {
 	assert.Equal(t, []uint16{0x1122, 0x3344, 0x5566, 0x7788}, uint64ToWords(0x1122334455667788))
 }
 
-// TestEncodeDecodeWords 各类型编码解码往返。
+// TestEncodeDecodeWords encoding/decoding round-trip for various types.
 func TestEncodeDecodeWords(t *testing.T) {
 	roundTrip := func(typ, value string) {
 		w, err := encodeWords(typ, value)
@@ -113,29 +113,29 @@ func TestEncodeDecodeWords(t *testing.T) {
 	roundTrip("FLOAT32", "23.5")
 	roundTrip("FLOAT64", "3.141592653589793")
 
-	// 有符号类型负值编码解码
+	// Signed type negative value encoding/decoding
 	roundTrip("INT16", "-1")
 	roundTrip("INT32", "-100000")
 	roundTrip("INT64", "-1234567890123")
 
-	// FLOAT32 编解码精确性
+	// FLOAT32 encoding/decoding accuracy
 	w, _ := encodeWords("FLOAT32", "23.5")
 	val, _ := decodeWords("FLOAT32", w)
 	assert.Equal(t, float32(23.5), val)
 
-	// INT16 负值编解码精确性
+	// INT16 negative value encoding/decoding accuracy
 	w, _ = encodeWords("INT16", "-2")
 	val, _ = decodeWords("INT16", w)
 	assert.Equal(t, int16(-2), val)
 
-	// 未知类型与 STRING 不支持
+	// Unknown type and STRING not supported
 	_, err := encodeWords("STRING", "abc")
 	assert.NotNil(t, err)
 	_, err = wordCount("CUSTOM")
 	assert.NotNil(t, err)
 }
 
-// TestParseBoolValue 布尔值解析。
+// TestParseBoolValue boolean value parsing.
 func TestParseBoolValue(t *testing.T) {
 	for _, s := range []string{"1", "true", "TRUE"} {
 		b, err := parseBoolValue(s)
@@ -151,9 +151,9 @@ func TestParseBoolValue(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-// --- in-process FINS PLC 模拟器(字区/位区，标准 W342 区码) ---
+// --- in-process FINS PLC simulator (word/bit areas, standard W342 area codes) ---
 
-// mockPLC 按内存区码维护字/位存储
+// mockPLC maintains word/bit storage by memory area code
 type mockPLC struct {
 	mu    sync.Mutex
 	words map[byte][]byte
@@ -179,14 +179,14 @@ func newMockPLC() *mockPLC {
 	}
 }
 
-// handle 处理一个 FINS 命令帧，返回完整响应帧
+// handle processes one FINS command frame, returns complete response frame
 func (m *mockPLC) handle(frame []byte) []byte {
 	if len(frame) < 18 {
 		return nil
 	}
 	resp := make([]byte, 14)
 	copy(resp[0:10], frame[0:10])
-	resp[0] = 0xC0 // 响应帧
+	resp[0] = 0xC0 // Response frame
 	resp[3], resp[6] = frame[6], frame[3]
 	resp[4], resp[7] = frame[7], frame[4]
 	resp[5], resp[8] = frame[8], frame[5]
@@ -209,11 +209,11 @@ func (m *mockPLC) handle(frame []byte) []byte {
 		store = m.bits[area]
 	}
 	if store == nil {
-		resp[12] = 0x22 // 不支持的内存区
+		resp[12] = 0x22 // Unsupported memory area
 		return resp
 	}
 	switch cmd {
-	case 0x0101: // 读
+	case 0x0101: // Read
 		if isBit {
 			start := addr + bitOff
 			if start+count > len(store) {
@@ -229,7 +229,7 @@ func (m *mockPLC) handle(frame []byte) []byte {
 			}
 			resp = append(resp, store[byteAddr:byteAddr+count*2]...)
 		}
-	case 0x0102: // 写
+	case 0x0102: // Write
 		data := frame[18:]
 		if isBit {
 			start := addr + bitOff
@@ -252,7 +252,7 @@ func (m *mockPLC) handle(frame []byte) []byte {
 	return resp
 }
 
-// startUDPSimulator 启动进程内 FINS/UDP PLC 模拟器，返回地址与清理函数
+// startUDPSimulator starts in-process FINS/UDP PLC simulator, returns address and cleanup function
 func startUDPSimulator(t *testing.T) (*mockPLC, string, func()) {
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -274,7 +274,7 @@ func startUDPSimulator(t *testing.T) (*mockPLC, string, func()) {
 	return plc, conn.LocalAddr().String(), func() { conn.Close() }
 }
 
-// startTCPSimulator 启动进程内 FINS/TCP PLC 模拟器(含节点地址握手)，返回地址与清理函数
+// startTCPSimulator starts in-process FINS/TCP PLC simulator (with node address handshake), returns address and cleanup function
 func startTCPSimulator(t *testing.T) (*mockPLC, string, func()) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -296,7 +296,7 @@ func startTCPSimulator(t *testing.T) (*mockPLC, string, func()) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				// 握手：服务端节点 21，分配客户端节点 17
+				// Handshake: server node 21, assign client node 17
 				if _, err := c.Write(wrap(0x00000000, []byte{0, 0, 0, 21, 0, 0, 0, 17})); err != nil {
 					return
 				}
@@ -325,7 +325,7 @@ func startTCPSimulator(t *testing.T) (*mockPLC, string, func()) {
 	return plc, l.Addr().String(), func() { l.Close() }
 }
 
-// newTestClient 建立指向模拟器的 FINS client(UDP)。
+// newTestClient creates FINS client (UDP) pointing to simulator.
 func newTestClient(t *testing.T, addr string) *finsclient.Client {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -339,7 +339,7 @@ func newTestClient(t *testing.T, addr string) *finsclient.Client {
 	return client
 }
 
-// TestFinsDriverE2E driver 端到端：写后读回 + Scale 工程量转换 + CIO 区。
+// TestFinsDriverE2E driver end-to-end: write-then-read + Scale engineering conversion + CIO area.
 func TestFinsDriverE2E(t *testing.T) {
 	_, addr, cleanup := startUDPSimulator(t)
 	defer cleanup()
@@ -380,12 +380,12 @@ func TestFinsDriverE2E(t *testing.T) {
 	assert.Equal(t, 1234*0.1+1, data[7].Value) // Scale: 1234*0.1+1=124.4
 }
 
-// TestFinsReadNode finsRead 节点端到端：连接模拟器 -> 读 D 区 -> 输出 Data 列表。
+// TestFinsReadNode finsRead node end-to-end: connect simulator -> read D area -> output Data list.
 func TestFinsReadNode(t *testing.T) {
 	_, addr, cleanup := startUDPSimulator(t)
 	defer cleanup()
 
-	// 先写入 D100=4321
+	// First write D100=4321
 	seed := newTestClient(t, addr)
 	assert.Nil(t, newDriver(seed).WritePoints([]iot_points.Point{
 		{Name: "seed", Addr: "D100", Type: "UINT16", Value: "4321"},
@@ -423,7 +423,7 @@ func TestFinsReadNode(t *testing.T) {
 	}
 }
 
-// TestFinsReadNodeTCP finsRead 节点 FINS/TCP 传输端到端(含握手)。
+// TestFinsReadNodeTCP finsRead node FINS/TCP transport end-to-end (with handshake).
 func TestFinsReadNodeTCP(t *testing.T) {
 	_, addr, cleanup := startTCPSimulator(t)
 	defer cleanup()
@@ -459,7 +459,7 @@ func TestFinsReadNodeTCP(t *testing.T) {
 	}
 }
 
-// TestFinsWriteNode finsWrite 节点端到端：msg.Data 点位(优先于配置) -> 写入模拟器 -> 读回验证。
+// TestFinsWriteNode finsWrite node end-to-end: msg.Data points (precedence over config) -> write to simulator -> read back verification.
 func TestFinsWriteNode(t *testing.T) {
 	_, addr, cleanup := startUDPSimulator(t)
 	defer cleanup()
@@ -490,7 +490,7 @@ func TestFinsWriteNode(t *testing.T) {
 		t.Fatal("timeout waiting for fins write callback")
 	}
 
-	// 读回验证
+	// Read back verification
 	verify := newTestClient(t, addr)
 	defer verify.Close()
 	data, rerr := newDriver(verify).ReadPoints([]iot_points.Point{

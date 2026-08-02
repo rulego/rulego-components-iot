@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestMapDataFullExpand 未配置 fields 时全量展开所有采集点。
+// TestMapDataFullExpand expands all acquisition points when fields not configured
 func TestMapDataFullExpand(t *testing.T) {
 	m := AcquisitionMapping{Measurement: "dev"}
 	data := `[{"name":"temperature","value":25.3},{"name":"humidity","value":60},{"name":"bad","error":"read failed"}]`
@@ -37,10 +37,10 @@ func TestMapDataFullExpand(t *testing.T) {
 	assert.Equal(t, 25.3, points[0].Fields["temperature"])
 	assert.Equal(t, float64(60), points[0].Fields["humidity"])
 	_, hasBad := points[0].Fields["bad"]
-	assert.False(t, hasBad) // 坏点被过滤
+	assert.False(t, hasBad) // Bad points filtered out
 }
 
-// TestMapDataFieldsMapping 配置 fields 时按 key->source 筛选并重命名。
+// TestMapDataFieldsMapping filters and renames by key->source when fields configured
 func TestMapDataFieldsMapping(t *testing.T) {
 	m := AcquisitionMapping{
 		Measurement: "dev",
@@ -56,28 +56,28 @@ func TestMapDataFieldsMapping(t *testing.T) {
 	var points []SeriesPoint
 	assert.Nil(t, json.Unmarshal([]byte(out), &points))
 	assert.Equal(t, 1, len(points))
-	assert.Equal(t, 25.3, points[0].Fields["temp_c"])      // 重命名生效
+	assert.Equal(t, 25.3, points[0].Fields["temp_c"])      // Renaming effective
 	assert.Equal(t, float64(60), points[0].Fields["humi_pct"])
 	_, hasPressure := points[0].Fields["pressure"]
-	assert.False(t, hasPressure) // 未配置的点被筛掉
+	assert.False(t, hasPressure) // Unconfigured points filtered out
 	_, hasOldName := points[0].Fields["temperature"]
-	assert.False(t, hasOldName) // 原始点名不再作为字段名
+	assert.False(t, hasOldName) // Original point name no longer used as field name
 }
 
-// TestMapDataFieldsMappingMiss source 未匹配到任何点时该字段被忽略。
+// TestMapDataFieldsMappingMiss ignores field when source does not match any point
 func TestMapDataFieldsMappingMiss(t *testing.T) {
 	m := AcquisitionMapping{
 		Measurement: "dev",
 		Fields:      []FieldPair{{Key: "x", Source: "not_exist"}},
 	}
 	data := `[{"name":"temperature","value":25.3}]`
-	// 配置了 fields 但无一匹配，fields 为空 -> 不映射，原样透传
+	// When fields configured but none match, fields empty -> do not map, pass through as-is
 	out, ok := m.MapData(data, nil)
 	assert.False(t, ok)
 	assert.Equal(t, data, out)
 }
 
-// TestMapDataFlatMap 扁平 map 输入，整个 map 作为 fields 生成 SeriesPoint。
+// TestMapDataFlatMap flat map input, entire map as fields generates SeriesPoint
 func TestMapDataFlatMap(t *testing.T) {
 	m := AcquisitionMapping{
 		Measurement: "sensor",
@@ -98,7 +98,7 @@ func TestMapDataFlatMap(t *testing.T) {
 	assert.True(t, points[0].Timestamp > 0)
 }
 
-// TestMapDataFlatMapArray 扁平 map 数组，逐行生成 SeriesPoint。
+// TestMapDataFlatMapArray flat map array, generates SeriesPoint per row
 func TestMapDataFlatMapArray(t *testing.T) {
 	m := AcquisitionMapping{Measurement: "agg"}
 	data := `[{"avg_temp":25.3,"max_humi":80},{"avg_temp":26.1,"max_humi":75}]`
@@ -114,7 +114,7 @@ func TestMapDataFlatMapArray(t *testing.T) {
 	assert.Equal(t, "agg", points[1].Measurement)
 }
 
-// TestMapDataSeriesPointPassthrough 已经是 SeriesPoint 形状时不二次映射。
+// TestMapDataSeriesPointPassthrough does not double-map when already SeriesPoint shape
 func TestMapDataSeriesPointPassthrough(t *testing.T) {
 	m := AcquisitionMapping{Measurement: "dev"}
 	data := `[{"measurement":"dev","tags":{"d":"1"},"fields":{"temp":25},"timestamp":123}]`
@@ -123,7 +123,7 @@ func TestMapDataSeriesPointPassthrough(t *testing.T) {
 	assert.Equal(t, data, out)
 }
 
-// TestMapDataNotEnabled 未配置 measurement 时直接透传。
+// TestMapDataNotEnabled passes through directly when measurement not configured
 func TestMapDataNotEnabled(t *testing.T) {
 	m := AcquisitionMapping{}
 	data := `{"temperature":25}`
@@ -132,7 +132,7 @@ func TestMapDataNotEnabled(t *testing.T) {
 	assert.Equal(t, data, out)
 }
 
-// TestMapDataFlatMapWithFields 扁平 map + Fields 配置：按 key->source 筛选/重命名。
+// TestMapDataFlatMapWithFields flat map + Fields configuration: filters/renames by key->source
 func TestMapDataFlatMapWithFields(t *testing.T) {
 	m := AcquisitionMapping{
 		Measurement: "sensor",
@@ -141,7 +141,7 @@ func TestMapDataFlatMapWithFields(t *testing.T) {
 			{Key: "humidity", Source: "humidity"},
 		},
 	}
-	// deviceId 不在 Fields 配置中，应被过滤掉
+	// deviceId not in Fields configuration, should be filtered out
 	data := `{"deviceId":"dev-07","temperature":25.6,"humidity":60.5}`
 	out, ok := m.MapData(data, nil)
 	assert.True(t, ok)

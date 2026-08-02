@@ -25,9 +25,9 @@ import (
 	"github.com/danomagnum/gologix"
 )
 
-// TestEipOpLockSerializes 验证同一 client 指针的并发操作被串行化（并发度永不超过 1）。
-// 这是同链 ref:// 共享连接安全的基石：gologix 单连接非并发安全，必须串行收发。
-// 配合 `go test -race` 可进一步捕获未加锁路径的数据竞争。
+// TestEipOpLockSerializes verifies concurrent ops on same client pointer are serialized (concurrency never exceeds 1).
+// This is the cornerstone of same-chain ref:// shared connection safety: gologix single connection is not concurrency-safe,
+// must serialize send/receive. Use with `go test -race` to further catch data races on unlocked paths.
 func TestEipOpLockSerializes(t *testing.T) {
 	ptr := &gologix.Client{}
 	var cur int32
@@ -39,7 +39,7 @@ func TestEipOpLockSerializes(t *testing.T) {
 			mu := eipOpLocks.Lock(ptr)
 			mu.Lock()
 			if atomic.AddInt32(&cur, 1) > 1 {
-				t.Errorf("共享 client 并发度 > 1（锁未生效）")
+				t.Errorf("shared client concurrency > 1 (lock not effective)")
 			}
 			time.Sleep(time.Millisecond)
 			atomic.AddInt32(&cur, -1)
@@ -49,17 +49,17 @@ func TestEipOpLockSerializes(t *testing.T) {
 	wg.Wait()
 }
 
-// TestEipOpLockDelete 验证重连后 Delete 清理旧连接的锁条目（无累积泄漏），
-// 且不同 client 指针映射到独立锁（不同连接可并行）。
+// TestEipOpLockDelete verifies Delete cleans up old connection lock entries after reconnect (no cumulative leak),
+// and different client pointers map to independent locks (different connections can run in parallel).
 func TestEipOpLockDelete(t *testing.T) {
 	ptr := &gologix.Client{}
 	mu1 := eipOpLocks.Lock(ptr)
 	eipOpLocks.Delete(ptr)
 	mu2 := eipOpLocks.Lock(ptr)
 	if mu1 == mu2 {
-		t.Fatal("Delete 后应创建新锁，却返回同一 mutex（清理未生效）")
+		t.Fatal("Delete should create new lock, returned same mutex (cleanup not effective)")
 	}
 	if eipOpLocks.Lock(&gologix.Client{}) == mu2 {
-		t.Fatal("不同 client 指针应映射到不同 mutex")
+		t.Fatal("different client pointers should map to different mutex")
 	}
 }

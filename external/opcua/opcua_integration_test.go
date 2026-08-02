@@ -34,7 +34,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// 测试配置常量
+// Test configuration constants
 const (
 	defaultOpcuaEndpoint = "opc.tcp://localhost:53530"
 	testUsername         = ""
@@ -42,12 +42,12 @@ const (
 	testTimeout          = 30 * time.Second
 )
 
-// 测试用例跳过检查
+// Test case skip check
 func shouldSkipOpcuaTests() bool {
 	return os.Getenv("SKIP_OPCUA_TESTS") == "true"
 }
 
-// 获取 OPC UA 服务器地址
+// Get OPC UA server address
 func getOpcuaEndpoint() string {
 	if endpoint := os.Getenv("OPCUA_ENDPOINT"); endpoint != "" {
 		return endpoint
@@ -55,7 +55,7 @@ func getOpcuaEndpoint() string {
 	return defaultOpcuaEndpoint
 }
 
-// 创建基础配置
+// Create base configuration
 func createBasicOpcuaConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"Server":   getOpcuaEndpoint(),
@@ -69,19 +69,19 @@ func createBasicOpcuaConfig() map[string]interface{} {
 	}
 }
 
-// 启动使用 DSL 配置的规则引擎
+// Start rule engine with DSL configuration
 func startOpcuaDSLServer(t *testing.T, chainId string, dslConfig string) types.RuleEngine {
 	config := rulego.NewConfig(
 		types.WithDefaultPool(),
 		types.WithOnDebug(func(chainId, flowType string, nodeId string, msg types.RuleMsg, relationType string, err error) {
-			// 只在错误时输出调试信息
+			// Only output debug info on error
 			if err != nil {
 				t.Logf("[OPC UA DEBUG] Chain: %s, Node: %s, Relation: %s, Error: %v", chainId, nodeId, relationType, err)
 			}
 		}),
 	)
 
-	// 注册 OPC UA 组件
+	// Register OPC UA components
 	engine.Registry.Register(&ReadNode{})
 	engine.Registry.Register(&WriteNode{})
 
@@ -91,9 +91,9 @@ func startOpcuaDSLServer(t *testing.T, chainId string, dslConfig string) types.R
 	return ruleEngine
 }
 
-// 创建 OPC UA 读取节点的 DSL 配置
+// Create DSL configuration for OPC UA read node
 func createOpcuaReadDSL(nodeIds []string) string {
-	// 构建节点ID数组的JSON字符串
+	// Build JSON string for node ID array
 	nodeIdArray := `["` + strings.Join(nodeIds, `","`) + `"]`
 
 	return fmt.Sprintf(`{
@@ -108,7 +108,7 @@ func createOpcuaReadDSL(nodeIds []string) string {
 				{
 					"id": "opcua_read_node",
 					"type": "x/opcuaRead",
-					"name": "OPC UA 读取节点",
+					"name": "OPC UA Read Node",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -125,7 +125,7 @@ func createOpcuaReadDSL(nodeIds []string) string {
 				{
 					"id": "process_result",
 					"type": "jsTransform",
-					"name": "处理读取结果",
+					"name": "Process Read Result",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['readSuccess'] = 'true'; metadata['readTime'] = new Date().toISOString(); metadata['nodeCount'] = Object.keys(msg).length; return {'msg':msg,'metadata':metadata,'msgType':'OPCUA_READ_RESULT'};"
@@ -143,7 +143,7 @@ func createOpcuaReadDSL(nodeIds []string) string {
 	}`, getOpcuaEndpoint(), testUsername, testPassword, int(testTimeout.Seconds()), nodeIdArray)
 }
 
-// 创建 OPC UA 写入节点的 DSL 配置
+// Create DSL configuration for OPC UA write node
 func createOpcuaWriteDSL() string {
 	return fmt.Sprintf(`{
 		"ruleChain": {
@@ -157,7 +157,7 @@ func createOpcuaWriteDSL() string {
 				{
 					"id": "prepare_write_data",
 					"type": "jsTransform",
-					"name": "准备写入数据",
+					"name": "Prepare Write Data",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "var writeData = {'ns=3;i=1001': 42, 'ns=3;i=1002': 'Hello OPC UA'}; metadata['writeNodes'] = Object.keys(writeData).join(','); return {'msg': writeData, 'metadata': metadata, 'msgType': 'WRITE_DATA'};"
@@ -166,7 +166,7 @@ func createOpcuaWriteDSL() string {
 				{
 					"id": "opcua_write_node",
 					"type": "x/opcuaWrite",
-					"name": "OPC UA 写入节点",
+					"name": "OPC UA Write Node",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -182,7 +182,7 @@ func createOpcuaWriteDSL() string {
 				{
 					"id": "write_success",
 					"type": "jsTransform",
-					"name": "写入成功处理",
+					"name": "Write Success Handler",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['writeResult'] = 'success'; metadata['writeTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'WRITE_SUCCESS'};"
@@ -191,7 +191,7 @@ func createOpcuaWriteDSL() string {
 				{
 					"id": "write_failure", 
 					"type": "jsTransform",
-					"name": "写入失败处理",
+					"name": "Write Failure Handler",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['writeResult'] = 'failure'; metadata['errorTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'WRITE_FAILURE'};"
@@ -219,7 +219,7 @@ func createOpcuaWriteDSL() string {
 	}`, getOpcuaEndpoint(), testUsername, testPassword, int(testTimeout.Seconds()))
 }
 
-// 创建读写组合操作的 DSL 配置
+// Create DSL configuration for read-write combined operations
 func createOpcuaReadWriteCombinationDSL() string {
 	return fmt.Sprintf(`{
 		"ruleChain": {
@@ -233,7 +233,7 @@ func createOpcuaReadWriteCombinationDSL() string {
 				{
 					"id": "trigger_read",
 					"type": "x/opcuaRead",
-					"name": "触发读取",
+					"name": "Trigger Read",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -250,7 +250,7 @@ func createOpcuaReadWriteCombinationDSL() string {
 				{
 					"id": "process_read_data",
 					"type": "jsTransform",
-					"name": "处理读取数据",
+					"name": "Process Read Data",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "var writeData = {}; for(var key in msg) { writeData['ns=3;i=100' + key.split('i=')[1]] = msg[key]; } metadata['processedKeys'] = Object.keys(writeData).join(','); return {'msg': writeData, 'metadata': metadata, 'msgType': 'PROCESSED_DATA'};"
@@ -259,7 +259,7 @@ func createOpcuaReadWriteCombinationDSL() string {
 				{
 					"id": "write_processed_data",
 					"type": "x/opcuaWrite",
-					"name": "写入处理后数据",
+					"name": "Write Processed Data",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -275,7 +275,7 @@ func createOpcuaReadWriteCombinationDSL() string {
 				{
 					"id": "combination_success",
 					"type": "jsTransform",
-					"name": "组合操作成功",
+					"name": "Composite Operation Success",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['combinationResult'] = 'success'; metadata['completedTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'COMBINATION_SUCCESS'};"
@@ -284,7 +284,7 @@ func createOpcuaReadWriteCombinationDSL() string {
 				{
 					"id": "combination_failure",
 					"type": "jsTransform",
-					"name": "组合操作失败",
+					"name": "Composite Operation Failure",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['combinationResult'] = 'failure'; metadata['failedTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'COMBINATION_FAILURE'};"
@@ -323,7 +323,7 @@ func createOpcuaReadWriteCombinationDSL() string {
 		getOpcuaEndpoint(), testUsername, testPassword, int(testTimeout.Seconds()))
 }
 
-// 创建错误处理测试的 DSL 配置
+// Create DSL configuration for error handling test
 func createOpcuaErrorHandlingDSL() string {
 	return fmt.Sprintf(`{
 		"ruleChain": {
@@ -337,7 +337,7 @@ func createOpcuaErrorHandlingDSL() string {
 				{
 					"id": "invalid_read_node",
 					"type": "x/opcuaRead",
-					"name": "无效读取节点",
+					"name": "Invalid Read Node",
 					"debugMode": true,
 					"configuration": {
 						"Server": "opc.tcp://invalid-server:9999",
@@ -354,7 +354,7 @@ func createOpcuaErrorHandlingDSL() string {
 				{
 					"id": "error_handler",
 					"type": "jsTransform",
-					"name": "错误处理器",
+					"name": "Error Handler",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['errorHandled'] = 'true'; metadata['errorTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'ERROR_HANDLED'};"
@@ -372,7 +372,7 @@ func createOpcuaErrorHandlingDSL() string {
 	}`, testUsername, testPassword)
 }
 
-// TestOpcuaIntegrationDSL 使用DSL配置的OPC UA集成测试
+// TestOpcuaIntegrationDSL tests OPC UA integration using DSL configuration
 func TestOpcuaIntegrationDSL(t *testing.T) {
 	if shouldSkipOpcuaTests() {
 		t.Skip("Skipping OPC UA tests due to SKIP_OPCUA_TESTS=true")
@@ -395,28 +395,28 @@ func TestOpcuaIntegrationDSL(t *testing.T) {
 	})
 }
 
-// testOpcuaReadMultipleNodesDSL 测试使用DSL配置读取多个OPC UA节点
+// testOpcuaReadMultipleNodesDSL tests reading multiple OPC UA nodes using DSL configuration
 func testOpcuaReadMultipleNodesDSL(t *testing.T) {
 	var wg sync.WaitGroup
 	var readSuccess int32
 
-	// 定义要读取的测试节点
+	// Define test nodes to read
 	testNodeIds := []string{
 		"ns=2;i=2",
 		"ns=2;i=3",
 		"ns=2;i=4",
 	}
 
-	// 创建DSL配置
+	// Create DSL configuration
 	dslConfig := createOpcuaReadDSL(testNodeIds)
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaReadTest", dslConfig)
 	defer ruleEngine.Stop(context.Background())
 
 	wg.Add(1)
 
-	// 创建测试消息并触发读取
+	// Create test message and trigger read
 	metaData := types.NewMetadata()
 	metaData.PutValue("testCase", "read_multiple_nodes")
 	metaData.PutValue("nodeCount", fmt.Sprintf("%d", len(testNodeIds)))
@@ -429,51 +429,51 @@ func testOpcuaReadMultipleNodesDSL(t *testing.T) {
 		if relationType == types.Success && err == nil {
 			atomic.AddInt32(&readSuccess, 1)
 
-			// 验证读取结果
+			// Verify read results
 			assert.Equal(t, "OPCUA_READ_RESULT", msg.Type)
 			assert.Equal(t, "true", msg.Metadata.GetValue("readSuccess"))
 
 			readTime := msg.Metadata.GetValue("readTime")
 			assert.True(t, readTime != "", "Should have read timestamp")
 
-			// 验证读取的节点数量
+			// Verify number of nodes read
 			nodeCount, _ := strconv.Atoi(msg.Metadata.GetValue("nodeCount"))
 			assert.True(t, nodeCount > 0, "Should read at least one node")
 
-			// 日志成功信息
+			// Log success info
 			t.Logf("Successfully read %d OPC UA nodes", nodeCount)
 		} else {
-			// 记录读取失败（这是预期的，如果没有OPC UA服务器或安全策略不兼容）
+			// Record read failure (expected if no OPC UA server or incompatible security policy)
 			t.Logf("Read operation failed (expected in test environment): %v", err)
 		}
 	})
 
-	// 获取读取节点并执行
+	// Get read node and execute
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "opcua_read_node"}); ok {
 		nodeCtx.OnMsg(ctx, msg)
 	}
 
 	wg.Wait()
 
-	// 验证至少有一次成功读取
+	// Verify at least one successful read
 	assert.True(t, atomic.LoadInt32(&readSuccess) >= 0, "OPC UA read should work or gracefully fail")
 }
 
-// testOpcuaWriteMultipleValuesDSL 测试使用DSL配置写入多个OPC UA值
+// testOpcuaWriteMultipleValuesDSL tests writing multiple OPC UA values using DSL configuration
 func testOpcuaWriteMultipleValuesDSL(t *testing.T) {
 	var wg sync.WaitGroup
 	var writeCompleted int32
 
-	// 创建DSL配置
+	// Create DSL configuration
 	dslConfig := createOpcuaWriteDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaWriteTest", dslConfig)
 	defer ruleEngine.Stop(context.Background())
 
 	wg.Add(1)
 
-	// 创建测试消息并触发写入
+	// Create test message and trigger write
 	metaData := types.NewMetadata()
 	metaData.PutValue("testCase", "write_multiple_values")
 
@@ -486,40 +486,40 @@ func testOpcuaWriteMultipleValuesDSL(t *testing.T) {
 		writeResult := msg.Metadata.GetValue("writeResult")
 		if writeResult == "success" {
 			assert.Equal(t, "WRITE_SUCCESS", msg.Type)
-			// 静默处理成功情况，避免 goroutine 泄漏
+					// Silently handle success to avoid goroutine leak
 		} else if writeResult == "failure" {
 			assert.Equal(t, "WRITE_FAILURE", msg.Type)
-			// 静默处理失败情况，避免 goroutine 泄漏
+			// Silently handle failure to avoid goroutine leak
 		}
 
-		// 验证有时间戳（在操作成功或失败时都应该有）
+		// Verify timestamp exists (should be present on both success and failure)
 		timeField := msg.Metadata.GetValue("writeTime")
 		if timeField == "" {
 			timeField = msg.Metadata.GetValue("errorTime")
 		}
-		// 只有在操作完成时才检查时间戳
+		// Only check timestamp when operation completes
 		if writeResult == "success" || writeResult == "failure" {
 			assert.True(t, timeField != "", "Should have timestamp when operation completes")
 		}
 	})
 
-	// 获取准备数据节点并执行
+	// Get prepareData node and execute
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "prepare_write_data"}); ok {
 		nodeCtx.OnMsg(ctx, msg)
 	}
 
 	wg.Wait()
 
-	// 验证写入操作完成
+	// Verify write operation completes
 	assert.Equal(t, int32(1), atomic.LoadInt32(&writeCompleted))
 }
 
-// testOpcuaReadWriteCombinationDSL 测试读写组合操作
+// testOpcuaReadWriteCombinationDSL tests read-write combined operations
 func testOpcuaReadWriteCombinationDSL(t *testing.T) {
-	// 创建读写组合的DSL配置
+	// Create DSL configuration for read-write combination
 	combinationDSL := createOpcuaReadWriteCombinationDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaReadWriteTest", combinationDSL)
 	defer ruleEngine.Stop(context.Background())
 
@@ -528,7 +528,7 @@ func testOpcuaReadWriteCombinationDSL(t *testing.T) {
 
 	wg.Add(1)
 
-	// 创建测试消息
+	// Create test message
 	metaData := types.NewMetadata()
 	metaData.PutValue("testCase", "read_write_combination")
 
@@ -538,33 +538,33 @@ func testOpcuaReadWriteCombinationDSL(t *testing.T) {
 		defer wg.Done()
 		atomic.AddInt32(&operationCompleted, 1)
 
-		// 验证组合操作结果
+		// Verify combined operation results
 		combinationResult := msg.Metadata.GetValue("combinationResult")
 		if combinationResult != "" {
 			t.Logf("Read-Write combination completed with result: %s", combinationResult)
 		} else {
-			// 在测试环境中，如果OPC UA服务器不可用，可能没有结果
+			// In test environment, may have no results if OPC UA server unavailable
 			t.Logf("Read-Write combination completed without result (expected in test environment)")
 		}
 	})
 
-	// 执行组合操作
+	// Execute combined operation
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "trigger_read"}); ok {
 		nodeCtx.OnMsg(ctx, msg)
 	}
 
 	wg.Wait()
 
-	// 验证操作完成
+	// Verify operation completes
 	assert.Equal(t, int32(1), atomic.LoadInt32(&operationCompleted))
 }
 
-// testOpcuaErrorHandlingDSL 测试错误处理
+// testOpcuaErrorHandlingDSL tests error handling
 func testOpcuaErrorHandlingDSL(t *testing.T) {
-	// 创建错误处理测试的DSL配置
+	// Create DSL configuration for error handling test
 	errorDSL := createOpcuaErrorHandlingDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaErrorTest", errorDSL)
 	defer ruleEngine.Stop(context.Background())
 
@@ -573,7 +573,7 @@ func testOpcuaErrorHandlingDSL(t *testing.T) {
 
 	wg.Add(1)
 
-	// 创建会导致错误的测试消息
+	// Create test message that will cause error
 	metaData := types.NewMetadata()
 	metaData.PutValue("testCase", "error_handling")
 
@@ -583,7 +583,7 @@ func testOpcuaErrorHandlingDSL(t *testing.T) {
 		defer wg.Done()
 		atomic.AddInt32(&errorHandled, 1)
 
-		// 验证错误处理
+		// Verify error handling
 		errorResult := msg.Metadata.GetValue("errorHandled")
 		if errorResult == "true" {
 			assert.Equal(t, "ERROR_HANDLED", msg.Type)
@@ -591,18 +591,18 @@ func testOpcuaErrorHandlingDSL(t *testing.T) {
 		}
 	})
 
-	// 执行错误测试
+	// Execute error test
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "invalid_read_node"}); ok {
 		nodeCtx.OnMsg(ctx, msg)
 	}
 
 	wg.Wait()
 
-	// 验证错误被正确处理
+	// Verify error is handled correctly
 	assert.Equal(t, int32(1), atomic.LoadInt32(&errorHandled))
 }
 
-// TestOpcuaHotReloadDSL 测试 OPC UA 组件的热更新功能
+// TestOpcuaHotReloadDSL tests hot reload functionality of OPC UA components
 func TestOpcuaHotReloadDSL(t *testing.T) {
 	if shouldSkipOpcuaTests() {
 		t.Skip("Skipping OPC UA tests due to SKIP_OPCUA_TESTS=true")
@@ -621,21 +621,21 @@ func TestOpcuaHotReloadDSL(t *testing.T) {
 	})
 }
 
-// testOpcuaHotReloadConfiguration 测试配置热更新
+// testOpcuaHotReloadConfiguration tests configuration hot reload
 func testOpcuaHotReloadConfiguration(t *testing.T) {
 	var messagesReceived int32
 	var responseMutex sync.Mutex
 	var lastResponse string
 
-	// 第一阶段：创建初始的OPC UA DSL配置
+	// Phase 1: Create initial OPC UA DSL configuration
 	initialNodeIds := []string{"ns=2;i=2", "ns=2;i=3"}
 	initialDSL := createOpcuaReadDSL(initialNodeIds)
 
-	// 启动DSL配置的服务器
+	// Start DSL server with configuration
 	ruleEngine := startOpcuaDSLServer(t, "opcuaHotReloadTest", initialDSL)
 	defer ruleEngine.Stop(context.Background())
 
-	time.Sleep(time.Millisecond * 200) // 等待服务器启动
+	time.Sleep(time.Millisecond * 200) // Wait for server startup
 
 	ctx := test.NewRuleContext(rulego.NewConfig(), func(msg types.RuleMsg, relationType string, err error) {
 		responseMutex.Lock()
@@ -647,7 +647,7 @@ func testOpcuaHotReloadConfiguration(t *testing.T) {
 		}
 	})
 
-	// 第一阶段测试：验证初始行为
+	// Phase 1 test: Verify initial behavior
 	t.Log("=== Phase 1: Testing initial OPC UA configuration ===")
 
 	metaData1 := types.NewMetadata()
@@ -664,22 +664,22 @@ func testOpcuaHotReloadConfiguration(t *testing.T) {
 	initialCount := atomic.LoadInt32(&messagesReceived)
 	responseMutex.Unlock()
 
-	// 验证初始响应
+	// Verify initial response
 	t.Logf("Initial response: %q, count: %d", initialResponse, initialCount)
 
-	// 第二阶段：热更新DSL配置
+	// Phase 2: Hot reload DSL configuration
 	t.Log("=== Phase 2: Hot reloading OPC UA configuration ===")
 
 	updatedNodeIds := []string{"ns=2;i=4", "ns=2;i=5", "ns=2;i=6"}
 	updatedDSL := createOpcuaReadDSL(updatedNodeIds)
 
-	// 执行热更新
+	// Execute hot reload
 	err := ruleEngine.ReloadSelf([]byte(updatedDSL))
 	assert.Nil(t, err, "Hot reload should succeed")
 
-	time.Sleep(time.Millisecond * 200) // 等待配置生效
+	time.Sleep(time.Millisecond * 200) // Wait for configuration to take effect
 
-	// 第三阶段：验证更新后的行为
+	// Phase 3: Verify updated behavior
 	t.Log("=== Phase 3: Testing updated OPC UA configuration ===")
 
 	metaData2 := types.NewMetadata()
@@ -696,22 +696,22 @@ func testOpcuaHotReloadConfiguration(t *testing.T) {
 	finalCount := atomic.LoadInt32(&messagesReceived)
 	responseMutex.Unlock()
 
-	// 验证热更新成功
+	// Verify hot reload success
 	t.Logf("Updated response: %q, final count: %d", updatedResponse, finalCount)
 
-	// 验证热更新功能：服务器没有重启但配置已更新
+	// Verify hot reload: server not restarted but configuration updated
 	assert.True(t, finalCount >= initialCount, "Hot reload should allow continued operation")
 
 	t.Log("=== Hot reload OPC UA test completed successfully ===")
 }
 
-// testOpcuaHotReloadNodeList 测试节点列表热更新
+// testOpcuaHotReloadNodeList tests node list hot reload
 func testOpcuaHotReloadNodeList(t *testing.T) {
-	// 测试单个节点的配置热更新
+	// Test single node configuration hot reload
 	updatedNodeDSL := `{
 		"id": "opcua_read_node",
 		"type": "x/opcuaRead",
-		"name": "OPC UA 读取节点 - 更新",
+		"name": "OPC UA Read Node - Updated",
 		"debugMode": true,
 		"configuration": {
 			"Server": "` + getOpcuaEndpoint() + `",
@@ -726,24 +726,24 @@ func testOpcuaHotReloadNodeList(t *testing.T) {
 		}
 	}`
 
-	// 创建包含单个节点的完整规则链
+	// Create complete rule chain with single node
 	fullDSL := createOpcuaReadDSL([]string{"ns=2;i=2"})
 	ruleEngine := startOpcuaDSLServer(t, "opcuaNodeListTest", fullDSL)
 	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
-	// 热更新单个节点配置
+	// Hot reload single node configuration
 	err := ruleEngine.ReloadChild("opcua_read_node", []byte(updatedNodeDSL))
 	assert.Nil(t, err, "Node hot reload should succeed")
 
-	// 验证节点配置已更新
+	// Verify node configuration updated
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "opcua_read_node"}); ok {
 		ruleNodeCtx, ok := nodeCtx.(*engine.RuleNodeCtx)
 		assert.True(t, ok)
-		assert.Equal(t, "OPC UA 读取节点 - 更新", ruleNodeCtx.SelfDefinition.Name)
+		assert.Equal(t, "OPC UA Read Node - Updated", ruleNodeCtx.SelfDefinition.Name)
 
-		// 验证配置中的PoolSize已更新
+		// Verify PoolSize in configuration updated
 		poolSizeInterface := ruleNodeCtx.SelfDefinition.Configuration["PoolSize"]
 		if poolSize, ok := poolSizeInterface.(int); ok {
 			assert.Equal(t, 10, poolSize, "PoolSize should be updated to 10")
@@ -755,9 +755,9 @@ func testOpcuaHotReloadNodeList(t *testing.T) {
 	t.Log("Node list hot reload test completed successfully")
 }
 
-// testOpcuaHotReloadServerSettings 测试服务器设置热更新
+// testOpcuaHotReloadServerSettings tests server settings hot reload
 func testOpcuaHotReloadServerSettings(t *testing.T) {
-	// 创建不同服务器设置的DSL配置
+	// Create DSL configuration with different server settings
 	createServerSettingsDSL := func(timeout int, poolSize int) string {
 		return fmt.Sprintf(`{
 			"ruleChain": {
@@ -771,7 +771,7 @@ func testOpcuaHotReloadServerSettings(t *testing.T) {
 					{
 						"id": "opcua_read_node",
 						"type": "x/opcuaRead",
-						"name": "OPC UA 读取节点",
+						"name": "OPC UA Read Node",
 						"debugMode": true,
 						"configuration": {
 							"Server": "%s",
@@ -790,26 +790,26 @@ func testOpcuaHotReloadServerSettings(t *testing.T) {
 		}`, getOpcuaEndpoint(), testUsername, testPassword, timeout, poolSize)
 	}
 
-	// 启动初始配置
+	// Start with initial configuration
 	initialDSL := createServerSettingsDSL(30, 5)
 	ruleEngine := startOpcuaDSLServer(t, "opcuaServerSettingsTest", initialDSL)
 	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
-	// 热更新为不同的服务器设置
+	// Hot reload to different server settings
 	updatedDSL := createServerSettingsDSL(60, 15)
 	err := ruleEngine.ReloadSelf([]byte(updatedDSL))
 	assert.Nil(t, err, "Server settings hot reload should succeed")
 
 	time.Sleep(time.Millisecond * 200)
 
-	// 验证服务器设置已更新
+	// Verify server settings updated
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "opcua_read_node"}); ok {
 		ruleNodeCtx, ok := nodeCtx.(*engine.RuleNodeCtx)
 		assert.True(t, ok)
 
-		// 验证Timeout已更新
+		// Verify Timeout updated
 		timeoutInterface := ruleNodeCtx.SelfDefinition.Configuration["Timeout"]
 		if timeout, ok := timeoutInterface.(int); ok {
 			assert.Equal(t, 60, timeout, "Timeout should be updated to 60")
@@ -817,7 +817,7 @@ func testOpcuaHotReloadServerSettings(t *testing.T) {
 			assert.Equal(t, float64(60), timeout, "Timeout should be updated to 60")
 		}
 
-		// 验证PoolSize已更新
+		// Verify PoolSize updated
 		poolSizeInterface := ruleNodeCtx.SelfDefinition.Configuration["PoolSize"]
 		if poolSize, ok := poolSizeInterface.(int); ok {
 			assert.Equal(t, 15, poolSize, "PoolSize should be updated to 15")
@@ -829,7 +829,7 @@ func testOpcuaHotReloadServerSettings(t *testing.T) {
 	t.Log("Server settings hot reload test completed successfully")
 }
 
-// TestOpcuaConcurrentSafetyDSL 测试 OPC UA 组件的并发安全性
+// TestOpcuaConcurrentSafetyDSL tests concurrent safety of OPC UA components
 func TestOpcuaConcurrentSafetyDSL(t *testing.T) {
 	if shouldSkipOpcuaTests() {
 		t.Skip("Skipping OPC UA tests due to SKIP_OPCUA_TESTS=true")
@@ -848,19 +848,19 @@ func TestOpcuaConcurrentSafetyDSL(t *testing.T) {
 	})
 }
 
-// testOpcuaConcurrentReadOperations 测试并发读取操作
+// testOpcuaConcurrentReadOperations tests concurrent read operations
 func testOpcuaConcurrentReadOperations(t *testing.T) {
-	// 创建DSL配置
+	// Create DSL configuration
 	testNodeIds := []string{"ns=2;i=2", "ns=2;i=3", "ns=2;i=4", "ns=2;i=5"}
 	dslConfig := createOpcuaReadDSL(testNodeIds)
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaConcurrentReadTest", dslConfig)
 	defer ruleEngine.Stop(context.Background())
 
 	time.Sleep(time.Millisecond * 200)
 
-	// 并发测试设置
+	// Concurrent test setup
 	const concurrentCount = 20
 	var wg sync.WaitGroup
 	var successCount int32
@@ -886,17 +886,17 @@ func testOpcuaConcurrentReadOperations(t *testing.T) {
 			msg := types.NewMsg(0, "CONCURRENT_READ", types.JSON, metaData,
 				fmt.Sprintf("{\"index\":%d,\"action\":\"concurrent_read\"}", index))
 
-			// 执行读取操作
+			// Execute read operation
 			if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "opcua_read_node"}); ok {
 				nodeCtx.OnMsg(ctx, msg)
 			}
 
-			time.Sleep(time.Millisecond * 100) // 模拟操作时间
+			time.Sleep(time.Millisecond * 100) // Simulate operation time
 		}(i)
 	}
 
 	wg.Wait()
-	time.Sleep(time.Millisecond * 300) // 等待所有回调完成
+	time.Sleep(time.Millisecond * 300) // Wait for all callbacks to complete
 
 	finalSuccessCount := atomic.LoadInt32(&successCount)
 	finalTotalAttempts := atomic.LoadInt32(&totalAttempts)
@@ -904,17 +904,17 @@ func testOpcuaConcurrentReadOperations(t *testing.T) {
 	t.Logf("Concurrent read test results: %d successes out of %d attempts",
 		finalSuccessCount, finalTotalAttempts)
 
-	// 验证至少有一些操作完成（考虑到可能的网络问题）
+	// Verify at least some operations complete (accounting for possible network issues)
 	assert.True(t, finalTotalAttempts > 0, "Should have attempted at least some operations")
 	assert.True(t, finalSuccessCount >= 0, "Concurrent reads should work or gracefully fail")
 }
 
-// testOpcuaConcurrentWriteOperations 测试并发写入操作
+// testOpcuaConcurrentWriteOperations tests concurrent write operations
 func testOpcuaConcurrentWriteOperations(t *testing.T) {
-	// 创建DSL配置
+	// Create DSL configuration
 	dslConfig := createOpcuaWriteDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaConcurrentWriteTest", dslConfig)
 	defer ruleEngine.Stop(context.Background())
 
@@ -941,32 +941,32 @@ func testOpcuaConcurrentWriteOperations(t *testing.T) {
 			msg := types.NewMsg(0, "CONCURRENT_WRITE", types.JSON, metaData,
 				fmt.Sprintf("{\"index\":%d,\"value\":%d}", index, index*10))
 
-			// 执行写入操作
+			// Execute write operation
 			if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "prepare_write_data"}); ok {
 				nodeCtx.OnMsg(ctx, msg)
 			}
 
-			time.Sleep(time.Millisecond * 150) // 模拟操作时间
+			time.Sleep(time.Millisecond * 150) // Simulate operation time
 		}(i)
 	}
 
 	wg.Wait()
-	time.Sleep(time.Millisecond * 500) // 等待所有回调完成
+	time.Sleep(time.Millisecond * 500) // Wait for all callbacks to complete
 
 	finalCompletedCount := atomic.LoadInt32(&completedCount)
 
 	t.Logf("Concurrent write test results: %d operations completed", finalCompletedCount)
 
-	// 验证操作完成
+	// Verify operation completes
 	assert.True(t, finalCompletedCount > 0, "Should complete at least some write operations")
 }
 
-// testOpcuaConcurrentMixedOperations 测试并发混合操作
+// testOpcuaConcurrentMixedOperations tests concurrent mixed operations
 func testOpcuaConcurrentMixedOperations(t *testing.T) {
-	// 创建混合操作的DSL配置
+	// Create DSL configuration for mixed operations
 	mixedDSL := createOpcuaReadWriteCombinationDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "opcuaMixedOperationsTest", mixedDSL)
 	defer ruleEngine.Stop(context.Background())
 
@@ -993,27 +993,27 @@ func testOpcuaConcurrentMixedOperations(t *testing.T) {
 			msg := types.NewMsg(0, "MIXED_OPERATION", types.JSON, metaData,
 				fmt.Sprintf("{\"operation\":\"mixed_%d\"}", index))
 
-			// 执行混合操作
+			// Execute mixed operation
 			if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "trigger_read"}); ok {
 				nodeCtx.OnMsg(ctx, msg)
 			}
 
-			time.Sleep(time.Millisecond * 200) // 模拟操作时间
+			time.Sleep(time.Millisecond * 200) // Simulate operation time
 		}(i)
 	}
 
 	wg.Wait()
-	time.Sleep(time.Millisecond * 800) // 等待所有回调完成
+	time.Sleep(time.Millisecond * 800) // Wait for all callbacks to complete
 
 	finalOperationsCompleted := atomic.LoadInt32(&operationsCompleted)
 
 	t.Logf("Mixed operations test results: %d operations completed", finalOperationsCompleted)
 
-	// 验证混合操作正常工作
+	// Verify mixed operations work correctly
 	assert.True(t, finalOperationsCompleted >= 0, "Mixed operations should work")
 }
 
-// TestOpcuaComplexScenarioDSL 测试复杂业务场景
+// TestOpcuaComplexScenarioDSL tests complex business scenarios
 func TestOpcuaComplexScenarioDSL(t *testing.T) {
 	if shouldSkipOpcuaTests() {
 		t.Skip("Skipping OPC UA tests due to SKIP_OPCUA_TESTS=true")
@@ -1028,12 +1028,12 @@ func TestOpcuaComplexScenarioDSL(t *testing.T) {
 	})
 }
 
-// testIndustrialMonitoringScenario 测试工业监控场景
+// testIndustrialMonitoringScenario tests industrial monitoring scenario
 func testIndustrialMonitoringScenario(t *testing.T) {
-	// 创建工业监控场景的DSL配置
+	// Create DSL configuration for industrial monitoring scenario
 	industrialDSL := createIndustrialMonitoringDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "industrialMonitoringTest", industrialDSL)
 	defer ruleEngine.Stop(context.Background())
 
@@ -1061,7 +1061,7 @@ func testIndustrialMonitoringScenario(t *testing.T) {
 		}
 	})
 
-	// 模拟监控触发
+	// Simulate monitoring trigger
 	metaData := types.NewMetadata()
 	metaData.PutValue("scenario", "industrial_monitoring")
 	metaData.PutValue("deviceId", "PLC_001")
@@ -1069,7 +1069,7 @@ func testIndustrialMonitoringScenario(t *testing.T) {
 	msg := types.NewMsg(0, "MONITORING_TRIGGER", types.JSON, metaData,
 		"{\"monitoring\":\"start\",\"interval\":1000}")
 
-	// 执行监控场景
+	// Execute monitoring scenario
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "read_sensors"}); ok {
 		nodeCtx.OnMsg(ctx, msg)
 	}
@@ -1079,16 +1079,16 @@ func testIndustrialMonitoringScenario(t *testing.T) {
 	t.Logf("Industrial monitoring results: %d alerts, %d data processed",
 		atomic.LoadInt32(&alertsGenerated), atomic.LoadInt32(&dataProcessed))
 
-	// 验证监控场景正常工作
+	// Verify monitoring scenario works correctly
 	assert.True(t, atomic.LoadInt32(&dataProcessed) >= 0, "Should process monitoring data")
 }
 
-// testDataCollectionPipeline 测试数据采集管道
+// testDataCollectionPipeline tests data collection pipeline
 func testDataCollectionPipeline(t *testing.T) {
-	// 创建数据采集管道的DSL配置
+	// Create DSL configuration for data collection pipeline
 	pipelineDSL := createDataCollectionPipelineDSL()
 
-	// 启动DSL服务器
+	// Start DSL server
 	ruleEngine := startOpcuaDSLServer(t, "dataCollectionTest", pipelineDSL)
 	defer ruleEngine.Stop(context.Background())
 
@@ -1110,7 +1110,7 @@ func testDataCollectionPipeline(t *testing.T) {
 		}
 	})
 
-	// 启动数据采集管道
+	// Start data collection pipeline
 	metaData := types.NewMetadata()
 	metaData.PutValue("scenario", "data_collection")
 	metaData.PutValue("batchSize", "10")
@@ -1118,7 +1118,7 @@ func testDataCollectionPipeline(t *testing.T) {
 	msg := types.NewMsg(0, "PIPELINE_START", types.JSON, metaData,
 		"{\"pipeline\":\"start\",\"targets\":[\"temperature\",\"pressure\",\"flow\"]}")
 
-	// 执行数据采集
+	// Execute data collection
 	if nodeCtx, ok := ruleEngine.RootRuleChainCtx().GetNodeById(types.RuleNodeId{Id: "collect_data"}); ok {
 		nodeCtx.OnMsg(ctx, msg)
 	}
@@ -1127,11 +1127,11 @@ func testDataCollectionPipeline(t *testing.T) {
 
 	t.Logf("Data collection pipeline completed: %d", atomic.LoadInt32(&pipelineCompleted))
 
-	// 验证数据采集管道正常工作
+	// Verify data collection pipeline works correctly
 	assert.True(t, atomic.LoadInt32(&pipelineCompleted) >= 0, "Should complete data collection pipeline")
 }
 
-// 创建工业监控场景的 DSL 配置
+// Create DSL configuration for industrial monitoring scenario
 func createIndustrialMonitoringDSL() string {
 	return fmt.Sprintf(`{
 		"ruleChain": {
@@ -1145,7 +1145,7 @@ func createIndustrialMonitoringDSL() string {
 				{
 					"id": "read_sensors",
 					"type": "x/opcuaRead",
-					"name": "读取传感器数据",
+					"name": "Read Sensor Data",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -1162,7 +1162,7 @@ func createIndustrialMonitoringDSL() string {
 				{
 					"id": "analyze_data",
 					"type": "jsTransform",
-					"name": "分析数据",
+					"name": "Analyze Data",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "var alertThreshold = 80; var alertGenerated = false; for(var key in msg) { if(typeof msg[key] === 'number' && msg[key] > alertThreshold) { alertGenerated = true; break; } } metadata['alertGenerated'] = alertGenerated.toString(); metadata['dataProcessed'] = 'true'; metadata['analysisTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'ANALYSIS_RESULT'};"
@@ -1180,7 +1180,7 @@ func createIndustrialMonitoringDSL() string {
 	}`, getOpcuaEndpoint(), testUsername, testPassword, int(testTimeout.Seconds()))
 }
 
-// 创建数据采集管道的 DSL 配置
+// Create DSL configuration for data collection pipeline
 func createDataCollectionPipelineDSL() string {
 	return fmt.Sprintf(`{
 		"ruleChain": {
@@ -1194,7 +1194,7 @@ func createDataCollectionPipelineDSL() string {
 				{
 					"id": "collect_data",
 					"type": "x/opcuaRead",
-					"name": "采集数据",
+					"name": "Collect Data",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -1211,7 +1211,7 @@ func createDataCollectionPipelineDSL() string {
 				{
 					"id": "transform_data",
 					"type": "jsTransform",
-					"name": "转换数据",
+					"name": "Transform Data",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "var transformedData = {}; for(var key in msg) { transformedData[key + '_processed'] = msg[key]; } metadata['transformedKeys'] = Object.keys(transformedData).length.toString(); return {'msg': transformedData, 'metadata': metadata, 'msgType': 'TRANSFORMED_DATA'};"
@@ -1220,7 +1220,7 @@ func createDataCollectionPipelineDSL() string {
 				{
 					"id": "store_data",
 					"type": "x/opcuaWrite",
-					"name": "存储数据",
+					"name": "Store Data",
 					"debugMode": true,
 					"configuration": {
 						"Server": "%s",
@@ -1236,7 +1236,7 @@ func createDataCollectionPipelineDSL() string {
 				{
 					"id": "pipeline_complete",
 					"type": "jsTransform",
-					"name": "管道完成",
+					"name": "Pipeline Complete",
 					"debugMode": true,
 					"configuration": {
 						"jsScript": "metadata['pipelineResult'] = 'completed'; metadata['completionTime'] = new Date().toISOString(); return {'msg':msg,'metadata':metadata,'msgType':'PIPELINE_COMPLETED'};"

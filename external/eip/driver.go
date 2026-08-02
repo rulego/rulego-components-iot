@@ -25,7 +25,7 @@ import (
 	"github.com/rulego/rulego/api/types"
 )
 
-// driver 适配 iot_points.Driver 到 EtherNet/IP client。
+// driver adapts iot_points.Driver to EtherNet/IP client.
 type driver struct {
 	client *gologix.Client
 	logger types.Logger
@@ -65,7 +65,7 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return eipclient.WritePoints(d.client, cp)
 }
 
-// toEipClientPoint 把统一 Point（Addr=tag 名）映射为 eipclient.Point。
+// toEipClientPoint maps unified Point (Addr=tag name) to eipclient.Point.
 func toEipClientPoint(p iot_points.Point) eipclient.Point {
 	return eipclient.Point{
 		Name:  p.Name,
@@ -75,7 +75,7 @@ func toEipClientPoint(p iot_points.Point) eipclient.Point {
 	}
 }
 
-// mapType 统一类型枚举 -> EIP 原生类型；未知类型透传。
+// mapType maps unified type enum to EIP native type; unknown types pass through.
 func mapType(t string) string {
 	switch strings.ToUpper(t) {
 	case iot_points.TypeBool:

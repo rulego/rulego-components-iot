@@ -25,7 +25,7 @@ import (
 	"strings"
 )
 
-// EscapeString 转义 SQL 字符串字面量。backslashEscape=true 时反斜杠翻倍且单引号转为 \'，否则单引号翻倍。
+// EscapeString escapes SQL string literal. When backslashEscape=true, doubles backslashes and converts single quotes to \', otherwise doubles single quotes.
 func EscapeString(s string, backslashEscape bool) string {
 	if backslashEscape {
 		s = strings.ReplaceAll(s, "\\", "\\\\")
@@ -34,13 +34,13 @@ func EscapeString(s string, backslashEscape bool) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
 
-// QuoteIdentifier 用指定引号字符包裹标识符并翻倍内部引号（TDengine 用反引号，PostgreSQL 用双引号）。
+// QuoteIdentifier wraps identifier with specified quote char and doubles internal quotes (TDengine uses backticks, PostgreSQL uses double quotes)
 func QuoteIdentifier(s string, quote byte) string {
 	q := string(quote)
 	return q + strings.ReplaceAll(s, q, q+q) + q
 }
 
-// ValidFieldValue 字段值是否可落盘（非 nil、非 NaN/±Inf）。
+// ValidFieldValue whether field value is writable (non-nil, non-NaN/±Inf)
 func ValidFieldValue(v interface{}) bool {
 	switch val := v.(type) {
 	case nil:
@@ -53,7 +53,7 @@ func ValidFieldValue(v interface{}) bool {
 	return true
 }
 
-// FormatValue 生成 SQL 值字面量：字符串按方言转义，浮点用固定小数表示法，nil 为 NULL，嵌套结构序列化为 JSON 字符串。
+// FormatValue generates SQL value literal: strings escaped by dialect, floats use fixed decimal notation, nil is NULL, nested structures serialized to JSON strings
 func FormatValue(v interface{}, backslashEscape bool) string {
 	switch val := v.(type) {
 	case nil:
@@ -95,7 +95,7 @@ func FormatValue(v interface{}, backslashEscape bool) string {
 	}
 }
 
-// ScanRows 扫描 database/sql 查询结果为 QueryResult（[]byte 列转为 string）。
+// ScanRows scans database/sql query result to QueryResult ([]byte columns converted to string)
 func ScanRows(rows *sql.Rows) (*QueryResult, error) {
 	result := &QueryResult{Rows: []map[string]interface{}{}}
 	cols, err := rows.Columns()

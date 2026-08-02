@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-// Package snmp 提供 SNMP Trap 接收端点：监听 UDP 162，接收设备主动推送的
-// Trap/Inform 告警，转成消息流入规则链处理。
+// Package snmp provides SNMP Trap receiver endpoint: listens on UDP 162, receives device-initiated
+// Trap/Inform alerts, converts to messages for rule chain processing.
 package snmp
 
 import (
@@ -43,7 +43,7 @@ import (
 const Type = types.EndpointTypePrefix + "snmp"
 const SNMPTrapMsgType = "SNMP_TRAP"
 
-// Trap 注入 msg.Metadata 的 key，下游用 ${metadata.xx} 取值
+// Trap keys injected into msg.Metadata, downstream uses ${metadata.xx} to access
 const (
 	MetadataKeyFrom      = "from"
 	MetadataKeyCommunity = "community"
@@ -51,17 +51,17 @@ const (
 	MetadataKeyTrapOID   = "trapOID"
 )
 
-// Endpoint 别名
+// Endpoint alias
 type Endpoint = SnmpTrapEndpoint
 
 var _ endpointApi.Endpoint = (*Endpoint)(nil)
 
-// 注册端点
+// Register endpoint
 func init() {
 	_ = endpoint.Registry.Register(&Endpoint{})
 }
 
-// RequestMessage 包装 Trap 数据
+// RequestMessage wraps Trap data
 type RequestMessage struct {
 	headers    textproto.MIMEHeader
 	body       []byte
@@ -93,7 +93,7 @@ func (r *RequestMessage) SetBody(b []byte)    { r.body = b }
 func (r *RequestMessage) SetError(err error)  { r.err = err }
 func (r *RequestMessage) GetError() error     { return r.err }
 
-// ResponseMessage 响应消息（Trap 接收端不使用，占位满足接口）
+// ResponseMessage response message (Trap receiver does not use, placeholder to satisfy interface)
 type ResponseMessage struct {
 	headers    textproto.MIMEHeader
 	body       []byte
@@ -124,36 +124,36 @@ func (r *ResponseMessage) SetBody(b []byte)    { r.body = b }
 func (r *ResponseMessage) SetError(err error)  { r.err = err }
 func (r *ResponseMessage) GetError() error     { return r.err }
 
-// SnmpTrapConfig Trap 端点配置
+// SnmpTrapConfig Trap endpoint configuration
 type SnmpTrapConfig struct {
-	// 监听地址，默认 0.0.0.0:162（162 是特权端口，Linux 需 root 或 setcap）
+	// Listen address, default 0.0.0.0:162 (162 is privileged port, needs root/setcap on Linux)
 	Server string `json:"server" label:"Server" desc:"listen address, e.g. 0.0.0.0:162 (port 162 needs root/setcap on linux)" required:"true" ref:"primary"`
-	// SNMP 版本（Trap 解码用），v1/v2c/v3，默认 v2c
+	// SNMP version (for Trap decoding), v1/v2c/v3, default v2c
 	Version string `json:"version" label:"Version" desc:"v1/v2c/v3, default v2c"`
-	// community（v1/v2c Trap 校验）
+	// community (for v1/v2c Trap validation)
 	Community string `json:"community" label:"Community" desc:"community string for v1/v2c"`
 }
 
-// SnmpTrapEndpoint SNMP Trap 接收端点
+// SnmpTrapEndpoint SNMP Trap receiver endpoint
 type SnmpTrapEndpoint struct {
 	impl.BaseEndpoint
-	// GracefulShutdown 优雅停机
+	// GracefulShutdown graceful shutdown
 	base.GracefulShutdown
 	RuleConfig types.Config
 	Config     SnmpTrapConfig
-	// 路由（单路由，Trap 无路径区分）
+	// Router (single router, Trap has no path distinction)
 	Router endpointApi.Router
-	// Trap 监听器
+	// Trap listener
 	listener   *gosnmp.TrapListener
 	trapCtx    context.Context
 	trapCancel context.CancelFunc
 	listenerWg sync.WaitGroup
 }
 
-// Type 组件类型
+// Type component type
 func (x *SnmpTrapEndpoint) Type() string { return Type }
 
-// New 创建组件实例
+// New creates component instance
 func (x *SnmpTrapEndpoint) New() types.Node {
 	return &SnmpTrapEndpoint{
 		Config: SnmpTrapConfig{
@@ -164,7 +164,7 @@ func (x *SnmpTrapEndpoint) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *SnmpTrapEndpoint) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
@@ -173,22 +173,22 @@ func (x *SnmpTrapEndpoint) Init(ruleConfig types.Config, configuration types.Con
 	return err
 }
 
-// Destroy 销毁
+// Destroy destroys
 func (x *SnmpTrapEndpoint) Destroy() {
 	x.GracefulShutdown.GracefulStop(func() {
 		x.Close()
 	})
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *SnmpTrapEndpoint) Desc() string {
 	return "SNMP Trap receiver endpoint. Listens on UDP 162 for device Trap/Inform alerts"
 }
 
-// Category 组件分类
+// Category component category
 func (x *SnmpTrapEndpoint) Category() string { return "endpoint" }
 
-// Def 组件定义
+// Def component definition
 func (x *SnmpTrapEndpoint) Def() types.ComponentForm {
 	return types.ComponentForm{
 		Desc: "SNMP Trap receiver endpoint. Listens on UDP 162 for device Trap/Inform alerts",
@@ -198,7 +198,7 @@ func (x *SnmpTrapEndpoint) Def() types.ComponentForm {
 	}
 }
 
-// Close 关闭监听
+// Close closes listener
 func (x *SnmpTrapEndpoint) Close() error {
 	if x.listener != nil {
 		x.listener.Close()
@@ -210,10 +210,10 @@ func (x *SnmpTrapEndpoint) Close() error {
 	return nil
 }
 
-// Id 返回端点 ID
+// Id returns endpoint ID
 func (x *SnmpTrapEndpoint) Id() string { return x.Config.Server }
 
-// AddRouter 添加路由（单路由，Trap 无路径区分）
+// AddRouter adds router (single router, Trap has no path distinction)
 func (x *SnmpTrapEndpoint) AddRouter(router endpointApi.Router, params ...interface{}) (string, error) {
 	if router == nil {
 		return "", errors.New("router cannot be nil")
@@ -229,13 +229,13 @@ func (x *SnmpTrapEndpoint) AddRouter(router endpointApi.Router, params ...interf
 	return router.GetId(), nil
 }
 
-// RemoveRouter 移除路由
+// RemoveRouter removes router
 func (x *SnmpTrapEndpoint) RemoveRouter(routerId string, params ...interface{}) error {
 	x.Router = nil
 	return nil
 }
 
-// Start 启动 Trap 监听
+// Start starts Trap listening
 func (x *SnmpTrapEndpoint) Start() error {
 	version, err := parseVersion(x.Config.Version)
 	if err != nil {
@@ -261,7 +261,7 @@ func (x *SnmpTrapEndpoint) Start() error {
 	return nil
 }
 
-// handleTrap 处理收到的 Trap：转成消息流入规则链
+// handleTrap handles received Trap: convert to message and flow into rule chain
 func (x *SnmpTrapEndpoint) handleTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
 	x.GracefulShutdown.IncrementActiveOperations()
 	defer x.GracefulShutdown.DecrementActiveOperations()
@@ -295,7 +295,7 @@ func (x *SnmpTrapEndpoint) handleTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAd
 	x.DoProcess(x.trapCtx, x.Router, exchange)
 }
 
-// snmpTrapOID 提取 Trap 的 snmpTrapOID（1.3.6.1.6.3.1.1.4.1.0）值
+// snmpTrapOID extracts Trap snmpTrapOID (1.3.6.1.6.3.1.1.4.1.0) value
 func snmpTrapOID(vars []gosnmp.SnmpPDU) string {
 	for _, v := range vars {
 		if strings.TrimPrefix(v.Name, ".") == "1.3.6.1.6.3.1.1.4.1.0" {
@@ -307,7 +307,7 @@ func snmpTrapOID(vars []gosnmp.SnmpPDU) string {
 	return ""
 }
 
-// trapVars PDU 列表 -> 简化 map
+// trapVars PDU list -> simplified map
 func trapVars(vars []gosnmp.SnmpPDU) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(vars))
 	for _, v := range vars {
@@ -320,7 +320,7 @@ func trapVars(vars []gosnmp.SnmpPDU) []map[string]interface{} {
 	return out
 }
 
-// pduTypeString PDU 类型 -> 字符串
+// pduTypeString PDU type -> string
 func pduTypeString(t gosnmp.Asn1BER) string {
 	switch t {
 	case gosnmp.Integer:
@@ -357,7 +357,7 @@ func versionString(v gosnmp.SnmpVersion) string {
 	return "unknown"
 }
 
-// parseVersion 版本字符串 -> gosnmp.SnmpVersion
+// parseVersion version string -> gosnmp.SnmpVersion
 func parseVersion(s string) (gosnmp.SnmpVersion, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "v2c", "v2", "2c":
@@ -370,7 +370,7 @@ func parseVersion(s string) (gosnmp.SnmpVersion, error) {
 	return 0, fmt.Errorf("unsupported snmp version: %q", s)
 }
 
-// Printf 日志
+// Printf logs
 func (x *SnmpTrapEndpoint) Printf(format string, v ...interface{}) {
 	if x.RuleConfig.Logger != nil {
 		x.RuleConfig.Logger.Printf(format, v...)

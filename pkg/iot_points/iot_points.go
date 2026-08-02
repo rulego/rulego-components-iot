@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// Package iot_points 提供 IoT 采集组件共享的点位解析与模板渲染。
+// Package iot_points provides IoT acquisition component shared point parsing and template rendering.
 package iot_points
 
 import (
@@ -26,7 +26,7 @@ import (
 	"github.com/rulego/rulego/utils/el"
 )
 
-// RenderTemplate 渲染 ${msg.xx}/${metadata.xx} 模板变量；不含 ${ 或解析失败时原样返回。
+// RenderTemplate renders ${msg.xx}/${metadata.xx} template variables; returns as-is when no ${} or parsing fails.
 func RenderTemplate(s string, env map[string]interface{}) string {
 	if s == "" || !strings.Contains(s, "${") {
 		return s
@@ -38,7 +38,7 @@ func RenderTemplate(s string, env map[string]interface{}) string {
 	return t.ExecuteAsString(env)
 }
 
-// ResolvePoints 解析点位来源：msg.Data 合法点位优先，否则用配置 points；两者皆空返回 emptyErr。
+// ResolvePoints resolves point source: msg.Data valid points take priority, otherwise use configured points; both empty returns emptyErr.
 func ResolvePoints[P any](configPoints []P, msg types.RuleMsg, emptyErr error) ([]P, error) {
 	if data := strings.TrimSpace(msg.GetData()); data != "" && data != "null" && data != "[]" {
 		var msgPoints []P

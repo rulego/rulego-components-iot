@@ -47,7 +47,7 @@ func newDriver(db *sql.DB) *driver {
 	return &driver{db: db}
 }
 
-// WritePoints 批量写入 SeriesPoint：带 tags 自动建子表，不带 tags 写同名普通表。
+// WritePoints batch writes SeriesPoint: with tags automatically creates subtable, without tags writes to normal table of same name.
 func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.SeriesPoint) error {
 	stmts := buildInsertStatements(db, points)
 	if len(stmts) == 0 {
@@ -64,31 +64,31 @@ func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.Serie
 	return nil
 }
 
-// tableGroup 同一目标表段的一组点。
+// tableGroup is a group of points targeting the same table segment.
 type tableGroup struct {
 	target   string
 	fieldSet map[string]struct{}
 	rows     []seriesRow
 }
 
-// seriesRow 单行数据：时间戳 + 字段值。
+// seriesRow represents a single row: timestamp + field values.
 type seriesRow struct {
 	ts     int64
 	fields map[string]interface{}
 }
 
-// TDengine 时间戳下限（纳秒）：1970-01-01T00:00:01Z。
+// TDengine minimum timestamp (nanoseconds): 1970-01-01T00:00:01Z.
 const minTimestamp = int64(time.Second)
 
-// maxStatementBytes 单条 INSERT 的字节预算。
+// maxStatementBytes is the byte budget for a single INSERT statement.
 const maxStatementBytes = 512 * 1024
 
 const insertPrefix = "INSERT INTO "
 
-// reservedColumn 与硬编码时间戳列重名的业务列名，剔除避免列重复。
+// reservedColumn is the business column name that conflicts with hardcoded timestamp column, excluded to avoid duplication.
 const reservedColumn = "ts"
 
-// buildInsertStatements 拼装批量 INSERT 语句，按 maxStatementBytes 拆分，同表段字段取超集。
+// buildInsertStatements assembles batch INSERT statements, splits by maxStatementBytes, takes field superset for same table segment.
 func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 	groups := make(map[string]*tableGroup)
 	var order []string
@@ -132,7 +132,7 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 	return stmts
 }
 
-// groupSegments 渲染一个组为若干表段。
+// groupSegments renders a group into multiple table segments.
 func groupSegments(g *tableGroup) []string {
 	cols := sortedSetKeys(g.fieldSet)
 	var header strings.Builder
@@ -166,7 +166,7 @@ func groupSegments(g *tableGroup) []string {
 	return append(segs, b.String())
 }
 
-// renderRow 渲染单行 VALUES（缺失列补 NULL）。
+// renderRow renders single row VALUES (missing columns filled with NULL).
 func renderRow(row seriesRow, cols []string) string {
 	var b strings.Builder
 	b.WriteString("(")
@@ -183,7 +183,7 @@ func renderRow(row seriesRow, cols []string) string {
 	return b.String()
 }
 
-// pointTarget 生成点的分组键与表段目标；时间戳越界或无有效字段时 ok=false。
+// pointTarget generates point's group key and table segment target; ok=false when timestamp out of range or no valid fields.
 func pointTarget(db string, point tsdb.SeriesPoint) (string, string, bool) {
 	if point.Measurement == "" {
 		return "", "", false
@@ -228,7 +228,7 @@ func pointTarget(db string, point tsdb.SeriesPoint) (string, string, bool) {
 	return strings.Join(keyParts, "\x00"), target, true
 }
 
-// subTableName 生成子表名：净化前缀 + 8 位哈希后缀，总长不超过 192 字节。
+// subTableName generates subtable name: sanitized prefix + 8-digit hash suffix, total length not exceeding 192 bytes.
 func subTableName(measurement string, tags map[string]string, tagKeys []string) string {
 	parts := make([]string, 0, len(tagKeys)+1)
 	parts = append(parts, measurement)
@@ -247,7 +247,7 @@ func subTableName(measurement string, tags map[string]string, tagKeys []string) 
 	return prefix + "_" + suffix
 }
 
-// sanitizeIdent 替换非法字符为下划线，保证以字母或下划线开头。
+// sanitizeIdent replaces illegal characters with underscores, ensures start with letter or underscore.
 func sanitizeIdent(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -270,7 +270,7 @@ func sanitizeIdent(s string) string {
 	return b.String()
 }
 
-// sortedSetKeys 返回集合键的排序切片，保证生成 SQL 的列顺序确定。
+// sortedSetKeys returns sorted slice of set keys, ensures deterministic column order in generated SQL.
 func sortedSetKeys(m map[string]struct{}) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -286,7 +286,7 @@ func formatValue(v interface{}) string { return tsdb.FormatValue(v, true) }
 
 func validFieldValue(v interface{}) bool { return tsdb.ValidFieldValue(v) }
 
-// formatTimestamp 纳秒时间戳格式化为带时区偏移的 ISO8601 字符串字面量；0 返回 NOW()。
+// formatTimestamp formats nanosecond timestamp as ISO8601 string literal with timezone offset; 0 returns NOW().
 func formatTimestamp(ts int64) string {
 	if ts == 0 {
 		return "NOW()"

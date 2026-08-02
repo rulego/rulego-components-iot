@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-// Package s7 提供西门子 S7 PLC 的读取(ReadNode)与写入(WriteNode)节点。
+// Package s7 provides Siemens S7 PLC read (ReadNode) and write (WriteNode) nodes.
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule，点位在下方 points 配置。
-//   - 按需读/写：msg.Data 带点位列表则优先使用（动态场景）。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule upstream, configure points in points field.
+//   - On-demand read/write: msg.Data with point list takes priority (dynamic scenarios).
 //
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
+// All point fields support ${msg.xx} / ${metadata.xx} template variables.
 package s7
 
 import (
@@ -39,68 +39,68 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration 连接配置（读/写节点共用）
+// Configuration connection config (shared by read/write nodes)
 type Configuration struct {
-	// PLC 地址，格式 host:port，ISO-on-TCP 默认端口 102
+	// PLC address, format host:port, ISO-on-TCP default port 102
 	Server string `json:"server" label:"Server" desc:"host:port, default port 102" required:"true" ref:"primary"`
-	// 机架号，默认 0
+	// Rack number, default 0
 	Rack int `json:"rack" label:"Rack" desc:"rack number, default 0"`
-	// CPU 槽位：S7-1200/1500/200SMART=1，S7-300/400=2
+	// CPU slot: S7-1200/1500/200SMART=1, S7-300/400=2
 	Slot int `json:"slot" label:"Slot" desc:"CPU slot: S7-1200/1500/200SMART=1, S7-300/400=2"`
-	// 请求超时(秒)，默认 5
+	// Request timeout (seconds), default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
-	// 默认点位表。定时采集(schedule 触发)时使用；msg.Data 带点位则优先
+	// Default points table. Used for scheduled collection (schedule trigger); msg.Data points take precedence
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// Point 节点配置层点位。字段为 string 以支持 ${msg.xx} 模板变量。
-// GetServer 实现 s7client.ConfigProp
+// Point point at node config layer. Fields are strings to support ${msg.xx} template variables.
+// GetServer implements s7client.ConfigProp
 func (c Configuration) GetServer() string { return c.Server }
 
-// GetRack 实现 s7client.ConfigProp
+// GetRack implements s7client.ConfigProp
 func (c Configuration) GetRack() int { return c.Rack }
 
-// GetSlot 实现 s7client.ConfigProp
+// GetSlot implements s7client.ConfigProp
 func (c Configuration) GetSlot() int { return c.Slot }
 
-// GetTimeout 实现 s7client.ConfigProp
+// GetTimeout implements s7client.ConfigProp
 func (c Configuration) GetTimeout() int { return c.Timeout }
 
-// s7OpLocks 按底层 handler 关联操作锁，串行化共享 handler 的并发读写。
+// s7OpLocks associates operation locks by underlying handler, serializes concurrent read/write on shared handler.
 var s7OpLocks iot_points.OpLocks
 
-// s7Reconnecter 连接重建能力接口。
+// s7Reconnecter connection rebuild capability interface.
 type s7Reconnecter interface {
 	reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler, error)
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadNode S7 读节点
+// ReadNode S7 read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadNode 批量读取 S7 点位，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadNode batch reads S7 points, writes results (unified Data list) back to msg.Data, routes via Success.
 //
-// 输入(msg.Data 可选)：点位列表 JSON，格式同 points 配置。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]（timestamp 为 ns；error 仅单点失败时存在）
+// Input (msg.Data optional): point list JSON, same format as points config. Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp","error"}] (timestamp in ns; error only present on single-point failure)
 type ReadNode struct {
 	base.SharedNode[*gos7.TCPClientHandler]
 	Config Configuration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnect
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/s7Read"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -115,7 +115,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gos7.TCPClientHandler, error) {
@@ -126,12 +126,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败（全部点位失败）自动重连重试 maxRetries 次。
+// OnMsg processes message. Auto reconnect retry maxRetries times on connection-level failure (all points failed).
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	handler, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -176,19 +176,19 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			s7OpLocks.Delete(oldHandler) // 清理旧连接操作锁
+			s7OpLocks.Delete(oldHandler) // clean up old connection operation lock
 			handler = newHandler
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -222,9 +222,9 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
 		if h, err := x.SharedNode.GetSafely(); err == nil && h != nil {
 			s7OpLocks.Delete(h)
 		}
@@ -232,30 +232,30 @@ func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "S7 client for batch reading PLC points. Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode S7 写节点
+// WriteNode S7 write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 把 msg.Data 的点位值列表写入 S7 PLC，成功走 Success 链。
+// WriteNode writes point value list from msg.Data to S7 PLC, routes via Success on success.
 //
-// 输入(msg.Data)：[{"name","addr","type","value"}]（addr 为西门子地址如 "DB1.DBD0"/"M0.1"），value 支持 ${msg.xx}
+// Input (msg.Data): [{"name","addr","type","value"}] (addr is Siemens address like "DB1.DBD0"/"M0.1"), value supports ${msg.xx}
 type WriteNode struct {
 	base.SharedNode[*gos7.TCPClientHandler]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/s7Write"
 }
 
-// New 默认配置
+// New default configuration
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
@@ -270,7 +270,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gos7.TCPClientHandler, error) {
@@ -281,12 +281,12 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。写入失败自动重连重试 maxRetries 次。
+// OnMsg processes message. Auto reconnect retry maxRetries times on write failure.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	handler, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -325,19 +325,19 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			s7OpLocks.Delete(oldHandler) // 清理旧连接操作锁
+			s7OpLocks.Delete(oldHandler) // clean up old connection operation lock
 			handler = newHandler
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接（语义同 ReadNode.reconnect）
+// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
 func (x *WriteNode) reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -371,7 +371,7 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	if !x.SharedNode.IsFromPool() {
 		if h, err := x.SharedNode.GetSafely(); err == nil && h != nil {
@@ -381,7 +381,7 @@ func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *WriteNode) Desc() string {
 	return "S7 client for writing PLC points. Routes to Success/Failure"
 }

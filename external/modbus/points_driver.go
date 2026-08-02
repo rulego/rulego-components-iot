@@ -27,15 +27,15 @@ import (
 	"github.com/simonvetter/modbus"
 )
 
-// Modicon 地址类型（首数字区分）。
+// Modicon address types (distinguished by first digit).
 const (
-	modiconCoil = "coil"             // 0xxxx 线圈（读写）
-	modiconDI   = "discrete_input"   // 1xxxx 离散输入（只读）
-	modiconIR   = "input_register"   // 3xxxx 输入寄存器（只读）
-	modiconHR   = "holding_register" // 4xxxx 保持寄存器（读写）
+	modiconCoil = "coil"             // 0xxxx coil (read-write)
+	modiconDI   = "discrete_input"   // 1xxxx discrete input (read-only)
+	modiconIR   = "input_register"   // 3xxxx input register (read-only)
+	modiconHR   = "holding_register" // 4xxxx holding register (read-write)
 )
 
-// driver 适配 iot_points.Driver 到 RetryableModbusClient。无状态，持 client 引用。
+// driver adapts iot_points.Driver to RetryableModbusClient. Stateless, holds client reference.
 type driver struct {
 	client *RetryableModbusClient
 }
@@ -46,7 +46,7 @@ func newDriver(client *RetryableModbusClient) *driver {
 	return &driver{client: client}
 }
 
-// ReadPoints 按 Point.Addr(Modicon) + Type 读取。单点失败标记 Error；全部失败返回 error。
+// ReadPoints reads by Point.Addr(Modicon) + Type. Single failure marks Error; all failures return error.
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	out := make([]iot_points.Data, 0, len(points))
 	failCount := 0
@@ -65,7 +65,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	return out, nil
 }
 
-// WritePoints 按 Point.Addr(Modicon) + Type 写入。任一失败立即返回 error。DI/IR 只读拒写。
+// WritePoints writes by Point.Addr(Modicon) + Type. Any failure returns error immediately. DI/IR read-only rejects writes.
 func (d *driver) WritePoints(points []iot_points.Point) error {
 	for _, p := range points {
 		if err := d.writePoint(p); err != nil {
@@ -75,7 +75,7 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return nil
 }
 
-// readPoint 读取单个点位。Type 决定调用的库方法与寄存器数量；Scale/Offset 做工程量转换。
+// readPoint reads single point. Type determines library method and register count; Scale/Offset does engineering conversion.
 func (d *driver) readPoint(p iot_points.Point) (iot_points.Data, error) {
 	regType, addr, kind, err := parseModiconAddr(p.Addr)
 	if err != nil {
@@ -108,7 +108,7 @@ func (d *driver) readPoint(p iot_points.Point) (iot_points.Data, error) {
 		}
 	case typ == iot_points.TypeUint32 || typ == iot_points.TypeInt32 || typ == iot_points.TypeFloat32:
 		if p.Endian != "" {
-			// 点位级字节序：读原始字序列后按 Endian 重排解码
+			// Point-level endian: decode raw word sequence by Endian reordering
 			words, err := d.client.ReadRegisters(addr, 2, regType)
 			if err != nil {
 				return iot_points.Data{}, err
@@ -152,14 +152,14 @@ func (d *driver) readPoint(p iot_points.Point) (iot_points.Data, error) {
 	default:
 		return iot_points.Data{}, fmt.Errorf("unsupported modbus type %q", p.Type)
 	}
-	// 工程量转换（BOOL 不转换）
+	// Engineering conversion (BOOL no conversion)
 	if (p.Scale != 0 || p.Offset != 0) && typ != iot_points.TypeBool {
 		val = iot_points.ApplyScale(raw, p)
 	}
 	return iot_points.Data{Name: p.Name, Value: val, Timestamp: time.Now().UnixNano()}, nil
 }
 
-// readBool 读位：线圈/离散输入按 kind 选方法；寄存器区(HR/IR) BOOL 取寄存器 bit0。
+// readBool reads bit: coil/discrete input select method by kind; register area (HR/IR) BOOL takes register bit0.
 func (d *driver) readBool(addr uint16, kind string, regType modbus.RegType) (bool, error) {
 	switch kind {
 	case modiconDI:
@@ -175,7 +175,7 @@ func (d *driver) readBool(addr uint16, kind string, regType modbus.RegType) (boo
 	}
 }
 
-// toFloat64 数值转 float64（用于 Scale 原始值）。
+// toFloat64 converts numeric to float64 (for Scale raw value).
 func toFloat64(v interface{}) float64 {
 	switch n := v.(type) {
 	case uint32:
@@ -198,8 +198,8 @@ func toFloat64(v interface{}) float64 {
 	return 0
 }
 
-// applyEndian 按点位字节序重排字序列（设备原始序为 ABCD 大端高字在前）。
-// CDAB=字交换、BADC=字内字节交换、DCBA=两者；四种变换均为对合，编解码同函数。
+// applyEndian reorders word sequence by point byte order (device original order ABCD big-endian high-word-first).
+// CDAB=word swap, BADC=word-inner-byte swap, DCBA=both; four transforms are involutions, same function for encode/decode.
 func applyEndian(words []uint16, endian string) []uint16 {
 	e := strings.ToUpper(strings.TrimSpace(endian))
 	if e == "" || e == "ABCD" {
@@ -221,7 +221,7 @@ func applyEndian(words []uint16, endian string) []uint16 {
 	return out
 }
 
-// decodeModbusWords 大端字序列(ABCD) -> 统一类型值与原始浮点。
+// decodeModbusWords big-endian word sequence (ABCD) -> unified type value and raw float.
 func decodeModbusWords(typ string, w []uint16) (interface{}, float64) {
 	u32 := uint32(w[0])<<16 | uint32(w[1])
 	switch typ {
@@ -248,7 +248,7 @@ func decodeModbusWords(typ string, w []uint16) (interface{}, float64) {
 	return nil, 0
 }
 
-// encodeModbusWords 统一类型字符串值 -> 大端字序列(ABCD)。
+// encodeModbusWords unified type string value -> big-endian word sequence (ABCD).
 func encodeModbusWords(typ, value string) ([]uint16, error) {
 	switch typ {
 	case iot_points.TypeInt32, iot_points.TypeUint32:
@@ -301,7 +301,7 @@ func encodeModbusWords(typ, value string) ([]uint16, error) {
 	return nil, fmt.Errorf("unsupported endian encode type %q", typ)
 }
 
-// writePoint 写入单个点位。寄存器类写仅限 HR；线圈类写仅限 Coil。
+// writePoint writes single point. Register writes limited to HR; coil writes limited to Coil.
 func (d *driver) writePoint(p iot_points.Point) error {
 	_, addr, kind, err := parseModiconAddr(p.Addr)
 	if err != nil {
@@ -313,7 +313,7 @@ func (d *driver) writePoint(p iot_points.Point) error {
 	typ := strings.ToUpper(strings.TrimSpace(p.Type))
 	switch {
 	case typ == iot_points.TypeBool || kind == modiconCoil:
-		// BOOL 写仅支持线圈区
+		// BOOL write only supports coil area
 		if kind != modiconCoil {
 			return fmt.Errorf("modbus BOOL write only supports Coil(00001) addr, got %s", p.Addr)
 		}
@@ -336,7 +336,7 @@ func (d *driver) writePoint(p iot_points.Point) error {
 		}
 		return d.client.WriteRegister(addr, uint16(v))
 	default:
-		// 多寄存器类型：点位级 Endian 时编码为字序列按字节序写入
+		// Multi-register type: when point-level Endian, encode as word sequence and write by byte order
 		if p.Endian != "" {
 			words, err := encodeModbusWords(typ, p.Value)
 			if err != nil {
@@ -389,13 +389,13 @@ func (d *driver) writePoint(p iot_points.Point) error {
 	}
 }
 
-// parseModiconAddr 解析 Modicon 传统地址（1-based）为协议地址（0-based）+ 类型。
+// parseModiconAddr parses Modicon traditional address (1-based) to protocol address (0-based) + type.
 //
-//	00001-09999   -> Coil          (功能码 01/05/0F)
-//	10001-19999   -> Discrete Input(功能码 02，只读)
-//	30001-39999   -> Input Register(功能码 04，只读)
-//	40001-49999   -> Holding Register(功能码 03/06/10)
-//	400001-465535 -> Holding Register 扩展(6 位)
+//	00001-09999   -> Coil          (function code 01/05/0F)
+//	10001-19999   -> Discrete Input(function code 02, read-only)
+//	30001-39999   -> Input Register(function code 04, read-only)
+//	40001-49999   -> Holding Register(function code 03/06/10)
+//	400001-465535 -> Holding Register extended (6 digits)
 func parseModiconAddr(addr string) (regType modbus.RegType, protocolAddr uint16, kind string, err error) {
 	n, perr := strconv.ParseUint(strings.TrimSpace(addr), 10, 32)
 	if perr != nil {

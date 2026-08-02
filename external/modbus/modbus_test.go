@@ -29,10 +29,10 @@ import (
 	"github.com/simonvetter/modbus"
 )
 
-// TestModbusNode 测试 Modbus 节点基本功能
+// TestModbusNode tests Modbus node basic functionality
 func TestModbusNode(t *testing.T) {
 	if os.Getenv("SKIP_MODBUS_TESTS") == "true" {
-		t.Skip("跳过 Modbus 节点测试")
+		t.Skip("Skipping Modbus node test")
 	}
 
 	Registry := &types.SafeComponentSlice{}
@@ -41,17 +41,17 @@ func TestModbusNode(t *testing.T) {
 	node := &ModbusNode{}
 	assert.Equal(t, "x/modbus", node.Type())
 
-	// 创建新节点实例
+	// Create new node instance
 	newNode := node.New()
 	assert.NotNil(t, newNode)
 
-	t.Log("Modbus 节点基本功能测试通过")
+	t.Log("Modbus node basic functionality test passed")
 }
 
-// TestModbusConnectionConfig 测试 Modbus 连接配置
+// TestModbusConnectionConfig tests Modbus connection configuration
 func TestModbusConnectionConfig(t *testing.T) {
 	if os.Getenv("SKIP_MODBUS_TESTS") == "true" {
-		t.Skip("跳过 Modbus 连接配置测试")
+		t.Skip("skip Modbus connection config test")
 	}
 
 	host := os.Getenv("MODBUS_SERVER_HOST")
@@ -61,39 +61,39 @@ func TestModbusConnectionConfig(t *testing.T) {
 		host = "localhost"
 	}
 	if port == "" {
-		port = "1502" // techplex/modbus-sim 默认端口
+		port = "1502" // techplex/modbus-sim default port
 	}
 
-	t.Logf("测试 Modbus 连接配置 %s:%s", host, port)
+	t.Logf("testing Modbus connection config %s:%s", host, port)
 
-	// 验证环境变量设置
+	// Verify environment variable setup
 	assert.NotEqual(t, "", host)
 	assert.NotEqual(t, "", port)
-	assert.Equal(t, "1502", port) // 验证使用正确的端口
+	assert.Equal(t, "1502", port) // Verify correct port used
 }
 
-// TestModbusBasicOperations 基本的 Modbus 操作测试框架
+// TestModbusBasicOperations basic Modbus operation test framework
 func TestModbusBasicOperations(t *testing.T) {
 	if os.Getenv("SKIP_MODBUS_TESTS") == "true" {
-		t.Skip("跳过 Modbus 基础操作测试")
+		t.Skip("Skipping Modbus basic operations test")
 	}
 
-	// 模拟测试超时保护
+	// Simulate test timeout protection
 	timeout := time.After(10 * time.Second)
 	done := make(chan bool)
 
 	go func() {
-		// 模拟一些 Modbus 操作
+		// Simulate some Modbus operations
 		time.Sleep(200 * time.Millisecond)
-		t.Log("Modbus 基础操作模拟完成")
+		t.Log("Modbus basic operations simulation completed")
 		done <- true
 	}()
 
 	select {
 	case <-timeout:
-		t.Fatal("Modbus 基础操作测试超时")
+		t.Fatal("Modbus basic operations test timeout")
 	case <-done:
-		t.Log("Modbus 基础操作测试完成")
+		t.Log("Modbus basic operations test completed")
 	}
 }
 

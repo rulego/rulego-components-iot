@@ -30,7 +30,7 @@ import (
 	"github.com/rulego/rulego/api/types"
 )
 
-// driver 适配 iot_points.Driver 到 OPC UA client。无状态，持 client 引用。
+// driver adapts iot_points.Driver to OPC UA client. Stateless, holds client reference.
 type driver struct {
 	client *opcua.Client
 	logger types.Logger
@@ -42,8 +42,8 @@ func newDriver(client *opcua.Client, logger types.Logger) *driver {
 	return &driver{client: client, logger: logger}
 }
 
-// ReadPoints 批量读取 NodeID（Point.Addr）。复用 opcuaClient.Read 获取 DisplayName 与值。
-// 单点非 OK 标记 Error；全部失败返回 error。
+// ReadPoints batch reads NodeIDs (Point.Addr). Reuses opcuaClient.Read to get DisplayName and values.
+// Single non-OK point marks Error; all failures return error.
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	nodeIds := make([]string, len(points))
 	for i, p := range points {
@@ -55,7 +55,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	}
 	out := opcuaClient.ToPointsData(points, data, resp)
 	for _, dd := range out {
-		if dd.Error == "" { // 至少一个点成功
+		if dd.Error == "" { // At least one point succeeded
 			return out, nil
 		}
 	}
@@ -65,8 +65,8 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	return out, nil
 }
 
-// WritePoints 批量写入 NodeID（Point.Addr 为 NodeID，Point.Value 为写入值）。
-// 任一节点写入非 OK 即返回 error。
+// WritePoints batch writes to NodeIDs (Point.Addr is NodeID, Point.Value is write value).
+// Any non-OK node write returns error.
 func (d *driver) WritePoints(points []iot_points.Point) error {
 	nodesToWrite := make([]*ua.WriteValue, 0, len(points))
 	for _, p := range points {
@@ -103,10 +103,10 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return nil
 }
 
-// resolvePoints 解析点位来源。msg.Data 优先，兼容三种格式；为空回退配置 points。
-//  1. []iot_points.Point —— 新点位格式（addr=NodeID）
-//  2. []string —— 旧 read 格式，nodeId 数组，如 ["ns=2;s=Temperature"]
-//  3. []opcuaClient.Data —— 旧 write 格式，{nodeId,value,dataType}
+// resolvePoints resolves point sources. msg.Data takes priority, compatible with three formats; empty falls back to config points.
+//  1. []iot_points.Point — new point format (addr=NodeID)
+//  2. []string — legacy read format, nodeId array, e.g. ["ns=2;s=Temperature"]
+//  3. []opcuaClient.Data — legacy write format, {nodeId,value,dataType}
 func resolvePoints(configPoints []iot_points.Point, msg types.RuleMsg, emptyErr error) ([]iot_points.Point, error) {
 	raw := strings.TrimSpace(msg.GetData())
 	if raw != "" && raw != "null" && raw != "[]" {
@@ -130,7 +130,7 @@ func resolvePoints(configPoints []iot_points.Point, msg types.RuleMsg, emptyErr 
 	return configPoints, nil
 }
 
-// decodeNodeIds 解析旧 read 格式（nodeId 字符串数组）。
+// decodeNodeIds parses legacy read format (nodeId string array).
 func decodeNodeIds(raw string) ([]string, bool) {
 	var ids []string
 	if err := json.Unmarshal([]byte(raw), &ids); err == nil && len(ids) > 0 {
@@ -139,7 +139,7 @@ func decodeNodeIds(raw string) ([]string, bool) {
 	return nil, false
 }
 
-// decodeObjectPoints 解析对象数组，按首元素键区分新 Point(addr) / 旧 Data(nodeId)。
+// decodeObjectPoints parses object array, distinguishes new Point(addr) / legacy Data(nodeId) by first element key.
 func decodeObjectPoints(raw string) ([]iot_points.Point, bool) {
 	var probe []map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &probe); err != nil || len(probe) == 0 {
@@ -161,7 +161,7 @@ func decodeObjectPoints(raw string) ([]iot_points.Point, bool) {
 	return nil, false
 }
 
-// legacyDataToPoints 把旧 opcuaClient.Data 转为统一 Point。
+// legacyDataToPoints converts legacy opcuaClient.Data to unified Point.
 func legacyDataToPoints(ds []opcuaClient.Data) []iot_points.Point {
 	out := make([]iot_points.Point, len(ds))
 	for i, d := range ds {
@@ -171,7 +171,7 @@ func legacyDataToPoints(ds []opcuaClient.Data) []iot_points.Point {
 	return out
 }
 
-// parseValue 把 Point.Value（字符串）按 opcua 类型解析为 ua.NewVariant 能接受的 Go 值。
+// parseValue parses Point.Value (string) into Go value accepted by ua.NewVariant per OPC UA type.
 func parseValue(value, opcuaType string) interface{} {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -184,7 +184,7 @@ func parseValue(value, opcuaType string) interface{} {
 	return castValue(value, opcuaType)
 }
 
-// mapType 统一类型枚举 -> opcua 原生类型（供 castValueByType）；未知类型（如旧 dataType）透传。
+// mapType normalizes type enumeration to opcua native type (for castValueByType); unknown types (e.g. legacy dataType) passed through.
 func mapType(t string) string {
 	switch strings.ToUpper(t) {
 	case iot_points.TypeBool:

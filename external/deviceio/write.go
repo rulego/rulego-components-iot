@@ -28,14 +28,14 @@ func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// WriteConfig 通用采集写配置。
+// WriteConfig universal acquisition write configuration.
 type WriteConfig struct {
 	Driver string `json:"driver" label:"Driver" desc:"acquisition driver: modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104" required:"true"`
 }
 
-// WriteNode 通用采集写节点，按 driver 委派到具体协议写节点。
+// WriteNode universal acquisition write node, delegates to specific protocol write node by driver.
 //
-// 输入(msg.Data)：点位列表 JSON [{"name","addr","type","value"}]。
+// Input (msg.Data): point list JSON [{"name","addr","type","value"}].
 type WriteNode struct {
 	Config   WriteConfig
 	delegate types.Node

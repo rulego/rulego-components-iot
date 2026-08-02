@@ -57,9 +57,9 @@ func ParseLine(line string) (*SeriesPoint, error) {
 	return &points[0], nil
 }
 
-// ParseLineProtocol parses line protocol text into a SeriesPoint list.
+// ParseLineProtocol parses line protocol text into SeriesPoint list
 func ParseLineProtocol(data string) ([]SeriesPoint, error) {
-	// StreamParser 按行产出记录，补尾随换行确保最后一行被解析。
+	// StreamParser outputs records by lines, append trailing newline to ensure last line is parsed
 	parser := lineprotocol.NewStreamParser(strings.NewReader(data + "\n"))
 	var points []SeriesPoint
 	for {

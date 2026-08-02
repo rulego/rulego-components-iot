@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-// Package tsdb 提供时序数据库的统一数据模型与驱动接口。
+// Package tsdb provides unified data model and driver interface for time-series databases.
 package tsdb
 
 import (
@@ -22,35 +22,35 @@ import (
 	"errors"
 )
 
-// ErrUnsupported 表示该 driver 不支持某操作（如只写不查的库收到 Query）。
+// ErrUnsupported indicates this driver does not support the operation (e.g. query-only library receives Query)
 var ErrUnsupported = errors.New("operation not supported by this tsdb driver")
 
-// SeriesPoint 时序数据点，跨 TSDB 的统一模型。
-// 对应 InfluxDB/OpenGemini 的 measurement + tags + fields + timestamp，
-// 各 driver 负责将其编码为 line protocol / SQL / 原生协议。
+// SeriesPoint time-series data point, unified model across TSDBs.
+// Corresponds to InfluxDB/OpenGemini measurement + tags + fields + timestamp,
+// each driver encodes it to line protocol / SQL / native protocol.
 //
-// JSON 输入示例：{"measurement":"device1","tags":{"site":"A"},"fields":{"temp":25.3},"timestamp":1721900000000000000}
+// JSON input example: {"measurement":"device1","tags":{"site":"A"},"fields":{"temp":25.3},"timestamp":1721900000000000000}
 type SeriesPoint struct {
-	Measurement string                 `json:"measurement"` // 测点表/设备表名
-	Tags        map[string]string      `json:"tags"`        // 索引维度：deviceId/位置/...
-	Fields      map[string]interface{} `json:"fields"`      // 数值/状态值
-	Timestamp   int64                  `json:"timestamp"`   // 纳秒时间戳；0 表示由 driver 写入时取当前时间
+	Measurement string                 `json:"measurement"` // Measurement table/device table name
+	Tags        map[string]string      `json:"tags"`        // Index dimensions: deviceId/location/...
+	Fields      map[string]interface{} `json:"fields"`      // Numerical/status values
+	Timestamp   int64                  `json:"timestamp"`   // Nanosecond timestamp; 0 means driver uses current time when writing
 }
 
-// QueryResult 通用查询结果，按列+行组织。
+// QueryResult general query result, organized by columns and rows
 type QueryResult struct {
 	Columns []string
 	Rows    []map[string]interface{}
 }
 
-// Driver 时序数据库驱动接口。
-// db 参数为存储容器标识，各 driver 自行解释：OpenGemini=database、InfluxDB=bucket（构造时绑定，WritePoints 的 db 参数可忽略）、
-// TDengine=db、TimescaleDB=schema、PromRemote 不使用。
+// Driver time-series database driver interface.
+// db parameter is storage container identifier, each driver interprets it: OpenGemini=database, InfluxDB=bucket (bound at construction, WritePoints db parameter can be ignored),
+// TDengine=db, TimescaleDB=schema, PromRemote unused.
 type Driver interface {
-	// WritePoints 批量写入时序点。
+	// WritePoints batch writes time-series points.
 	WritePoints(ctx context.Context, db string, points []SeriesPoint) error
-	// Query 执行查询；只写库返回 ErrUnsupported。db 语义同 WritePoints（InfluxDB 此处传 org）。
+	// Query executes query; write-only libraries return ErrUnsupported. db semantics same as WritePoints (InfluxDB passes org here).
 	Query(ctx context.Context, db, sql string) (*QueryResult, error)
-	// Close 释放连接。
+	// Close releases connection.
 	Close() error
 }

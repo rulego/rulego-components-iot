@@ -8,7 +8,7 @@ import (
 	"github.com/gopcua/opcua/ua"
 )
 
-// BrowseNode 地址空间浏览结果节点
+// BrowseNode address space browse result node
 type BrowseNode struct {
 	NodeID    string       `json:"nodeId"`
 	Name      string       `json:"name"`
@@ -17,19 +17,19 @@ type BrowseNode struct {
 }
 
 const (
-	// defaultBrowseNodeID 默认浏览起始节点（Objects 文件夹）
+	// defaultBrowseNodeID default browse starting node (Objects folder)
 	defaultBrowseNodeID = "i=85"
-	// defaultBrowseDepth 默认浏览深度
+	// defaultBrowseDepth default browse depth
 	defaultBrowseDepth = 2
-	// maxBrowseNodes 单次浏览返回的节点总数上限
+	// maxBrowseNodes max total nodes returned per browse
 	maxBrowseNodes = 500
-	// idHierarchicalReferences OPC UA 标准层级引用类型 NodeId
+	// idHierarchicalReferences OPC UA standard hierarchical reference type NodeId
 	idHierarchicalReferences = 33
-	// browseResultMask 只请求消费的属性(NodeClass/BrowseName/DisplayName)
+	// browseResultMask only request consumed attributes (NodeClass/BrowseName/DisplayName)
 	browseResultMask = ua.BrowseResultMaskNodeClass | ua.BrowseResultMaskBrowseName | ua.BrowseResultMaskDisplayName
 )
 
-// Browse 递归浏览 OPC UA 地址空间，返回节点树（nodeID 空=Objects，depth<=0=默认 2 层）
+// Browse recursively browses OPC UA address space, returns node tree (nodeID empty=Objects, depth<=0=default 2 levels)
 func Browse(ctx context.Context, client *opcua.Client, nodeID string, depth int) ([]BrowseNode, error) {
 	if nodeID == "" {
 		nodeID = defaultBrowseNodeID
@@ -45,14 +45,14 @@ func Browse(ctx context.Context, client *opcua.Client, nodeID string, depth int)
 	return browseLevel(ctx, client, id, depth, &count)
 }
 
-// browseLevel 浏览单层节点(自动翻页消费 ContinuationPoint)，按剩余深度递归子节点
+// browseLevel browses single level nodes (auto-pagination consumes ContinuationPoint), recursively processes child nodes by remaining depth
 func browseLevel(ctx context.Context, client *opcua.Client, id *ua.NodeID, depth int, count *int) ([]BrowseNode, error) {
 	req := &ua.BrowseRequest{
 		NodesToBrowse: []*ua.BrowseDescription{{
 			NodeID:          id,
 			BrowseDirection: ua.BrowseDirectionForward,
 			ReferenceTypeID: ua.NewNumericNodeID(0, idHierarchicalReferences),
-			// 抽象引用类型(HierarchicalReferences)需包含子类型引用，否则合规服务端返回空
+			// Abstract reference type (HierarchicalReferences) must include subtype references, otherwise compliant server returns empty
 			IncludeSubtypes: true,
 			ResultMask:      uint32(browseResultMask),
 		}},
@@ -103,7 +103,7 @@ func browseLevel(ctx context.Context, client *opcua.Client, id *ua.NodeID, depth
 		if len(cp) == 0 {
 			break
 		}
-		// 取下一页
+		// Fetch next page
 		nextResp, err := client.BrowseNext(ctx, &ua.BrowseNextRequest{ContinuationPoints: [][]byte{cp}})
 		if err != nil || len(nextResp.Results) == 0 || nextResp.Results[0].StatusCode != ua.StatusOK {
 			break
@@ -114,7 +114,7 @@ func browseLevel(ctx context.Context, client *opcua.Client, id *ua.NodeID, depth
 	return nodes, nil
 }
 
-// releaseContinuationPoint 释放未消费完的分页上下文
+// releaseContinuationPoint releases unconsumed pagination context
 func releaseContinuationPoint(ctx context.Context, client *opcua.Client, cp []byte) {
 	if len(cp) == 0 {
 		return

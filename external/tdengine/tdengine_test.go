@@ -47,7 +47,7 @@ func TestParseLine(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotEqual(t, int64(0), p2.Timestamp)
 
-	// 无 i 后缀的数值按 line protocol 标准解析为 float64
+	// Numeric values without i suffix are parsed as float64 per line protocol standard
 	p3, err := tsdb.ParseLine("m,k=v f=100")
 	assert.Nil(t, err)
 	assert.Equal(t, float64(100), p3.Fields["f"])
@@ -90,12 +90,12 @@ func TestFormatValue(t *testing.T) {
 
 func TestFormatValueExtended(t *testing.T) {
 	assert.Equal(t, "NULL", formatValue(nil))
-	// 浮点数不使用科学计数法
+	// Floats do not use scientific notation
 	assert.Equal(t, "1000000", formatValue(float64(1000000)))
 	assert.Equal(t, "'O\\'Neil'", formatValue("O'Neil"))
-	// TDengine 方言反斜杠翻倍
+	// TDengine dialect doubles backslashes
 	assert.Equal(t, "'C:\\\\new'", formatValue("C:\\new"))
-	// 嵌套对象序列化为 JSON 字符串
+	// Nested objects serialized as JSON strings
 	assert.Equal(t, "'{\"a\":1}'", formatValue(map[string]interface{}{"a": 1}))
 }
 
@@ -111,7 +111,7 @@ func TestValidFieldValue(t *testing.T) {
 	assert.True(t, validFieldValue(false))
 }
 
-// TestBuildInsertStatementsStable 超级表模式：同表段多行合并、不同 tags 拆表段、ts=0 用 NOW()。
+// TestBuildInsertStatementsStable super table mode: same table segment merges multiple rows, different tags split table segments, ts=0 uses NOW().
 func TestBuildInsertStatementsStable(t *testing.T) {
 	ts := int64(1700000000000000000)
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
@@ -128,7 +128,7 @@ func TestBuildInsertStatementsStable(t *testing.T) {
 	assert.Equal(t, []string{expected}, stmts)
 }
 
-// TestBuildInsertStatementsNormalTable 无 tags：写入同名普通表。
+// TestBuildInsertStatementsNormalTable without tags: writes to normal table of same name.
 func TestBuildInsertStatementsNormalTable(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"usage": float64(12)}, Timestamp: 0},
@@ -136,7 +136,7 @@ func TestBuildInsertStatementsNormalTable(t *testing.T) {
 	assert.Equal(t, []string{"INSERT INTO `iot`.`cpu` (`ts`,`usage`) VALUES (NOW(),12)"}, stmts)
 }
 
-// TestBuildInsertStatementsReservedColumn 名为 ts 的业务列被剔除，避免与时间戳列重复。
+// TestBuildInsertStatementsReservedColumn business column named ts is excluded to avoid duplication with timestamp column.
 func TestBuildInsertStatementsReservedColumn(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"ts": 1, "v": 2.0}},
@@ -144,7 +144,7 @@ func TestBuildInsertStatementsReservedColumn(t *testing.T) {
 	assert.Equal(t, []string{"INSERT INTO `iot`.`cpu` (`ts`,`v`) VALUES (NOW(),2)"}, stmts)
 }
 
-// TestBuildInsertStatementsReservedTag 唯一 tag 为 ts 被剔除后退化为普通表。
+// TestBuildInsertStatementsReservedTag degrades to normal table when only tag is ts and gets excluded.
 func TestBuildInsertStatementsReservedTag(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Tags: map[string]string{"ts": "x"}, Fields: map[string]interface{}{"v": 2.0}},
@@ -154,7 +154,7 @@ func TestBuildInsertStatementsReservedTag(t *testing.T) {
 	assert.Equal(t, "INSERT INTO `iot`.`cpu` (`ts`,`v`) VALUES (NOW(),2)", stmts[0])
 }
 
-// TestBuildInsertStatementsSkipsInvalid nil/NaN 字段跳过；无有效字段的点整体跳过。
+// TestBuildInsertStatementsSkipsInvalid nil/NaN fields are skipped; points with no valid fields are skipped entirely.
 func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "m", Fields: map[string]interface{}{"a": nil, "b": 1.0}, Timestamp: 0},
@@ -166,7 +166,7 @@ func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
 	assert.Empty(t, buildInsertStatements("iot", nil))
 }
 
-// TestBuildInsertStatementsColumnSuperset 同表段不同字段集：列取超集、缺失补 NULL、表段只出现一次。
+// TestBuildInsertStatementsColumnSuperset same table segment with different field sets: columns take superset, missing filled with NULL, table segment appears only once.
 func TestBuildInsertStatementsColumnSuperset(t *testing.T) {
 	ts := int64(1700000000000000000)
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
@@ -181,7 +181,7 @@ func TestBuildInsertStatementsColumnSuperset(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(stmts[0], "USING"))
 }
 
-// TestBuildInsertStatementsChunking 大批量按字节预算拆分为多条语句，行数不丢。
+// TestBuildInsertStatementsChunking large batches split into multiple statements by byte budget, no rows lost.
 func TestBuildInsertStatementsChunking(t *testing.T) {
 	const total = 20000
 	ts := int64(1700000000000000000)
@@ -205,7 +205,7 @@ func TestBuildInsertStatementsChunking(t *testing.T) {
 	assert.Equal(t, total, rows)
 }
 
-// TestPointTarget 多 tag 时按 key 排序；时间戳越界或无有效字段时跳过。
+// TestPointTarget with multiple tags sorts by key; skipped when timestamp out of range or no valid fields.
 func TestPointTarget(t *testing.T) {
 	p := tsdb.SeriesPoint{
 		Measurement: "m",
@@ -219,11 +219,11 @@ func TestPointTarget(t *testing.T) {
 	assert.Equal(t, "`iot`.`"+sub+"` USING `iot`.`m` (`a`,`z`) TAGS ('2','1')", target)
 
 	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "m", Fields: map[string]interface{}{"f": 1.0}, Timestamp: -1})
-	assert.False(t, ok, "时间戳越界跳过")
+	assert.False(t, ok, "skipped: timestamp out of range")
 	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "m", Fields: map[string]interface{}{"f": math.NaN()}})
-	assert.False(t, ok, "无有效字段跳过")
+	assert.False(t, ok, "skipped: no valid field")
 	_, _, ok = pointTarget("iot", tsdb.SeriesPoint{Measurement: "", Fields: map[string]interface{}{"f": 1.0}})
-	assert.False(t, ok, "空 measurement 跳过")
+	assert.False(t, ok, "skipped: empty measurement")
 }
 
 func TestSubTableName(t *testing.T) {
@@ -231,14 +231,14 @@ func TestSubTableName(t *testing.T) {
 	tagsB := map[string]string{"id": "dev_01"}
 	nameA := subTableName("meters", tagsA, []string{"id"})
 	nameB := subTableName("meters", tagsB, []string{"id"})
-	// 净化前缀相同但哈希后缀不同，避免折叠碰撞串表
+	// Sanitized prefixes are same but hash suffixes differ, avoiding collision merge into wrong table
 	assert.True(t, strings.HasPrefix(nameA, "meters_dev_01_"), nameA)
 	assert.True(t, strings.HasPrefix(nameB, "meters_dev_01_"), nameB)
 	assert.NotEqual(t, nameA, nameB)
-	// 特殊字符替换为下划线、数字开头补下划线
+	// Special chars replaced with underscores, digit-prefixed names get leading underscore
 	assert.True(t, strings.HasPrefix(subTableName("m", map[string]string{"id": "dev-01", "site": "A."}, []string{"id", "site"}), "m_dev_01_A__"))
 	assert.True(t, strings.HasPrefix(subTableName("1a", nil, nil), "_1a_"))
-	// 总长不超过 192 字节
+	// Total length not exceeding 192 bytes
 	long := subTableName(strings.Repeat("x", 300), nil, nil)
 	assert.LessOrEqual(t, len(long), 192)
 }
@@ -246,12 +246,12 @@ func TestSubTableName(t *testing.T) {
 func TestFormatTimestamp(t *testing.T) {
 	assert.Equal(t, "NOW()", formatTimestamp(0))
 	ts := int64(1700000000000000000)
-	// 带时区偏移的 ISO8601 字面量（本地时区无关）
+	// ISO8601 literal with timezone offset (local timezone independent)
 	expected := "'" + time.Unix(0, ts).Format("2006-01-02T15:04:05.000000000-07:00") + "'"
 	assert.Equal(t, expected, formatTimestamp(ts))
 }
 
-// TestWritePointsAllSkipped 点全部无效时返回错误，不静默报成功；空输入为无操作。
+// TestWritePointsAllSkipped returns error when all points invalid, does not silently succeed; empty input is no-op.
 func TestWritePointsAllSkipped(t *testing.T) {
 	d := newDriver(&sql.DB{})
 	err := d.WritePoints(context.Background(), "iot", []tsdb.SeriesPoint{

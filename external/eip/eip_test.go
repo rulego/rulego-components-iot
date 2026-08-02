@@ -29,7 +29,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestEipNodes 节点类型与默认配置
+// TestEipNodes node types and default configuration
 func TestEipNodes(t *testing.T) {
 	r := &ReadNode{}
 	assert.Equal(t, "x/eipRead", r.Type())
@@ -44,26 +44,26 @@ func TestEipNodes(t *testing.T) {
 	assert.Equal(t, 0, rn.Config.Slot)
 }
 
-// TestToEipClientPoint 统一 Point(Addr=tag) 映射为 eipclient.Point。
+// TestToEipClientPoint maps unified Point(Addr=tag) to eipclient.Point.
 func TestToEipClientPoint(t *testing.T) {
-	p := iot_points.Point{Name: "温度", Addr: "MyDB.Temp", Type: "FLOAT32"}
+	p := iot_points.Point{Name: "temperature", Addr: "MyDB.Temp", Type: "FLOAT32"}
 	cp := toEipClientPoint(p)
-	assert.Equal(t, "温度", cp.Name)
+	assert.Equal(t, "temperature", cp.Name)
 	assert.Equal(t, "MyDB.Temp", cp.Tag)
 	assert.Equal(t, "REAL", cp.Type) // FLOAT32 -> REAL
 }
 
-// TestMapType 统一类型 -> EIP 原生类型。
+// TestMapType unified type -> EIP native type.
 func TestMapType(t *testing.T) {
 	assert.Equal(t, "INT", mapType("INT16"))
 	assert.Equal(t, "DINT", mapType("INT32"))
 	assert.Equal(t, "REAL", mapType("FLOAT32"))
 	assert.Equal(t, "BOOL", mapType("BOOL"))
 	assert.Equal(t, "STRING", mapType("STRING"))
-	assert.Equal(t, "CUSTOM", mapType("CUSTOM")) // 未知透传
+	assert.Equal(t, "CUSTOM", mapType("CUSTOM")) // unknown pass-through
 }
 
-// startTestServer 启动进程内 gologix server 模拟 ControlLogix（端口 44818 占用则跳过）
+// startTestServer starts in-process gologix server to simulate ControlLogix (skip if port 44818 occupied)
 func startTestServer(t *testing.T) (*gologix.MapTagProvider, func()) {
 	if probe, err := net.Listen("tcp", "0.0.0.0:44818"); err != nil {
 		t.Skipf("port 44818 unavailable (skip EIP rule-chain test): %v", err)
@@ -98,7 +98,7 @@ func startTestServer(t *testing.T) (*gologix.MapTagProvider, func()) {
 	}
 }
 
-// TestEipReadNode eipRead 节点端到端：连接 mock PLC -> 读取标签 -> 输出 Data 列表。
+// TestEipReadNode eipRead node end-to-end: connect to mock PLC -> read tags -> output Data list.
 func TestEipReadNode(t *testing.T) {
 	provider, cleanup := startTestServer(t)
 	defer cleanup()
@@ -112,8 +112,8 @@ func TestEipReadNode(t *testing.T) {
 		"slot":    0,
 		"timeout": 5,
 		"points": []map[string]interface{}{
-			{"name": "温度", "addr": "Temp", "type": "FLOAT32"},
-			{"name": "计数", "addr": "Count", "type": "INT32"},
+			{"name": "temperature", "addr": "Temp", "type": "FLOAT32"},
+			{"name": "counter", "addr": "Count", "type": "INT32"},
 		},
 	}, registry)
 	assert.Nil(t, err)
@@ -126,9 +126,9 @@ func TestEipReadNode(t *testing.T) {
 	}}, func(msg types.RuleMsg, relationType string, err error) {
 		assert.Nil(t, err)
 		assert.Equal(t, types.Success, relationType)
-		assert.True(t, strings.Contains(msg.GetData(), "温度"), "msg.Data should contain 温度")
+		assert.True(t, strings.Contains(msg.GetData(), "temperature"), "msg.Data should contain temperature")
 		assert.True(t, strings.Contains(msg.GetData(), "23.5"), "msg.Data should contain REAL value 23.5")
-		assert.True(t, strings.Contains(msg.GetData(), "计数"), "msg.Data should contain 计数")
+		assert.True(t, strings.Contains(msg.GetData(), "counter"), "msg.Data should contain counter")
 		done <- struct{}{}
 	})
 
@@ -139,7 +139,7 @@ func TestEipReadNode(t *testing.T) {
 	}
 }
 
-// TestEipWriteNode eipWrite 节点端到端：从 msg.Data 读点位 -> 写入 mock PLC -> 验证 server 数据更新。
+// TestEipWriteNode eipWrite node end-to-end: read points from msg.Data -> write to mock PLC -> verify server data updated.
 func TestEipWriteNode(t *testing.T) {
 	provider, cleanup := startTestServer(t)
 	defer cleanup()
@@ -156,7 +156,7 @@ func TestEipWriteNode(t *testing.T) {
 	assert.Nil(t, err)
 
 	done := make(chan struct{}, 1)
-	writePayload := `[{"name":"计数","addr":"Count","type":"INT32","value":"128"},{"name":"温度","addr":"Temp","type":"FLOAT32","value":"65.5"}]`
+	writePayload := `[{"name":"counter","addr":"Count","type":"INT32","value":"128"},{"name":"temperature","addr":"Temp","type":"FLOAT32","value":"65.5"}]`
 	test.NodeOnMsg(t, node, []test.Msg{{
 		DataType: types.JSON,
 		MsgType:  "TEST",

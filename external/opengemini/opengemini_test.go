@@ -28,7 +28,7 @@ import (
 )
 
 func TestParseLine(t *testing.T) {
-	// 带 timestamp
+	// With timestamp
 	p, err := tsdb.ParseLine("cpu,host=srv1 value=72.5 1700000000000000000")
 	assert.Nil(t, err)
 	assert.Equal(t, "cpu", p.Measurement)
@@ -36,12 +36,12 @@ func TestParseLine(t *testing.T) {
 	assert.Equal(t, 72.5, p.Fields["value"])
 	assert.Equal(t, int64(1700000000000000000), p.Timestamp)
 
-	// 不带 timestamp -> 用当前时间
+	// Without timestamp -> use current time
 	p2, err := tsdb.ParseLine("temp,loc=a v=23")
 	assert.Nil(t, err)
 	assert.NotEqual(t, int64(0), p2.Timestamp)
 
-	// 无 i 后缀的数值按 line protocol 标准解析为 float64
+	// Numeric values without i suffix are parsed as float64 per line protocol standard
 	p3, err := tsdb.ParseLine("m,k=v f=100")
 	assert.Nil(t, err)
 	assert.Equal(t, float64(100), p3.Fields["f"])

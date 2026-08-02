@@ -18,10 +18,10 @@ func main() {
 	// 1. Get Serial Port
 	ports, err := serial.GetPortsList()
 	if err != nil || len(ports) == 0 {
-		log.Fatal("未发现真实串口设备，请连接设备后重试")
+		log.Fatal("No real serial device found, please connect device and retry")
 	}
 	portName := ports[0] // Use first available
-	fmt.Printf("使用真实串口: %s\n", portName)
+	fmt.Printf("Using real serial port: %s\n", portName)
 
 	config := rulego.NewConfig()
 	// Use shared node pool
@@ -45,12 +45,12 @@ func main() {
 
 	nodeDef, err := config.Parser.DecodeRuleNode([]byte(masterNodeDsl))
 	if err != nil {
-		log.Fatalf("解析 master 节点失败: %v", err)
+		log.Fatalf("Failed to parse master node: %v", err)
 	}
 	// Add master node to pool
 	_, err = pool.NewFromRuleNode(nodeDef)
 	if err != nil {
-		log.Fatalf("注册 master 节点到 NodePool 失败: %v", err)
+		log.Fatalf("Failed to register master node to NodePool: %v", err)
 	}
 
 	// 2. Define Rule Chain DSL
@@ -185,11 +185,11 @@ func main() {
 	// 3. Initialize Engine
 	engine, err := rulego.New("serial_test_comp", []byte(dsl), rulego.WithConfig(config))
 	if err != nil {
-		log.Fatalf("规则引擎初始化失败: %v", err)
+		log.Fatalf("Failed to initialize rule engine: %v", err)
 	}
 
 	// 4. Start Test
-	fmt.Println("开始执行综合读写控制测试 (Shared Instance, Auto-Reconnect, Hex/Text)...")
+	fmt.Println("Starting comprehensive read/write control test (Shared Instance, Auto-Reconnect, Hex/Text)...")
 
 	meta := types.NewMetadata()
 	meta.PutValue("step", "start")
@@ -197,13 +197,13 @@ func main() {
 
 	engine.OnMsg(msg, types.WithOnEnd(func(ctx types.RuleContext, msg types.RuleMsg, err error, relationType string) {
 		if err != nil {
-			fmt.Printf("执行过程中出错: %v\n", err)
+			fmt.Printf("Error during execution: %v\n", err)
 		} else {
-			fmt.Printf("测试链执行完成.\n")
+			fmt.Printf("Test chain execution completed.\n")
 		}
 	}))
 
 	// Wait for execution
 	time.Sleep(5 * time.Second)
-	fmt.Println("测试结束")
+	fmt.Println("Test finished")
 }

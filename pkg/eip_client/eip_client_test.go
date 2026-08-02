@@ -22,7 +22,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestEncodeValue 各类型字符串 -> Go 值（供 Write）
+// TestEncodeValue type strings -> Go values (for Write)
 func TestEncodeValue(t *testing.T) {
 	cases := []struct {
 		name string
@@ -50,35 +50,35 @@ func TestEncodeValue(t *testing.T) {
 	}
 }
 
-// TestEncodeValueAlias 类型别名（WORD=DINT 等同族）
+// TestEncodeValueAlias type aliases (WORD=DINT same family)
 func TestEncodeValueAlias(t *testing.T) {
-	// WORD 同 UINT16
+	// WORD same as UINT16
 	v, _ := encodeValue("10", "WORD")
 	assert.Equal(t, uint16(10), v)
-	// DWORD 同 UINT32
+	// DWORD same as UINT32
 	v, _ = encodeValue("10", "DWORD")
 	assert.Equal(t, uint32(10), v)
-	// FLOAT 同 REAL
+	// FLOAT same as REAL
 	v, _ = encodeValue("1.5", "FLOAT")
 	assert.Equal(t, float32(1.5), v)
-	// DOUBLE 同 LREAL
+	// DOUBLE same as LREAL
 	v, _ = encodeValue("1.5", "DOUBLE")
 	assert.Equal(t, float64(1.5), v)
 }
 
-// TestEncodeValueErrors 非法输入
+// TestEncodeValueErrors invalid input
 func TestEncodeValueErrors(t *testing.T) {
-	// 非法数字
+	// Invalid number
 	if _, err := encodeValue("abc", "INT"); err == nil {
 		t.Fatal("encode INT abc should fail")
 	}
-	// 不支持的类型
+	// Unsupported type
 	if _, err := encodeValue("1", "UNKNOWN"); err == nil {
 		t.Fatal("encode UNKNOWN should fail")
 	}
 }
 
-// TestParseBoolValue 布尔值解析
+// TestParseBoolValue bool value parsing
 func TestParseBoolValue(t *testing.T) {
 	for _, c := range []string{"true", "1", "TRUE"} {
 		if v, _ := parseBoolValue(c); v != true {

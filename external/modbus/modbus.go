@@ -48,7 +48,7 @@ const (
 	DefaultUnitId     uint8             = 1
 )
 
-// 自定义错误类型
+// Custom error types
 type UnknownCommandErr struct {
 	Cmd string
 }
@@ -69,26 +69,26 @@ func (e *ModbusConnErr) Unwrap() error {
 	return e.Err
 }
 
-// 注册节点
+// Register node
 func init() {
 	_ = rulego.Registry.Register(&ModbusNode{})
 }
 
-// ModbusConfiguration 节点配置
+// ModbusConfiguration node configuration
 type ModbusConfiguration struct {
-	// 服务器地址
+	// Server address
 	Server string `json:"server" label:"Server" desc:"Modbus server address, format: tcp://host:port or rtu:///dev/ttyUSB0" required:"true" ref:"primary"`
-	// Modbus 方法名称
+	// Modbus method name
 	Cmd string `json:"cmd" label:"Command" desc:"Modbus command: ReadCoils, ReadRegisters, WriteCoil, WriteRegister, etc."`
-	// UnitId 从机编号
+	// UnitId slave unit ID
 	UnitId uint8 `json:"unitId" label:"Unit ID" desc:"Modbus slave unit ID"`
-	// address 寄存器地址 允许使用 ${} 占位符变量，示例：50或者0x32
+	// address register address supports ${} variables, e.g. 50 or 0x32
 	Address string `json:"address" label:"Address" desc:"Register address, supports ${} variables, e.g. 50 or 0x32"`
-	// quantity 寄存器数量 允许使用 ${} 占位符变量
+	// quantity register count supports ${} variables
 	Quantity string `json:"quantity" label:"Quantity" desc:"Number of registers, supports ${} variables"`
-	// value 寄存器值 允许使用 ${} 占位符变量。。读则不需要提供，如果写入多个与逗号隔开，例如：0x1,0x1 true 51,52
+	// value register value supports ${} variables; not needed for read, comma-separated for multiple writes, e.g. 0x1,0x1 true 51,52
 	Value string `json:"value" label:"Value" desc:"Register value for write, supports ${} variables, comma-separated for multiple"`
-	// RegType 寄存器类型：  允许使用 ${} 占位符变量，0:保持寄存器(功能码0x3)，1:输入寄存器(功能码:0x4)
+	// RegType register type supports ${} variables, 0=Holding (function code 0x3), 1=Input (function code 0x4)
 	RegType        string         `json:"regType" label:"Register Type" desc:"Register type: 0=Holding, 1=Input"`
 	TcpConfig      TcpConfig      `json:"tcpConfig" label:"TCP Config" desc:"TCP connection configuration"`
 	RtuConfig      RtuConfig      `json:"rtuConfig" label:"RTU Config" desc:"RTU serial configuration"`
@@ -96,20 +96,20 @@ type ModbusConfiguration struct {
 }
 
 type EncodingConfig struct {
-	// Endianness register endianness 1:大端序 2:小端序
+	// Endianness register endianness 1=Big Endian 2=Little Endian
 	Endianness uint `json:"endianness" label:"Endianness" desc:"Register endianness: 1=Big Endian, 2=Little Endian"`
-	// WordOrder word ordering for 32-bit registers 1:高字在前 2:低字在前
+	// WordOrder word ordering for 32-bit registers 1=High Word First 2=Low Word First
 	WordOrder uint `json:"wordOrder" label:"Word Order" desc:"Word order for 32-bit registers: 1=High Word First, 2=Low Word First"`
 }
 
 type TcpConfig struct {
-	// Timeout sets the request timeout value,单位秒
+	// Timeout sets the request timeout value, unit seconds
 	Timeout int64 `json:"timeout" label:"Timeout" desc:"Request timeout in seconds"`
-	// CertFile TLS 客户端证书文件
+	// CertFile TLS client certificate file
 	CertFile string `json:"certFile" label:"Cert File" desc:"TLS client certificate file path"`
-	// CertKeyFile TLS 客户端私钥文件
+	// CertKeyFile TLS client private key file
 	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"TLS client private key file path"`
-	// CAFile TLS CA 证书文件
+	// CAFile TLS CA certificate file
 	CAFile string `json:"caFile" label:"CA File" desc:"TLS CA certificate file path"`
 }
 
@@ -124,23 +124,23 @@ type RtuConfig struct {
 	StopBits uint `json:"stopBits" label:"Stop Bits" desc:"Stop bits: 1, 2"`
 }
 
-// reconnectFunc 重新获取连接的回调函数
+// reconnectFunc callback function to re-establish connection
 type reconnectFunc func(oldClient *modbus.ModbusClient) (*modbus.ModbusClient, error)
 
-// RetryableModbusClient 带重试逻辑的Modbus客户端
+// RetryableModbusClient Modbus client with retry logic
 type RetryableModbusClient struct {
 	client      *modbus.ModbusClient
 	maxRetries  int
 	logger      types.Logger
 	reconnectFn reconnectFunc
-	// 保存运行时配置（底层库不支持getter，重连后需手动恢复）
+	// Save runtime config (underlying lib has no getter, need to restore after reconnect)
 	mu            sync.RWMutex
 	currentUnitId uint8
 	endianness    modbus.Endianness
 	wordOrder     modbus.WordOrder
 }
 
-// NewRetryableModbusClient 创建一个新的带重试逻辑的Modbus客户端
+// NewRetryableModbusClient creates a new Modbus client with retry logic
 func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logger types.Logger, reconnectFn reconnectFunc, unitId uint8, endianness modbus.Endianness, wordOrder modbus.WordOrder) *RetryableModbusClient {
 	return &RetryableModbusClient{
 		client:        client,
@@ -153,10 +153,10 @@ func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logge
 	}
 }
 
-// modbusOpLocks 按底层 client 关联操作锁，串行化共享连接的 SetUnitId+操作。
+// modbusOpLocks associates operation locks by underlying client, serializes SetUnitId+operation for shared connections.
 var modbusOpLocks iot_points.OpLocks
 
-// executeWithRetry 执行操作并在连接错误时重试
+// executeWithRetry executes operation and retries on connection errors
 func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() error) error {
 	var err error
 	for retry := 0; retry <= r.maxRetries; retry++ {
@@ -171,9 +171,9 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 			return nil
 		}
 
-		// 判断是否为连接错误，并且重试次数未达上限
+		// Check if connection error and retry limit not reached
 		if retry < r.maxRetries {
-			// 跳过明确的非网络/重试无效的协议错误
+			// Skip explicit non-network/retry-invalid protocol errors
 			if err == modbus.ErrIllegalFunction ||
 				err == modbus.ErrIllegalDataAddress ||
 				err == modbus.ErrIllegalDataValue ||
@@ -183,7 +183,7 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 
 			r.warnf("Modbus %s error: %s, retry count: %d, trying to reconnect...", operation, err, retry)
 
-			// 通过 SharedNode 机制重建连接
+			// Rebuild connection via SharedNode mechanism
 			if r.reconnectFn != nil {
 				oldClient := r.client
 				newClient, reconnectErr := r.reconnectFn(oldClient)
@@ -193,10 +193,10 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 				}
 				r.client = newClient
 				modbusOpLocks.Delete(oldClient)
-				// 恢复运行时配置到新连接
+				// Restore runtime config to new connection
 				r.applyRuntimeConfig()
 			} else {
-				// 无重连回调，直接返回错误
+				// No reconnect callback, return error directly
 				return &ModbusConnErr{Err: err}
 			}
 
@@ -206,14 +206,14 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 	return &ModbusConnErr{Err: err}
 }
 
-// warnf 记录警告日志
+// warnf logs warning
 func (r *RetryableModbusClient) warnf(format string, v ...interface{}) {
 	if r.logger != nil {
 		r.logger.Warnf("[Modbus] "+format, v...)
 	}
 }
 
-// ReadCoil 读取单个线圈状态
+// ReadCoil reads single coil status
 func (r *RetryableModbusClient) ReadCoil(address uint16) (bool, error) {
 	var result bool
 	var err error
@@ -225,7 +225,7 @@ func (r *RetryableModbusClient) ReadCoil(address uint16) (bool, error) {
 	return result, err
 }
 
-// ReadCoils 读取多个线圈状态
+// ReadCoils reads multiple coil status
 func (r *RetryableModbusClient) ReadCoils(address uint16, quantity uint16) ([]bool, error) {
 	var result []bool
 	var err error
@@ -237,7 +237,7 @@ func (r *RetryableModbusClient) ReadCoils(address uint16, quantity uint16) ([]bo
 	return result, err
 }
 
-// ReadDiscreteInput 读取单个离散输入状态
+// ReadDiscreteInput reads single discrete input status
 func (r *RetryableModbusClient) ReadDiscreteInput(address uint16) (bool, error) {
 	var result bool
 	var err error
@@ -249,7 +249,7 @@ func (r *RetryableModbusClient) ReadDiscreteInput(address uint16) (bool, error) 
 	return result, err
 }
 
-// ReadDiscreteInputs 读取多个离散输入状态
+// ReadDiscreteInputs reads multiple discrete input status
 func (r *RetryableModbusClient) ReadDiscreteInputs(address uint16, quantity uint16) ([]bool, error) {
 	var result []bool
 	var err error
@@ -261,7 +261,7 @@ func (r *RetryableModbusClient) ReadDiscreteInputs(address uint16, quantity uint
 	return result, err
 }
 
-// ReadRegister 读取单个寄存器
+// ReadRegister reads single register
 func (r *RetryableModbusClient) ReadRegister(address uint16, regType modbus.RegType) (uint16, error) {
 	var result uint16
 	var err error
@@ -273,7 +273,7 @@ func (r *RetryableModbusClient) ReadRegister(address uint16, regType modbus.RegT
 	return result, err
 }
 
-// ReadRegisters 读取多个寄存器
+// ReadRegisters reads multiple registers
 func (r *RetryableModbusClient) ReadRegisters(address uint16, quantity uint16, regType modbus.RegType) ([]uint16, error) {
 	var result []uint16
 	var err error
@@ -285,7 +285,7 @@ func (r *RetryableModbusClient) ReadRegisters(address uint16, quantity uint16, r
 	return result, err
 }
 
-// ReadUint32 读取单个32位无符号整数
+// ReadUint32 reads single 32-bit unsigned integer
 func (r *RetryableModbusClient) ReadUint32(address uint16, regType modbus.RegType) (uint32, error) {
 	var result uint32
 	var err error
@@ -297,7 +297,7 @@ func (r *RetryableModbusClient) ReadUint32(address uint16, regType modbus.RegTyp
 	return result, err
 }
 
-// ReadUint32s 读取多个32位无符号整数
+// ReadUint32s reads multiple 32-bit unsigned integers
 func (r *RetryableModbusClient) ReadUint32s(address uint16, quantity uint16, regType modbus.RegType) ([]uint32, error) {
 	var result []uint32
 	var err error
@@ -309,7 +309,7 @@ func (r *RetryableModbusClient) ReadUint32s(address uint16, quantity uint16, reg
 	return result, err
 }
 
-// ReadFloat32 读取单个32位浮点数
+// ReadFloat32 reads single 32-bit float
 func (r *RetryableModbusClient) ReadFloat32(address uint16, regType modbus.RegType) (float32, error) {
 	var result float32
 	var err error
@@ -321,7 +321,7 @@ func (r *RetryableModbusClient) ReadFloat32(address uint16, regType modbus.RegTy
 	return result, err
 }
 
-// ReadFloat32s 读取多个32位浮点数
+// ReadFloat32s reads multiple 32-bit floats
 func (r *RetryableModbusClient) ReadFloat32s(address uint16, quantity uint16, regType modbus.RegType) ([]float32, error) {
 	var result []float32
 	var err error
@@ -333,7 +333,7 @@ func (r *RetryableModbusClient) ReadFloat32s(address uint16, quantity uint16, re
 	return result, err
 }
 
-// ReadUint64 读取单个64位无符号整数
+// ReadUint64 reads single 64-bit unsigned integer
 func (r *RetryableModbusClient) ReadUint64(address uint16, regType modbus.RegType) (uint64, error) {
 	var result uint64
 	var err error
@@ -345,7 +345,7 @@ func (r *RetryableModbusClient) ReadUint64(address uint16, regType modbus.RegTyp
 	return result, err
 }
 
-// ReadUint64s 读取多个64位无符号整数
+// ReadUint64s reads multiple 64-bit unsigned integers
 func (r *RetryableModbusClient) ReadUint64s(address uint16, quantity uint16, regType modbus.RegType) ([]uint64, error) {
 	var result []uint64
 	var err error
@@ -357,7 +357,7 @@ func (r *RetryableModbusClient) ReadUint64s(address uint16, quantity uint16, reg
 	return result, err
 }
 
-// ReadFloat64 读取单个64位浮点数
+// ReadFloat64 reads single 64-bit float
 func (r *RetryableModbusClient) ReadFloat64(address uint16, regType modbus.RegType) (float64, error) {
 	var result float64
 	var err error
@@ -369,7 +369,7 @@ func (r *RetryableModbusClient) ReadFloat64(address uint16, regType modbus.RegTy
 	return result, err
 }
 
-// ReadFloat64s 读取多个64位浮点数
+// ReadFloat64s reads multiple 64-bit floats
 func (r *RetryableModbusClient) ReadFloat64s(address uint16, quantity uint16, regType modbus.RegType) ([]float64, error) {
 	var result []float64
 	var err error
@@ -381,7 +381,7 @@ func (r *RetryableModbusClient) ReadFloat64s(address uint16, quantity uint16, re
 	return result, err
 }
 
-// ReadBytes 读取字节数组
+// ReadBytes reads byte array
 func (r *RetryableModbusClient) ReadBytes(address uint16, quantity uint16, regType modbus.RegType) ([]byte, error) {
 	var result []byte
 	var err error
@@ -393,7 +393,7 @@ func (r *RetryableModbusClient) ReadBytes(address uint16, quantity uint16, regTy
 	return result, err
 }
 
-// ReadRawBytes 读取原始字节数组
+// ReadRawBytes reads raw byte array
 func (r *RetryableModbusClient) ReadRawBytes(address uint16, quantity uint16, regType modbus.RegType) ([]byte, error) {
 	var result []byte
 	var err error
@@ -405,7 +405,7 @@ func (r *RetryableModbusClient) ReadRawBytes(address uint16, quantity uint16, re
 	return result, err
 }
 
-// WriteCoil 写入单个线圈状态
+// WriteCoil writes single coil status
 func (r *RetryableModbusClient) WriteCoil(address uint16, value bool) error {
 	fn := func() error {
 		return r.client.WriteCoil(address, value)
@@ -413,7 +413,7 @@ func (r *RetryableModbusClient) WriteCoil(address uint16, value bool) error {
 	return r.executeWithRetry("WriteCoil", fn)
 }
 
-// WriteCoils 写入多个线圈状态
+// WriteCoils writes multiple coil status
 func (r *RetryableModbusClient) WriteCoils(address uint16, values []bool) error {
 	fn := func() error {
 		return r.client.WriteCoils(address, values)
@@ -421,7 +421,7 @@ func (r *RetryableModbusClient) WriteCoils(address uint16, values []bool) error 
 	return r.executeWithRetry("WriteCoils", fn)
 }
 
-// WriteRegister 写入单个寄存器
+// WriteRegister writes single register
 func (r *RetryableModbusClient) WriteRegister(address uint16, value uint16) error {
 	fn := func() error {
 		return r.client.WriteRegister(address, value)
@@ -429,7 +429,7 @@ func (r *RetryableModbusClient) WriteRegister(address uint16, value uint16) erro
 	return r.executeWithRetry("WriteRegister", fn)
 }
 
-// WriteRegisters 写入多个寄存器
+// WriteRegisters writes multiple registers
 func (r *RetryableModbusClient) WriteRegisters(address uint16, values []uint16) error {
 	fn := func() error {
 		return r.client.WriteRegisters(address, values)
@@ -437,7 +437,7 @@ func (r *RetryableModbusClient) WriteRegisters(address uint16, values []uint16) 
 	return r.executeWithRetry("WriteRegisters", fn)
 }
 
-// WriteUint32 写入单个32位无符号整数
+// WriteUint32 writes single 32-bit unsigned integer
 func (r *RetryableModbusClient) WriteUint32(address uint16, value uint32) error {
 	fn := func() error {
 		return r.client.WriteUint32(address, value)
@@ -445,7 +445,7 @@ func (r *RetryableModbusClient) WriteUint32(address uint16, value uint32) error 
 	return r.executeWithRetry("WriteUint32", fn)
 }
 
-// WriteUint32s 写入多个32位无符号整数
+// WriteUint32s writes multiple 32-bit unsigned integers
 func (r *RetryableModbusClient) WriteUint32s(address uint16, values []uint32) error {
 	fn := func() error {
 		return r.client.WriteUint32s(address, values)
@@ -453,7 +453,7 @@ func (r *RetryableModbusClient) WriteUint32s(address uint16, values []uint32) er
 	return r.executeWithRetry("WriteUint32s", fn)
 }
 
-// WriteFloat32 写入单个32位浮点数
+// WriteFloat32 writes single 32-bit float
 func (r *RetryableModbusClient) WriteFloat32(address uint16, value float32) error {
 	fn := func() error {
 		return r.client.WriteFloat32(address, value)
@@ -461,7 +461,7 @@ func (r *RetryableModbusClient) WriteFloat32(address uint16, value float32) erro
 	return r.executeWithRetry("WriteFloat32", fn)
 }
 
-// WriteFloat32s 写入多个32位浮点数
+// WriteFloat32s writes multiple 32-bit floats
 func (r *RetryableModbusClient) WriteFloat32s(address uint16, values []float32) error {
 	fn := func() error {
 		return r.client.WriteFloat32s(address, values)
@@ -469,7 +469,7 @@ func (r *RetryableModbusClient) WriteFloat32s(address uint16, values []float32) 
 	return r.executeWithRetry("WriteFloat32s", fn)
 }
 
-// WriteUint64 写入单个64位无符号整数
+// WriteUint64 writes single 64-bit unsigned integer
 func (r *RetryableModbusClient) WriteUint64(address uint16, value uint64) error {
 	fn := func() error {
 		return r.client.WriteUint64(address, value)
@@ -477,7 +477,7 @@ func (r *RetryableModbusClient) WriteUint64(address uint16, value uint64) error 
 	return r.executeWithRetry("WriteUint64", fn)
 }
 
-// WriteUint64s 写入多个64位无符号整数
+// WriteUint64s writes multiple 64-bit unsigned integers
 func (r *RetryableModbusClient) WriteUint64s(address uint16, values []uint64) error {
 	fn := func() error {
 		return r.client.WriteUint64s(address, values)
@@ -485,7 +485,7 @@ func (r *RetryableModbusClient) WriteUint64s(address uint16, values []uint64) er
 	return r.executeWithRetry("WriteUint64s", fn)
 }
 
-// WriteFloat64 写入单个64位浮点数
+// WriteFloat64 writes single 64-bit float
 func (r *RetryableModbusClient) WriteFloat64(address uint16, value float64) error {
 	fn := func() error {
 		return r.client.WriteFloat64(address, value)
@@ -493,7 +493,7 @@ func (r *RetryableModbusClient) WriteFloat64(address uint16, value float64) erro
 	return r.executeWithRetry("WriteFloat64", fn)
 }
 
-// WriteFloat64s 写入多个64位浮点数
+// WriteFloat64s writes multiple 64-bit floats
 func (r *RetryableModbusClient) WriteFloat64s(address uint16, values []float64) error {
 	fn := func() error {
 		return r.client.WriteFloat64s(address, values)
@@ -501,7 +501,7 @@ func (r *RetryableModbusClient) WriteFloat64s(address uint16, values []float64) 
 	return r.executeWithRetry("WriteFloat64s", fn)
 }
 
-// WriteBytes 写入字节数组
+// WriteBytes writes byte array
 func (r *RetryableModbusClient) WriteBytes(address uint16, values []byte) error {
 	fn := func() error {
 		return r.client.WriteBytes(address, values)
@@ -509,7 +509,7 @@ func (r *RetryableModbusClient) WriteBytes(address uint16, values []byte) error 
 	return r.executeWithRetry("WriteBytes", fn)
 }
 
-// WriteRawBytes 写入原始字节数组
+// WriteRawBytes writes raw byte array
 func (r *RetryableModbusClient) WriteRawBytes(address uint16, values []byte) error {
 	fn := func() error {
 		return r.client.WriteRawBytes(address, values)
@@ -517,7 +517,7 @@ func (r *RetryableModbusClient) WriteRawBytes(address uint16, values []byte) err
 	return r.executeWithRetry("WriteRawBytes", fn)
 }
 
-// SetUnitId 设置从机编号
+// SetUnitId sets slave unit ID
 func (r *RetryableModbusClient) SetUnitId(unitId uint8) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -527,7 +527,7 @@ func (r *RetryableModbusClient) SetUnitId(unitId uint8) {
 	}
 }
 
-// SetEncoding 设置编码
+// SetEncoding sets encoding
 func (r *RetryableModbusClient) SetEncoding(endianness modbus.Endianness, wordOrder modbus.WordOrder) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -538,7 +538,7 @@ func (r *RetryableModbusClient) SetEncoding(endianness modbus.Endianness, wordOr
 	}
 }
 
-// applyRuntimeConfig 恢复运行时配置到当前连接
+// applyRuntimeConfig restores runtime config to current connection
 func (r *RetryableModbusClient) applyRuntimeConfig() {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -550,20 +550,20 @@ func (r *RetryableModbusClient) applyRuntimeConfig() {
 	}
 }
 
-// ModbusNode 命令式 modbus 节点（单点 Cmd/Address/Quantity）。
-// Deprecated: 改用 x/modbusRead / x/modbusWrite（点位表 + Modicon 地址，统一 iot_points 契约）。
-// 成功：转向Success链，发送消息执行结果存放在msg.Data
-// 失败：转向Failure链
+// ModbusNode imperative modbus node (single point Cmd/Address/Quantity).
+// Deprecated: use x/modbusRead / x/modbusWrite (point table + Modicon address, unified iot_points contract).
+// Success: route to Success chain, result stored in msg.Data
+// Failure: route to Failure chain
 type ModbusNode struct {
 	base.SharedNode[*modbus.ModbusClient]
-	//节点配置
+	// Node configuration
 	Config           ModbusConfiguration
 	addressTemplate  str.Template
 	quantityTemplate str.Template
 	valueTemplate    str.Template
 	regTypeTemplate  str.Template
 	reconnectLocker  sync.Mutex
-	// 记录当前 UnitId
+	// Record current UnitId
 	currentUnitId   uint8
 	currentUnitIdMu sync.RWMutex
 }
@@ -576,7 +576,7 @@ type Params struct {
 	RegType  modbus.RegType `json:"regType" `
 }
 
-// Type 返回组件类型
+// Type returns component type
 
 func (x *ModbusNode) getCurrentUnitId() uint8 {
 	x.currentUnitIdMu.RLock()
@@ -596,7 +596,7 @@ func (x *ModbusNode) Type() string {
 	return "x/modbus"
 }
 
-// New 默认参数
+// New default parameters
 func (x *ModbusNode) New() types.Node {
 	return &ModbusNode{
 		Config: ModbusConfiguration{
@@ -624,14 +624,14 @@ func (x *ModbusNode) New() types.Node {
 	}
 }
 
-// Init 初始化组件
+// Init initializes component
 func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
-		// 初始化当前 UnitId
+		// Initialize current UnitId
 		x.setUnitId(nil, x.Config.UnitId)
 
-		//初始化客户端
+		// Initialize client
 		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
 			return x.initClient()
 		}, func(client *modbus.ModbusClient) error {
@@ -641,12 +641,12 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 			return nil
 		})
 	}
-	//初始化模板
+	// Initialize templates
 	x.addressTemplate = str.NewTemplate(x.Config.Address)
 	x.quantityTemplate = str.NewTemplate(x.Config.Quantity)
 	x.valueTemplate = str.NewTemplate(x.Config.Value)
 	x.regTypeTemplate = str.NewTemplate(x.Config.RegType)
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
@@ -679,11 +679,11 @@ func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | by
 	return addVals
 }
 
-// reconnect 通过 SharedNode 机制安全地重建连接。
+// reconnect safely rebuilds connection through SharedNode mechanism.
 func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusClient, error) {
-	// ref:// 借用方：连接归源节点所有，借用方不重建。
+	// ref:// borrower: connection owned by source node, borrower does not rebuild.
 	if x.SharedNode.IsFromPool() {
-		// NodePool 模式：委托池内源节点重连
+		// NodePool mode: delegate to source node in pool
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if sourceNode, ok := nodeCtx.GetNode().(*ModbusNode); ok {
@@ -691,32 +691,32 @@ func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusCl
 				}
 			}
 		}
-		// 同链模式：返回错误由上层处理
+		// Same-chain mode: return error for upper layer to handle
 		return nil, fmt.Errorf("modbus ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
 	}
 
 	x.reconnectLocker.Lock()
 	defer x.reconnectLocker.Unlock()
 
-	// 检查连接是否已经被其他协程重建
+	// Check if connection already rebuilt by other goroutine
 	currentClient, err := x.SharedNode.GetSafely()
 	if err != nil {
-		// 获取或初始化失败
+		// Get or init failed
 		return nil, err
 	}
 	if currentClient != oldClient {
-		// 已经被其他协程重建，直接返回新连接
+		// Already rebuilt by other goroutine, return new connection directly
 		return currentClient, nil
 	}
 
-	// 主动关闭旧连接并等待网关释放资源
+	// Close old connection and wait for gateway to release resources
 	if oldClient != nil {
 		_ = oldClient.Close()
-		modbusOpLocks.Delete(oldClient) // 清理旧连接操作锁
+		modbusOpLocks.Delete(oldClient) // Clean up old connection operation lock
 		time.Sleep(iot_points.ReconnectDelay)
 	}
 
-	// 建新连接，Refresh 更新 holder
+	// Build new connection, Refresh updates holder
 	newClient, err := x.initClient()
 	if err != nil {
 		return nil, err
@@ -725,7 +725,7 @@ func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusCl
 	return newClient, nil
 }
 
-// OnMsg 处理消息
+// OnMsg processes message
 func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	var (
 		err    error
@@ -739,7 +739,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-	// 为此次请求创建临时的retryableClient，传入 reconnect 回调和运行时配置
+	// Create temporary retryableClient for this request, pass reconnect callback and runtime config
 	retryableClient := NewRetryableModbusClient(
 		conn, 3, x.RuleConfig.Logger, x.reconnect,
 		x.getCurrentUnitId(),
@@ -753,7 +753,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-	// 使用带重试功能的客户端执行操作
+	// Use client with retry capability to execute operation
 	err, data = x.executeModbusCommand(params, retryableClient)
 
 	if err != nil {
@@ -771,7 +771,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 }
 
-// executeModbusCommand 执行Modbus命令
+// executeModbusCommand executes Modbus command
 func (x *ModbusNode) executeModbusCommand(params *Params, retryableClient *RetryableModbusClient) (error, []iot_points.Data) {
 	var (
 		err      error
@@ -974,7 +974,7 @@ func (x *ModbusNode) executeModbusCommand(params *Params, retryableClient *Retry
 	return err, data
 }
 
-// getParams 获取参数
+// getParams gets parameters
 func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Params, error) {
 	var (
 		err       error
@@ -986,7 +986,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 		params                   = Params{}
 	)
 	evn := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	// 获取address
+	// Get address
 	if strings.TrimSpace(x.addressTemplate.Execute(evn)) != "" {
 		tmp, err = strconv.ParseUint(x.addressTemplate.Execute(evn), 0, 64)
 		if err != nil {
@@ -994,7 +994,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 		}
 		address = uint16(tmp)
 	}
-	// 获取quantity
+	// Get quantity
 	if strings.TrimSpace(x.quantityTemplate.Execute(evn)) != "" {
 		tmp, err = strconv.ParseUint(x.quantityTemplate.Execute(evn), 0, 64)
 		if err != nil {
@@ -1003,7 +1003,7 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 		quanitity = uint16(tmp)
 	}
 
-	// 获取regType
+	// Get regType
 	if strings.TrimSpace(x.regTypeTemplate.Execute(evn)) != "" {
 		tmp, err = strconv.ParseUint(x.regTypeTemplate.Execute(evn), 0, 64)
 		if err != nil {
@@ -1012,18 +1012,18 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 		regType = modbus.RegType(tmp)
 	}
 	val = x.valueTemplate.Execute(evn)
-	// 更新参数
+	// Update parameters
 	params.Cmd = x.Config.Cmd
 	params.Address = address
 	params.Quantity = quanitity
 	params.Value = val
 	params.RegType = regType
 
-	// 校验必要参数：仅当 address 模板渲染为空才算未填；协议地址 0 合法（各寄存器区第一个寄存器，如 holding 的 40001）
+	// Validate required params: only when address template renders empty counts as unset; protocol address 0 is valid (first register in each area, e.g. holding 40001)
 	if strings.TrimSpace(x.addressTemplate.Execute(evn)) == "" {
 		return nil, fmt.Errorf("modbus address cannot be empty")
 	}
-	// 写操作需要 value 参数
+	// Write operation requires value parameter
 	if strings.HasPrefix(params.Cmd, "Write") && strings.TrimSpace(val) == "" {
 		return nil, fmt.Errorf("modbus value cannot be empty for write command: %s", params.Cmd)
 	}
@@ -1031,9 +1031,9 @@ func (x *ModbusNode) getParams(ctx types.RuleContext, msg types.RuleMsg) (*Param
 	return &params, nil
 }
 
-// Destroy 销毁组件
+// Destroy destroys component
 func (x *ModbusNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+	if !x.SharedNode.IsFromPool() { // Only owner cleans up operation lock
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
 			modbusOpLocks.Delete(c)
 		}
@@ -1046,8 +1046,8 @@ func (x *ModbusNode) Desc() string {
 	return "Modbus client for reading/writing registers. Supports TCP and RTU. Routes to Success/Failure"
 }
 
-// Printf 打印日志
-// Deprecated: 使用 debugf/infof/warnf/errorf 代替
+// Printf prints log
+// Deprecated: use debugf/infof/warnf/errorf instead
 func (x *ModbusNode) Printf(format string, v ...interface{}) {
 	x.infof(format, v...)
 }
@@ -1076,7 +1076,7 @@ func (x *ModbusNode) errorf(format string, v ...interface{}) {
 	}
 }
 
-// 初始化连接
+// Initialize connection
 func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 	config := &modbus.ClientConfiguration{
 		URL:      x.Config.Server,
@@ -1121,7 +1121,7 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 	return conn, err
 }
 
-// byteToBool 将string转换为bool，支持,01,true,false
+// byteToBool converts string to bool, supports ,01,true,false
 func byteToBool(data string) (bool, error) {
 	switch strings.ToLower(data) {
 	case "0", "false":
@@ -1133,7 +1133,7 @@ func byteToBool(data string) (bool, error) {
 	}
 }
 
-// byteToBools 将string转换为bool列表，支持"[0,1]","[true,false]","true,false"
+// byteToBools converts string to bool list, supports "[0,1]","[true,false]","true,false"
 func byteToBools(data string) ([]bool, error) {
 	data = strings.Trim(data, "[]")
 	parts := strings.Split(data, ",")
@@ -1150,12 +1150,12 @@ func byteToBools(data string) ([]bool, error) {
 	return bools, nil
 }
 
-// byteToUint64 将string转换为uint64，支持"0x32","50"
+// byteToUint64 converts string to uint64, supports "0x32","50"
 func byteToUint64(data string) (uint64, error) {
 	return strconv.ParseUint(data, 0, 64)
 }
 
-// byteToUint64s 将string转换为uint64列表，支持"[0x32,50]","[32,50]","32,50"
+// byteToUint64s converts string to uint64 list, supports "[0x32,50]","[32,50]","32,50"
 func byteToUint64s(data string) ([]uint64, error) {
 	data = strings.Trim(data, "[]")
 	parts := strings.Split(data, ",")
@@ -1172,7 +1172,7 @@ func byteToUint64s(data string) ([]uint64, error) {
 	return u64s, nil
 }
 
-// byteToUint32 将string转换为uint32，支持"0x32","50"
+// byteToUint32 converts string to uint32, supports "0x32","50"
 func byteToUint32(data string) (uint32, error) {
 	if temp, err := strconv.ParseUint(data, 0, 32); err == nil {
 		return uint32(temp), nil
@@ -1181,7 +1181,7 @@ func byteToUint32(data string) (uint32, error) {
 	}
 }
 
-// byteToUint32s 将string转换为uint32列表，支持"[0x32,50]","[32,50]","32,50"
+// byteToUint32s converts string to uint32 list, supports "[0x32,50]","[32,50]","32,50"
 func byteToUint32s(data string) ([]uint32, error) {
 	data = strings.Trim(data, "[]")
 	parts := strings.Split(data, ",")
@@ -1198,7 +1198,7 @@ func byteToUint32s(data string) ([]uint32, error) {
 	return u32s, nil
 }
 
-// byteToUint16 将string转换为uint16，支持"0x32","50"
+// byteToUint16 converts string to uint16, supports "0x32","50"
 func byteToUint16(data string) (uint16, error) {
 	if temp, err := strconv.ParseUint(data, 0, 16); err == nil {
 		return uint16(temp), nil
@@ -1207,7 +1207,7 @@ func byteToUint16(data string) (uint16, error) {
 	}
 }
 
-// byteToUint16s 将string转换为uint16列表，支持"[0x32,50]","[32,50]","32,50"
+// byteToUint16s converts string to uint16 list, supports "[0x32,50]","[32,50]","32,50"
 func byteToUint16s(data string) ([]uint16, error) {
 	data = strings.Trim(data, "[]")
 	parts := strings.Split(data, ",")
@@ -1224,13 +1224,13 @@ func byteToUint16s(data string) ([]uint16, error) {
 	return u16s, nil
 }
 
-// byteToFloat32 将string转换为float32
+// byteToFloat32 converts string to float32
 func byteToFloat32(data string) (float32, error) {
 	f64, err := strconv.ParseFloat(data, 32)
 	return float32(f64), err
 }
 
-// byteToFloat32s 将string转换为float32列表，支持"[1.2,3.4]","1.2,3.4"
+// byteToFloat32s converts string to float32 list, supports "[1.2,3.4]","1.2,3.4"
 func byteToFloat32s(data string) ([]float32, error) {
 	data = strings.Trim(data, "[]")
 	parts := strings.Split(data, ",")
@@ -1247,12 +1247,12 @@ func byteToFloat32s(data string) ([]float32, error) {
 	return f32s, nil
 }
 
-// byteToFloat64 将string转换为float64
+// byteToFloat64 converts string to float64
 func byteToFloat64(data string) (float64, error) {
 	return strconv.ParseFloat(data, 64)
 }
 
-// byteToFloat64s 将string转换为float64列表，支持"[1.2,3.4]","1.2,3.4"
+// byteToFloat64s converts string to float64 list, supports "[1.2,3.4]","1.2,3.4"
 func byteToFloat64s(data string) ([]float64, error) {
 	data = strings.Trim(data, "[]")
 	parts := strings.Split(data, ",")

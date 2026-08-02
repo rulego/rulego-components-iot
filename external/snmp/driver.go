@@ -25,7 +25,7 @@ import (
 	"github.com/rulego/rulego/api/types"
 )
 
-// driver 适配 iot_points.Driver 到 SNMP client。
+// driver adapts iot_points.Driver to SNMP client.
 type driver struct {
 	client *gosnmp.GoSNMP
 	logger types.Logger
@@ -46,7 +46,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	if err != nil {
 		return nil, err
 	}
-	// 点名 -> 配置 OID：walk 结果的实际 OID 与配置不同时并入 Name
+	// point name -> configured OID: walk result actual OID appends to Name when differs from config
 	oidByName := make(map[string]string, len(cp))
 	for _, c := range cp {
 		oidByName[c.Name] = c.OID
@@ -58,7 +58,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 			continue
 		}
 		name := dd.Name
-		// 实际 OID（去前导点）与配置不同时，点名并入 OID 后缀
+		// actual OID (leading dot removed) appends to point name when differs from config
 		if dd.Address != "" && strings.TrimPrefix(dd.Address, ".") != oidByName[dd.Name] {
 			name = dd.Name + "." + dd.Address
 		}
@@ -79,8 +79,8 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return snmpclient.WritePoints(d.client, cp)
 }
 
-// toSnmpClientPoint 把统一 Point（Addr=OID）映射为 snmpclient.Point。
-// 读操作默认 get；Addr 以 "walk:" 前缀时走 walk（前缀剥离后为 OID）。
+// toSnmpClientPoint maps unified Point (Addr=OID) to snmpclient.Point.
+// Read defaults to get; Addr with "walk:" prefix uses walk (prefix stripped as OID).
 func toSnmpClientPoint(p iot_points.Point) snmpclient.Point {
 	op, oid := "get", p.Addr
 	if strings.HasPrefix(strings.ToUpper(p.Addr), "WALK:") {

@@ -25,10 +25,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// ToPointsData：OK 点填 Value+Timestamp，坏点填 Error；Name 优先级 points.Name → DisplayName → points.Addr。
+// TestToPointsData: OK points filled with Value+Timestamp, bad points filled with Error; Name priority points.Name → DisplayName → points.Addr.
 func TestToPointsData(t *testing.T) {
 	points := []iot_points.Point{
-		{Name: "温度", Addr: "ns=2;s=A"},
+		{Name: "Temperature", Addr: "ns=2;s=A"},
 		{Addr: "ns=2;s=B"},
 		{Addr: "ns=2;s=C"},
 	}
@@ -50,28 +50,28 @@ func TestToPointsData(t *testing.T) {
 	out := ToPointsData(points, data, resp)
 	assert.Equal(t, 3, len(out))
 
-	// 配置点名最优先
-	assert.Equal(t, "温度", out[0].Name)
+	// Configured point name has highest priority
+	assert.Equal(t, "Temperature", out[0].Name)
 	assert.Equal(t, 23.5, out[0].Value)
 	assert.Equal(t, ts.UnixNano(), out[0].Timestamp)
 	assert.Empty(t, out[0].Error)
 
-	// 无配置名时 DisplayName 次优
+	// DisplayName is secondary when no configured name
 	assert.Equal(t, "Pressure", out[1].Name)
 
-	// 坏点：无 DisplayName 时用 Addr，Error 填入，Value/Timestamp 为零值
+	// Bad point: use Addr when no DisplayName, Error filled, Value/Timestamp are zero values
 	assert.Equal(t, "ns=2;s=C", out[2].Name)
 	assert.NotEmpty(t, out[2].Error)
 	assert.Nil(t, out[2].Value)
 	assert.Equal(t, int64(0), out[2].Timestamp)
 
-	// 无名点位（endpoint 场景仅 Addr）回退 DisplayName → Addr
+	// Unnamed points (endpoint scenario with only Addr) fallback to DisplayName → Addr
 	out2 := ToPointsData([]iot_points.Point{{Addr: "ns=2;s=A"}, {Addr: "ns=2;s=B"}, {Addr: "ns=2;s=C"}}, data, resp)
 	assert.Equal(t, "Temp", out2[0].Name)
 	assert.Equal(t, "ns=2;s=C", out2[2].Name)
 
-	// 数值应用 Scale/Offset 工程量转换（23.5*2+1=48）
-	scaled := []iot_points.Point{{Name: "温度", Addr: "ns=2;s=A", Scale: 2, Offset: 1}, {Addr: "ns=2;s=B"}, {Addr: "ns=2;s=C"}}
+	// Apply Scale/Offset engineering conversion to values (23.5*2+1=48)
+	scaled := []iot_points.Point{{Name: "Temperature", Addr: "ns=2;s=A", Scale: 2, Offset: 1}, {Addr: "ns=2;s=B"}, {Addr: "ns=2;s=C"}}
 	out3 := ToPointsData(scaled, data, resp)
 	assert.Equal(t, 48.0, out3[0].Value)
 }

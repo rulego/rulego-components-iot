@@ -33,12 +33,12 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register node
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 }
 
-// Configuration 节点配置
+// Configuration node configuration
 type Configuration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
@@ -50,13 +50,13 @@ type Configuration struct {
 	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" ref:"shared" group:"advanced"`
 	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared" group:"advanced"`
 	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared" group:"advanced"`
-	//OPC UA 客户端证书文件
+	//OPC UA client certificate file
 	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared" group:"advanced"`
-	//OPC UA 客户端证书私钥文件
+	//OPC UA client private key file
 	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared" group:"advanced"`
-	// 请求超时（秒）
+	// Request timeout (seconds)
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5" ref:"shared"`
-	// 默认点位表（addr=NodeID，如 ns=2;s=Temperature）；为空则从 msg.Data 解析 nodeIds（旧兼容）
+	// Default points table (addr=NodeID, e.g. ns=2;s=Temperature); empty=parse nodeIds from msg.Data (legacy compatible)
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=NodeID; empty=parse nodeIds from msg.Data"`
 }
 
@@ -88,22 +88,22 @@ func (c Configuration) GetTimeout() int {
 	return c.Timeout
 }
 
-// ReadNode 批量读取 OPC UA 节点，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
-// gopcua SecureChannel 按 RequestID 匹配响应，天然并发安全，无需 opLock。
+// ReadNode batch reads OPC UA nodes, results (unified Data list) written back to msg.Data, routed via Success chain.
+// gopcua SecureChannel matches responses by RequestID, naturally concurrent-safe, no opLock needed.
 //
-// 点位来源（双入口，msg.Data 优先）：配置 points(addr=NodeID)；或 msg.Data 带 nodeIds/points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]
+// Points sources (dual entry, msg.Data takes priority): configure points(addr=NodeID); or msg.Data with nodeIds/points.
+// Output(msg.Data): [{"name","value","timestamp","error"}]
 //
-// opcuaReconnecter 连接重建能力接口。
+// opcuaReconnecter connection rebuild capability interface.
 type opcuaReconnecter interface {
 	reconnect(old *opcua.Client) (*opcua.Client, error)
 }
 
 type ReadNode struct {
 	base.SharedNode[*opcua.Client]
-	//节点配置
+	// Node configuration
 	Config Configuration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnection
 	reconnectLocker sync.Mutex
 }
 
@@ -122,7 +122,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/opcuaRead"
 }
@@ -135,12 +135,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 	}, func(client *opcua.Client) error {
 		return client.Close(context.Background())
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。点位双入口（msg.Data 优先，兼容旧 nodeIds/旧 write Data/新 points）；连接级失败自动重连重试。
+// OnMsg processes messages. Points dual entry (msg.Data takes priority, compatible with legacy nodeIds/legacy write Data/new points); auto reconnect retry on connection-level failure.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -185,7 +185,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -205,12 +205,12 @@ func (x *ReadNode) initClient() (*opcua.Client, error) {
 	return client, err
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *opcua.Client) (*opcua.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // Cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}

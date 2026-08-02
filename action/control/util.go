@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-// Package control 提供软 PLC 式逻辑控制节点(协议无关,纯消息处理):
-// 定时(timer,TON/TOF)与看门狗(watchdog,失联→故障安全)。判断/计数/时序/模式等
-// 能力请复用 streamsql、expr、cache、endpoint/schedule;本包只补"需要定时自发"的元件。
+// Package control provides soft-PLC style logic control nodes (protocol agnostic, pure message processing):
+// Timer (timer,TON/TOF) and watchdog (watchdog, disconnect->failsafe). Judgment/count/timing/pattern etc.
+// Capabilities please reuse streamsql, expr, cache, endpoint/schedule; this package only supplements components that "require spontaneous timing".
 package control
 
 import (
@@ -26,10 +26,10 @@ import (
 	"time"
 )
 
-// genKey 内部元数据键:闹钟消息携带的触发代次(沿用 _ 前缀内部键惯例)。
+// genKey internal metadata key: trigger generation carried by alarm message (following _ prefix internal key convention).
 const genKey = "_ctrlGen"
 
-// parseDurationMs 把时长串(如 3s/500ms)解析为毫秒。
+// parseDurationMs parses duration string (e.g. 3s/500ms) to milliseconds.
 func parseDurationMs(s string) (int64, error) {
 	d, err := time.ParseDuration(strings.TrimSpace(s))
 	if err != nil {
@@ -38,7 +38,7 @@ func parseDurationMs(s string) (int64, error) {
 	return d.Milliseconds(), nil
 }
 
-// toBool 把字符串解释为布尔:true/1/非零数字 为 true;空/false/0/null 为 false。
+// toBool interprets string as boolean: true/1/non-zero number is true; empty/false/0/null is false.
 func toBool(s string) bool {
 	s = strings.TrimSpace(s)
 	switch strings.ToLower(s) {

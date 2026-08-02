@@ -25,8 +25,8 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// startMockServer 启动一个进程内 gologix server 模拟 ControlLogix。
-// 返回 tag 提供器（用于预填/校验）和清理函数。端口 44818 被占用则跳过测试。
+// startMockServer starts an in-process gologix server simulating ControlLogix.
+// Returns tag provider (for pre-filling/validation) and cleanup function. Skips test if port 44818 is occupied.
 func startMockServer(t *testing.T) (*gologix.MapTagProvider, func()) {
 	if probe, err := net.Listen("tcp", "0.0.0.0:44818"); err != nil {
 		t.Skipf("port 44818 unavailable (skip EIP mock test): %v", err)
@@ -43,7 +43,7 @@ func startMockServer(t *testing.T) (*gologix.MapTagProvider, func()) {
 	srv := gologix.NewServer(&router)
 	go func() { _ = srv.Serve() }()
 
-	// 等待 listener 就绪
+	// Wait for listener ready
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", "127.0.0.1:44818", 100*time.Millisecond)
@@ -64,12 +64,12 @@ func startMockServer(t *testing.T) (*gologix.MapTagProvider, func()) {
 	return &provider, cleanup
 }
 
-// TestReadPointsMockServer 端到端：gologix server 预填各类型 tag -> ReadPoints 读取 -> 验证值与类型映射
+// TestReadPointsMockServer end-to-end: gologix server pre-fills various type tags -> ReadPoints reads -> verify value and type mapping
 func TestReadPointsMockServer(t *testing.T) {
 	provider, cleanup := startMockServer(t)
 	defer cleanup()
 
-	// 预填：REAL / DINT / STRING（BOOL 单独测，因 CIP BOOL 位寻址语义特殊）
+	// Pre-fill: REAL / DINT / STRING (BOOL tested separately due to CIP BOOL bit addressing semantics)
 	assert.Nil(t, provider.TagWrite("Temp", float32(23.5)))
 	assert.Nil(t, provider.TagWrite("Count", int32(42)))
 	assert.Nil(t, provider.TagWrite("Name", "Hello"))
@@ -81,9 +81,9 @@ func TestReadPointsMockServer(t *testing.T) {
 	defer client.Disconnect()
 
 	points := []Point{
-		{Name: "温度", Tag: "Temp", Type: "REAL"},
-		{Name: "计数", Tag: "Count", Type: "DINT"},
-		{Name: "名称", Tag: "Name", Type: "STRING"},
+		{Name: "Temperature", Tag: "Temp", Type: "REAL"},
+		{Name: "Count", Tag: "Count", Type: "DINT"},
+		{Name: "NameTag", Tag: "Name", Type: "STRING"},
 	}
 	data, err := ReadPoints(client, points, nil)
 	assert.Nil(t, err)
@@ -94,16 +94,16 @@ func TestReadPointsMockServer(t *testing.T) {
 		byName[d.Name] = d
 	}
 
-	// 验证每个点位 quality=good 且值正确
-	if q := byName["温度"].Quality; q != "good" {
+	// Verify each point quality=good and value correct
+	if q := byName["Temperature"].Quality; q != "good" {
 		t.Fatalf("Temp quality=%s (want good), err path may be broken", q)
 	}
-	assert.Equal(t, float32(23.5), byName["温度"].Value)
-	assert.Equal(t, int32(42), byName["计数"].Value)
-	assert.Equal(t, "Hello", byName["名称"].Value)
+	assert.Equal(t, float32(23.5), byName["Temperature"].Value)
+	assert.Equal(t, int32(42), byName["Count"].Value)
+	assert.Equal(t, "Hello", byName["NameTag"].Value)
 }
 
-// TestWritePointsMockServer 端到端：WritePoints 写入 -> provider 数据被更新
+// TestWritePointsMockServer end-to-end: WritePoints writes -> provider data updated
 func TestWritePointsMockServer(t *testing.T) {
 	provider, cleanup := startMockServer(t)
 	defer cleanup()
@@ -118,14 +118,15 @@ func TestWritePointsMockServer(t *testing.T) {
 	defer client.Disconnect()
 
 	points := []Point{
-		{Name: "计数", Tag: "Count", Type: "DINT", Value: "99"},
-		{Name: "温度", Tag: "Temp", Type: "REAL", Value: "65.5"},
+		{Name: "Count", Tag: "Count", Type: "DINT", Value: "99"},
+		{Name: "Temperature", Tag: "Temp", Type: "REAL", Value: "65.5"},
 	}
 	if err := WritePoints(client, points); err != nil {
 		t.Fatalf("WritePoints: %v", err)
 	}
 
-	// 验证 server 端数据被更新（TagWrite 内部转小写 key）
+	// Verify server-side data updated (TagWrite internally lowercases key)
+
 	provider.Mutex.Lock()
 	gotCount := provider.Data["count"]
 	gotTemp := provider.Data["temp"]
@@ -135,7 +136,7 @@ func TestWritePointsMockServer(t *testing.T) {
 	assert.Equal(t, float32(65.5), gotTemp)
 }
 
-// TestReadPointsBadTag 点位不存在时标记 quality=bad，不影响其它点位
+// TestReadPointsBadTag missing point marked quality=bad, does not affect others
 func TestReadPointsBadTag(t *testing.T) {
 	provider, cleanup := startMockServer(t)
 	defer cleanup()
@@ -149,17 +150,17 @@ func TestReadPointsBadTag(t *testing.T) {
 	defer client.Disconnect()
 
 	points := []Point{
-		{Name: "好点", Tag: "Good", Type: "DINT"},
-		{Name: "坏点", Tag: "Missing", Type: "DINT"},
+		{Name: "GoodPoint", Tag: "Good", Type: "DINT"},
+		{Name: "BadPoint", Tag: "Missing", Type: "DINT"},
 	}
 	data, err := ReadPoints(client, points, nil)
-	assert.Nil(t, err) // 单点失败不返回错误
+	assert.Nil(t, err) // Single point failure does not return error
 	assert.Equal(t, 2, len(data))
 
 	byName := make(map[string]Data, len(data))
 	for _, d := range data {
 		byName[d.Name] = d
 	}
-	assert.Equal(t, "good", byName["好点"].Quality)
-	assert.Equal(t, "bad", byName["坏点"].Quality)
+	assert.Equal(t, "good", byName["GoodPoint"].Quality)
+	assert.Equal(t, "bad", byName["BadPoint"].Quality)
 }

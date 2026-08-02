@@ -28,10 +28,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestE2E_InfluxDB 真实端到端：写 SeriesPoint 到 InfluxDB 2.x，Flux 查询验证值。
-// 需先起 InfluxDB 2.x（test/e2e/docker-compose.yml 或 docker run -p 8086:8086 带 DOCKER_INFLUXDB_INIT_* setup 环境），
-// 设 E2E_INFLUXDB_URL=http://localhost:8086、E2E_INFLUXDB_TOKEN=<admin token> 启用；未设则 skip。
-// E2E_INFLUXDB_ORG(默认 rulego)、E2E_INFLUXDB_BUCKET(默认 iot) 可选。
+// TestE2E_InfluxDB real end-to-end: write SeriesPoint to InfluxDB 2.x, verify value with Flux query.
+// Requires InfluxDB 2.x running first (test/e2e/docker-compose.yml or docker run -p 8086:8086 with DOCKER_INFLUXDB_INIT_* setup env),
+// set E2E_INFLUXDB_URL=http://localhost:8086, E2E_INFLUXDB_TOKEN=<admin token> to enable; skip if not set.
+// E2E_INFLUXDB_ORG (default rulego), E2E_INFLUXDB_BUCKET (default iot) are optional.
 func TestE2E_InfluxDB(t *testing.T) {
 	url := os.Getenv("E2E_INFLUXDB_URL")
 	token := os.Getenv("E2E_INFLUXDB_TOKEN")
@@ -58,14 +58,14 @@ func TestE2E_InfluxDB(t *testing.T) {
 		Fields:      map[string]interface{}{"value": 42.5},
 		Timestamp:   time.Now().UnixNano(),
 	}
-	// 环境变量已设即期望可跑：等待 setup 完成，同点重试幂等，持续失败按错误处理
+	// When env vars are set, expect to run: wait for setup completion, retry same point idempotently, continuous failure treated as error
 	if err := waitReady(60*time.Second, func() error {
 		return d.WritePoints(ctx, bucket, []tsdb.SeriesPoint{point})
 	}); err != nil {
 		t.Fatalf("influxdb not ready within 60s: %v", err)
 	}
 
-	// InfluxDB 写入后可查需短暂等待
+	// Brief wait required before data becomes queryable after InfluxDB write
 	time.Sleep(2 * time.Second)
 	flux := fmt.Sprintf(
 		`from(bucket:"%s") |> range(start: -5m) |> filter(fn:(r) => r._measurement == "%s") |> filter(fn:(r) => r._field == "value")`,
@@ -77,7 +77,7 @@ func TestE2E_InfluxDB(t *testing.T) {
 	assert.Equal(t, "e2e", res.Rows[0]["host"])
 }
 
-// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+// waitReady retries ready every 2s within timeout, returns last error if all attempts fail.
 func waitReady(timeout time.Duration, ready func() error) error {
 	var err error
 	deadline := time.Now().Add(timeout)

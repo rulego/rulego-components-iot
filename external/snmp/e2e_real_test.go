@@ -35,8 +35,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_SNMP 真实端到端：对真实 snmpd 执行 get + walk。
-// 需先起 snmpd（v2c community=public），设 E2E_SNMP_ADDR（host 或 host:port）启用；未设则 skip。
+// TestE2E_SNMP real end-to-end: executes get + walk against real snmpd.
+// Requires snmpd running first (v2c community=public), set E2E_SNMP_ADDR (host or host:port) to enable; skip if not set.
 func TestE2E_SNMP(t *testing.T) {
 	addr := os.Getenv("E2E_SNMP_ADDR")
 	if addr == "" {
@@ -86,7 +86,7 @@ func TestE2E_SNMP(t *testing.T) {
 	}
 }
 
-// octetString 还原 OctetString 值：JSON 序列化后 []byte 表现为 base64 字符串。
+// octetString restores OctetString value: []byte appears as base64 string after JSON serialization.
 func octetString(v interface{}) string {
 	s := fmt.Sprint(v)
 	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
@@ -95,7 +95,7 @@ func octetString(v interface{}) string {
 	return s
 }
 
-// TestConcurrent_SNMPRead 8 并发 ×10 消息共享同一 x/snmpRead 节点读取，验证全部成功且值正确。
+// TestConcurrent_SNMPRead 8 concurrent goroutines x 10 messages sharing same x/snmpRead node, verifies all succeed with correct values.
 func TestConcurrent_SNMPRead(t *testing.T) {
 	addr := os.Getenv("E2E_SNMP_ADDR")
 	if addr == "" {

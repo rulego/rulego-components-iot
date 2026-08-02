@@ -27,7 +27,7 @@ import (
 	"github.com/rulego/rulego/api/types"
 )
 
-// driver 适配 iot_points.Driver 到 S7 client。
+// driver adapts iot_points.Driver to S7 client.
 type driver struct {
 	handler *gos7.TCPClientHandler
 	logger  types.Logger
@@ -75,7 +75,7 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return s7client.WritePoints(d.handler, cp)
 }
 
-// toS7ClientPoint 把统一 Point（Addr，西门子官方语法）解析为 s7client.Point。
+// toS7ClientPoint converts unified Point (Addr, Siemens official syntax) to s7client.Point.
 func toS7ClientPoint(p iot_points.Point) (s7client.Point, error) {
 	area, dbNumber, address, bitOffset, isBit, err := parseAddr(p.Addr)
 	if err != nil {
@@ -83,7 +83,7 @@ func toS7ClientPoint(p iot_points.Point) (s7client.Point, error) {
 	}
 	t := mapType(p.Type)
 	if isBit {
-		t = "BOOL" // 位地址(DBX/M0.1/MX)强制 BOOL
+		t = "BOOL" // bit address (DBX/M0.1/MX) forces BOOL
 	}
 	return s7client.Point{
 		Name:      p.Name,
@@ -96,7 +96,7 @@ func toS7ClientPoint(p iot_points.Point) (s7client.Point, error) {
 	}, nil
 }
 
-// mapType 统一类型枚举 -> S7 原生类型；未知类型透传。
+// mapType maps unified type enum to S7 native type; unknown types pass through.
 func mapType(t string) string {
 	switch strings.ToUpper(t) {
 	case iot_points.TypeBool:
@@ -120,19 +120,19 @@ func mapType(t string) string {
 	}
 }
 
-// parseAddr 解析西门子官方地址语法：
-//   - DB 区：DB<n>.<DBT><addr>[.<bit>]，DBT∈{DBX(位),DBB(字节),DBW(字),DBD(双字)}，如 DB1.DBD0、DB1.DBX0.1
-//   - M/I/Q 区：<area><T?><addr>，T∈{B,W,D,X} 或位简写 byte.bit，如 MW0、MD0、M0.1、IW0
-//   - 可选 % 前缀（TIA Portal 绝对地址）
+// parseAddr parses Siemens official address syntax:
+//   - DB area: DB<n>.<DBT><addr>[.<bit>], DBT∈{DBX(bit),DBB(byte),DBW(word),DBD(dword)}, e.g. DB1.DBD0, DB1.DBX0.1
+//   - M/I/Q area: <area><T?><addr>, T∈{B,W,D,X} or bit shorthand byte.bit, e.g. MW0, MD0, M0.1, IW0
+//   - Optional % prefix (TIA Portal absolute address)
 //
-// 位地址(DBX/X 后缀或 byte.bit 简写)返回 isBit=true，调用方据此强制 BOOL。
+// Bit address (DBX/X suffix or byte.bit shorthand) returns isBit=true, caller forces BOOL accordingly.
 func parseAddr(addr string) (area string, dbNumber, address, bitOffset int, isBit bool, err error) {
 	addr = strings.TrimSpace(strings.TrimPrefix(addr, "%"))
 	if addr == "" {
 		return "", 0, 0, 0, false, fmt.Errorf("empty s7 addr")
 	}
 	upper := strings.ToUpper(addr)
-	// DB 区：DB<n>.DBT<addr>
+	// DB area: DB<n>.DBT<addr>
 	if strings.HasPrefix(upper, "DB") && len(addr) > 2 && addr[2] >= '0' && addr[2] <= '9' {
 		rest := addr[2:]
 		dot := strings.Index(rest, ".")
@@ -150,7 +150,7 @@ func parseAddr(addr string) (area string, dbNumber, address, bitOffset int, isBi
 		case "DBX":
 			isBit = true
 		case "DBB", "DBW", "DBD":
-			// 存储大小由 Type 决定
+			// storage size determined by Type
 		default:
 			return "", 0, 0, 0, false, fmt.Errorf("unknown DB type %q in %q", tail[:3], addr)
 		}
@@ -160,7 +160,7 @@ func parseAddr(addr string) (area string, dbNumber, address, bitOffset int, isBi
 		}
 		return "DB", dbNumber, address, bitOffset, isBit, nil
 	}
-	// M/I/Q 区
+	// M/I/Q area
 	switch upper[0] {
 	case 'M':
 		area = "M"
@@ -176,11 +176,11 @@ func parseAddr(addr string) (area string, dbNumber, address, bitOffset int, isBi
 		return "", 0, 0, 0, false, fmt.Errorf("missing address in %q", addr)
 	}
 	if rest[0] >= '0' && rest[0] <= '9' {
-		// 位简写 byte.bit
+		// bit shorthand byte.bit
 		isBit = true
 		address, bitOffset, err = parseAddrTail(rest, true)
 	} else {
-		// 类型后缀 B/W/D/X
+		// type suffix B/W/D/X
 		switch strings.ToUpper(string(rest[0])) {
 		case "X":
 			isBit = true
@@ -196,7 +196,7 @@ func parseAddr(addr string) (area string, dbNumber, address, bitOffset int, isBi
 	return area, 0, address, bitOffset, isBit, nil
 }
 
-// parseAddrTail 解析 <addr>[.<bit>]。isBit 时要求 .bit。
+// parseAddrTail parses <addr>[.<bit>]. Requires .bit when isBit.
 func parseAddrTail(s string, isBit bool) (address, bitOffset int, err error) {
 	parts := strings.SplitN(s, ".", 2)
 	if address, err = strconv.Atoi(parts[0]); err != nil {

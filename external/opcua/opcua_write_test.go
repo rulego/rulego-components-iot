@@ -28,7 +28,7 @@ import (
 
 func TestWriteNode(t *testing.T) {
 	if os.Getenv("SKIP_OPCUA_TESTS") == "true" {
-		t.Skip("跳过 OPC UA 写入测试")
+		t.Skip("Skipping OPC UA write test")
 	}
 
 	Registry := &types.SafeComponentSlice{}
@@ -75,11 +75,11 @@ func TestWriteNode(t *testing.T) {
 			"auth":     "Anonymous",
 			"username": "",
 			"password": "",
-			"timeout":  5, // 减少超时时间
+			"timeout":  5, // Reduced timeout
 			"poolSize": 5,
 		}, Registry)
 
-		// 使用通道来同步测试完成，避免 goroutine 竞态条件
+		// Use channel to synchronize test completion and avoid goroutine race conditions
 		done := make(chan struct{}, 1)
 		resultChan := make(chan struct {
 			passed   bool
@@ -96,15 +96,15 @@ func TestWriteNode(t *testing.T) {
 				relation: relationType,
 			}
 
-			// 在测试环境中，OPC UA 服务器可能不可用，所以我们接受 Success 或 Failure
+			// In test environment, OPC UA server may be unavailable, so we accept Success or Failure
 			if relationType == types.Success {
 				if msg.GetData() == data {
 					result.passed = true
 				} else {
-					result.passed = true // 仍然视为通过，因为连接可能有问题
+					result.passed = true // Still considered passed because connection may have issues
 				}
 			} else if relationType == types.Failure {
-				// 连接失败是预期的，但记录错误信息用于告警
+				// Connection failure is expected, but log error for warning
 				result.passed = true
 				if err != nil {
 					result.errorMsg = err.Error()
@@ -114,29 +114,29 @@ func TestWriteNode(t *testing.T) {
 				result.errorMsg = "Unexpected relation type: " + relationType
 			}
 
-			// 安全地发送结果
+			// Safely send result
 			select {
 			case resultChan <- result:
 			default:
 			}
 
-			// 发送完成信号
+			// Send completion signal
 			select {
 			case done <- struct{}{}:
 			default:
 			}
 		})
 
-		// 等待测试完成，带超时保护
+		// Wait for test completion with timeout protection
 		select {
 		case <-done:
-			// 获取结果并处理
+			// Get and process result
 			select {
 			case result := <-resultChan:
 				if !result.passed {
 					t.Errorf("OPC UA write test failed: %s", result.errorMsg)
 				} else if result.relation == types.Failure && result.errorMsg != "" {
-					// 告警日志：测试环境中的失败情况
+					// Warning log: failure in test environment
 					t.Logf("⚠️  OPC UA WRITE FAILURE ALERT: %s (Expected in test environment)", result.errorMsg)
 				} else if result.relation == types.Success {
 					t.Log("✅ OPC UA write operation succeeded")
@@ -157,7 +157,7 @@ func TestWriteNode(t *testing.T) {
 			}()
 			return timeout
 		}():
-			// 超时告警
+			// Timeout warning
 			t.Log("⚠️  OPC UA WRITE TIMEOUT ALERT: Test timed out after 10 seconds (Expected in test environment)")
 		}
 	})

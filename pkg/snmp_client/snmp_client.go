@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-// Package snmpclient 封装 gosnmp/gosnmp，提供 SNMP（v1/v2c/v3）的连接、
-// OID 批量读取（Get/Walk）、写入（Set）与 PDU 类型解析。
-// 输出统一契约 Data 供 rulego 下游节点处理。
+// Package snmpclient wraps gosnmp/gosnmp, providing SNMP (v1/v2c/v3) connections,
+// bulk OID read (Get/Walk), write (Set), and PDU type parsing.
+// Outputs unified Data contract for downstream rulego nodes.
+
 package snmpclient
 
 import (
@@ -30,34 +31,34 @@ import (
 	"github.com/rulego/rulego/api/types"
 )
 
-// SnmpDataMsgType SNMP 数据消息类型
+// SnmpDataMsgType is the SNMP data message type.
 const SnmpDataMsgType = "SNMP_DATA"
 
-// Data 统一的点位输出契约
+// Data is the unified point output contract.
 type Data struct {
 	Name      string      `json:"name"`
 	Address   string      `json:"address"` // OID
 	Value     interface{} `json:"value"`
-	Type      string      `json:"type"` // SNMP 类型字符串
+	Type      string      `json:"type"` // SNMP type string
 	Quality   string      `json:"quality"`
 	Timestamp time.Time   `json:"timestamp"`
 }
 
-// Point SNMP 点位定义，读/写共用
+// Point SNMP point definition, shared for read/write
 type Point struct {
-	Name  string `json:"name"`            // 点位名称
-	OID   string `json:"oid"`             // OID，如 1.3.6.1.2.1.1.5.0
-	Op    string `json:"op,omitempty"`    // 读操作：get(默认)/walk；write 忽略
-	Type  string `json:"type,omitempty"`  // 仅写入：值类型（Integer/OctetString/...）
-	Value string `json:"value,omitempty"` // 仅写入：值的字符串形式
+	Name  string `json:"name"`            // Point name
+	OID   string `json:"oid"`             // OID, e.g. 1.3.6.1.2.1.1.5.0
+	Op    string `json:"op,omitempty"`    // Read operation: get(default)/walk; ignored for write
+	Type  string `json:"type,omitempty"`  // Write only: value type (Integer/OctetString/...)
+	Value string `json:"value,omitempty"` // Write only: string representation of value
 }
 
-// ConfigProp SNMP 连接配置接口
+// ConfigProp SNMP connection configuration interface
 type ConfigProp interface {
-	GetServer() string        // host or host:port，默认端口 161
+	GetServer() string        // host or host:port, default port 161
 	GetVersion() string       // v1/v2c/v3
 	GetCommunity() string     // v1/v2c community
-	GetTimeout() int          // 秒
+	GetTimeout() int          // seconds
 	GetSecurityLevel() string // v3: noAuthNoPriv/authNoPriv/authPriv
 	GetUsername() string      // v3
 	GetAuthProtocol() string  // v3: None/MD5/SHA/SHA224/SHA256/SHA384/SHA512
@@ -66,17 +67,17 @@ type ConfigProp interface {
 	GetPrivPassword() string  // v3
 }
 
-// Holder SNMP 客户端配置持有者
+// Holder SNMP client configuration holder
 type Holder struct {
 	Config ConfigProp
 }
 
-// DefaultHolder 默认配置
+// DefaultHolder default configuration
 func DefaultHolder(c ConfigProp) *Holder {
 	return &Holder{Config: c}
 }
 
-// NewClient 创建并连接 SNMP 客户端
+// NewClient creates and connects an SNMP client.
 func (h *Holder) NewClient() (*gosnmp.GoSNMP, error) {
 	if h.Config == nil {
 		return nil, errors.New("snmp config is nil")
@@ -113,7 +114,7 @@ func (h *Holder) NewClient() (*gosnmp.GoSNMP, error) {
 	return g, nil
 }
 
-// parseVersion 版本字符串 -> gosnmp.SnmpVersion
+// parseVersion version string -> gosnmp.SnmpVersion
 func parseVersion(s string) (gosnmp.SnmpVersion, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "v2c", "v2", "2c":
@@ -126,7 +127,7 @@ func parseVersion(s string) (gosnmp.SnmpVersion, error) {
 	return 0, fmt.Errorf("unsupported snmp version: %q", s)
 }
 
-// applyV3 配置 SNMPv3 USM 安全参数
+// applyV3 configures SNMPv3 USM security parameters
 func applyV3(g *gosnmp.GoSNMP, c ConfigProp) error {
 	level, err := parseSecurityLevel(c.GetSecurityLevel())
 	if err != nil {
@@ -191,8 +192,8 @@ func parsePrivProtocol(s string) gosnmp.SnmpV3PrivProtocol {
 	return gosnmp.NoPriv
 }
 
-// ReadPoints 批量读取 OID。op=get 精确读单值，op=walk 遍历子树返回多值。
-// 单个点位失败不影响其它（标记 quality=bad）。
+// ReadPoints batch reads OIDs. op=get reads single value precisely, op=walk traverses subtree returning multiple values.
+// Single point failure does not affect others (marked quality=bad).
 func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]Data, error) {
 	if client == nil {
 		return nil, errors.New("snmp client is nil")
@@ -227,14 +228,14 @@ func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]D
 			results = append(results, d)
 		}
 	}
-	// 全部点位失败：疑似连接级错误，返回 error
+	// All points failed: suspected connection-level error, return error
 	if len(points) > 0 && failCount == len(points) {
 		return results, fmt.Errorf("all %d points failed (possible connection error): %w", failCount, lastErr)
 	}
 	return results, nil
 }
 
-// readGet 精确读单个 OID
+// readGet precisely reads single OID
 func readGet(client *gosnmp.GoSNMP, p Point) (Data, error) {
 	resp, err := client.Get([]string{p.OID})
 	if err != nil {
@@ -246,7 +247,7 @@ func readGet(client *gosnmp.GoSNMP, p Point) (Data, error) {
 	return pduToData(p.Name, resp.Variables[0]), nil
 }
 
-// readWalk 遍历 OID 子树
+// readWalk traverses OID subtree
 func readWalk(client *gosnmp.GoSNMP, p Point) ([]Data, error) {
 	out := make([]Data, 0)
 	err := client.Walk(p.OID, func(d gosnmp.SnmpPDU) error {
@@ -259,7 +260,7 @@ func readWalk(client *gosnmp.GoSNMP, p Point) ([]Data, error) {
 	return out, nil
 }
 
-// pduToData 将 gosnmp PDU 转为统一 Data
+// pduToData converts gosnmp PDU to unified Data
 func pduToData(name string, pdu gosnmp.SnmpPDU) Data {
 	return Data{
 		Name:      name,
@@ -271,7 +272,7 @@ func pduToData(name string, pdu gosnmp.SnmpPDU) Data {
 	}
 }
 
-// pduTypeString PDU 类型常量 -> 可读字符串
+// pduTypeString PDU type constant -> readable string
 func pduTypeString(t gosnmp.Asn1BER) string {
 	switch t {
 	case gosnmp.Integer:
@@ -296,7 +297,7 @@ func pduTypeString(t gosnmp.Asn1BER) string {
 	return fmt.Sprintf("Asn1BER(%d)", int(t))
 }
 
-// WritePoints 批量写入 OID（Set）。任一失败立即返回错误。
+// WritePoints batch writes OIDs (Set). Returns error immediately on any failure
 func WritePoints(client *gosnmp.GoSNMP, points []Point) error {
 	if client == nil {
 		return errors.New("snmp client is nil")
@@ -314,7 +315,7 @@ func WritePoints(client *gosnmp.GoSNMP, points []Point) error {
 	return nil
 }
 
-// encodeValue 按 type 把值的字符串形式解析为 Go 值 + Asn1BER（供 Set）
+// encodeValue parses value string by type into Go value + Asn1BER (for Set)
 func encodeValue(value, typ string) (interface{}, gosnmp.Asn1BER, error) {
 	v := strings.TrimSpace(value)
 	switch strings.ToLower(strings.TrimSpace(typ)) {

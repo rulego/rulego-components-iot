@@ -28,7 +28,7 @@ import (
 	"github.com/simonvetter/modbus"
 )
 
-// freePort 获取空闲端口
+// freePort gets free port
 func freePort(t *testing.T) int {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -39,7 +39,7 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// startEndpoint 启动 modbus server endpoint 并等待就绪
+// startEndpoint starts modbus server endpoint and waits for ready
 func startEndpoint(t *testing.T, cfg map[string]interface{}) *ModbusServerEndpoint {
 	ep := &ModbusServerEndpoint{}
 	node := ep.New().(*ModbusServerEndpoint)
@@ -49,7 +49,7 @@ func startEndpoint(t *testing.T, cfg map[string]interface{}) *ModbusServerEndpoi
 	if err := node.Start(); err != nil {
 		t.Fatalf("start endpoint: %v", err)
 	}
-	// 等待端口就绪
+	// Wait for port ready
 	listen := cfg["server"].(string)
 	addr := listen[len("tcp://"):]
 	for range 20 {
@@ -64,7 +64,7 @@ func startEndpoint(t *testing.T, cfg map[string]interface{}) *ModbusServerEndpoi
 	return nil
 }
 
-// newTestClient 创建并连接 modbus 客户端
+// newTestClient creates and connects modbus client
 func newTestClient(t *testing.T, port int) *modbus.ModbusClient {
 	client, err := modbus.NewClient(&modbus.ClientConfiguration{
 		URL: fmt.Sprintf("tcp://127.0.0.1:%d", port),
@@ -78,7 +78,7 @@ func newTestClient(t *testing.T, port int) *modbus.ModbusClient {
 	return client
 }
 
-// TestModbusServerReadWrite 端到端：启动从站 → 客户端写 HR → 读回验证
+// TestModbusServerReadWrite end-to-end: start slave -> client write HR -> read back verification
 func TestModbusServerReadWrite(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
@@ -88,16 +88,16 @@ func TestModbusServerReadWrite(t *testing.T) {
 	client := newTestClient(t, port)
 	defer client.Close()
 
-	// 写 Holding Register
+	// Write Holding Register
 	err := client.WriteRegister(100, 1234)
 	assert.Nil(t, err)
 
-	// 读回验证
+	// Read back verification
 	val, err := client.ReadRegister(100, modbus.HOLDING_REGISTER)
 	assert.Nil(t, err)
 	assert.Equal(t, uint16(1234), val)
 
-	// 写多个寄存器
+	// Write multiple registers
 	err = client.WriteRegisters(200, []uint16{111, 222, 333})
 	assert.Nil(t, err)
 	vals, err := client.ReadRegisters(200, 3, modbus.HOLDING_REGISTER)
@@ -107,19 +107,19 @@ func TestModbusServerReadWrite(t *testing.T) {
 	assert.Equal(t, uint16(222), vals[1])
 	assert.Equal(t, uint16(333), vals[2])
 
-	// 写 Coil
+	// Write Coil
 	err = client.WriteCoil(50, true)
 	assert.Nil(t, err)
 	coilVal, err := client.ReadCoil(50)
 	assert.Nil(t, err)
 	assert.Equal(t, true, coilVal)
 
-	// 越界读 → 错误
+	// Out of range read -> error
 	_, err = client.ReadRegister(uint16(node.Config.Registers)+10, modbus.HOLDING_REGISTER)
 	assert.NotNil(t, err)
 }
 
-// TestModbusServerWriteTrigger 写触发（无路由时静默丢弃，验证不 panic）
+// TestModbusServerWriteTrigger write trigger (silently discard when no router, verify no panic)
 func TestModbusServerWriteTrigger(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
@@ -136,7 +136,7 @@ func TestModbusServerWriteTrigger(t *testing.T) {
 	assert.Equal(t, uint16(999), val)
 }
 
-// TestModbusServerSetRegisters 外部回写寄存器（规则链处理后更新）
+// TestModbusServerSetRegisters external writeback registers (update after rule chain processing)
 func TestModbusServerSetRegisters(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
@@ -144,7 +144,7 @@ func TestModbusServerSetRegisters(t *testing.T) {
 	})
 	defer node.Close()
 
-	// 外部写入（模拟规则链回写）
+	// External write (simulate rule chain writeback)
 	node.SetRegisters(300, []uint16{5555, 6666})
 
 	client := newTestClient(t, port)
@@ -155,7 +155,7 @@ func TestModbusServerSetRegisters(t *testing.T) {
 	assert.Equal(t, uint16(6666), vals[1])
 }
 
-// TestModbusServerUnitIdFilter Unit ID 过滤
+// TestModbusServerUnitIdFilter Unit ID filter
 func TestModbusServerUnitIdFilter(t *testing.T) {
 	port := freePort(t)
 	node := startEndpoint(t, map[string]interface{}{
@@ -170,7 +170,7 @@ func TestModbusServerUnitIdFilter(t *testing.T) {
 	err := client.WriteRegister(0, 100)
 	assert.Nil(t, err)
 
-	// 验证消息格式可序列化
+	// Verify message format can be serialized
 	payload := map[string]interface{}{
 		"type": "holding_register", "unitId": uint8(1),
 		"addr": uint16(0), "quantity": uint16(1),

@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-// Package s7client 封装 robinson/gos7，提供西门子 S7 PLC 的连接、
-// 批量点位读写与类型解析。输出统一契约 Data 供 rulego 下游节点处理。
+// Package s7client wraps robinson/gos7, providing Siemens S7 PLC connections,
+// bulk point read/write, and type parsing. Outputs unified Data contract for downstream rulego nodes.
 //
-// 仅支持经典 S7comm（S7-200SMART/300/400/1200/1500 的 PG/OP 通信）。
-// 前提：TIA Portal 需开启「允许 PUT/GET 通信」、关闭数据块的「优化的块访问」。
+// Only supports classic S7comm (PG/OP communication for S7-200SMART/300/400/1200/1500).
+// Prerequisite: TIA Portal must enable "Allow PUT/GET communication" and disable "Optimized Block Access".
+
 package s7client
 
 import (
@@ -36,18 +37,18 @@ import (
 	"github.com/rulego/rulego/api/types"
 )
 
-// S7DataMsgType S7 数据消息类型
+// S7DataMsgType is the S7 data message type.
 const S7DataMsgType = "S7_DATA"
 
-// S7 区域 ID（gos7 内部小写未导出，按协议常量值重新定义）
+// S7 area IDs (gos7 internal lowercase unexported, redefined by protocol constant values)
 const (
-	areaDB = 0x84 // 数据块 Data Block
-	areaM  = 0x83 // 标志区 Markers
-	areaI  = 0x81 // 输入 Inputs
-	areaQ  = 0x82 // 输出 Outputs
+	areaDB = 0x84 // Data Block
+	areaM  = 0x83 // Markers
+	areaI  = 0x81 // Inputs
+	areaQ  = 0x82 // Outputs
 )
 
-// Data 统一的点位输出契约
+// Data is the unified point output contract.
 type Data struct {
 	Name      string      `json:"name"`
 	Address   string      `json:"address"`
@@ -57,38 +58,38 @@ type Data struct {
 	Timestamp time.Time   `json:"timestamp"`
 }
 
-// Point S7 点位定义，读/写共用
+// Point S7 point definition, shared for read/write
 type Point struct {
-	Name      string `json:"name"`                // 点位名称（输出带上，方便下游取值）
+	Name      string `json:"name"`                // Point name (included in output for downstream access)
 	Area      string `json:"area"`                // DB/M/I/Q
-	DbNumber  int    `json:"dbNumber"`            // 仅 area=DB 时有效
-	Address   int    `json:"address"`             // 字节偏移
+	DbNumber  int    `json:"dbNumber"`            // Valid only when area=DB
+	Address   int    `json:"address"`             // Byte offset
 	Type      string `json:"type"`                // BOOL/BYTE/INT/WORD/DINT/DWORD/REAL/LREAL/STRING
-	BitOffset int    `json:"bitOffset,omitempty"` // 仅 type=BOOL 时有效，0-7
-	Count     int    `json:"count,omitempty"`     // 数量，默认1；STRING 忽略
-	StringLen int    `json:"stringLen,omitempty"` // STRING 声明最大长度，默认 254
-	Value     string `json:"value,omitempty"`     // 仅写入：值的字符串形式
+	BitOffset int    `json:"bitOffset,omitempty"` // Valid only for type=BOOL, 0-7
+	Count     int    `json:"count,omitempty"`     // Count, default 1; ignored for STRING
+	StringLen int    `json:"stringLen,omitempty"` // STRING declared max length, default 254
+	Value     string `json:"value,omitempty"`     // Write only: string representation of value
 }
 
-// ConfigProp S7 连接配置接口
+// ConfigProp S7 connection configuration interface
 type ConfigProp interface {
 	GetServer() string // host:port
 	GetRack() int
 	GetSlot() int
-	GetTimeout() int // 秒
+	GetTimeout() int // seconds
 }
 
-// Holder S7 客户端配置持有者
+// Holder S7 client configuration holder
 type Holder struct {
 	Config ConfigProp
 }
 
-// DefaultHolder 默认配置
+// DefaultHolder default configuration
 func DefaultHolder(c ConfigProp) *Holder {
 	return &Holder{Config: c}
 }
 
-// NewHandler 创建并连接 S7 TCP 处理器（连接的持有者，由 SharedNode 复用）
+// NewHandler creates and connects S7 TCP handler (connection holder, reused by SharedNode)
 func (h *Holder) NewHandler() (*gos7.TCPClientHandler, error) {
 	if h.Config == nil {
 		return nil, errors.New("s7 config is nil")
@@ -110,7 +111,7 @@ func (h *Holder) NewHandler() (*gos7.TCPClientHandler, error) {
 	return handler, nil
 }
 
-// parseArea 区域字符串 -> 区域 ID
+// parseArea area string -> area ID
 func parseArea(area string) (int, error) {
 	switch strings.ToUpper(strings.TrimSpace(area)) {
 	case "DB":
@@ -125,7 +126,7 @@ func parseArea(area string) (int, error) {
 	return 0, fmt.Errorf("unsupported s7 area: %q (supported: DB/M/I/Q)", area)
 }
 
-// sizeOfType 单个值占用的字节数
+// sizeOfType byte count of a single value
 func sizeOfType(t string) int {
 	switch strings.ToUpper(strings.TrimSpace(t)) {
 	case "BOOL", "BYTE":
@@ -142,7 +143,7 @@ func sizeOfType(t string) int {
 	return 0
 }
 
-// stringMaxLen STRING 点位的声明最大长度，未声明（<=0）时取默认 254。
+// stringMaxLen declared max length of STRING point, defaults to 254 if not declared (<=0)
 func stringMaxLen(p Point) int {
 	if p.StringLen > 0 {
 		return p.StringLen
@@ -150,7 +151,7 @@ func stringMaxLen(p Point) int {
 	return 254
 }
 
-// formatAddr 生成可读地址串
+// formatAddr generates readable address string
 func formatAddr(p Point) string {
 	area := strings.ToUpper(strings.TrimSpace(p.Area))
 	if area == "DB" {
@@ -166,7 +167,7 @@ func formatAddr(p Point) string {
 	return fmt.Sprintf("%s%d", area, p.Address)
 }
 
-// ReadPoints 批量读取点位。单个点位失败不影响其它点位（标记 quality=bad）。
+// ReadPoints batch reads points. Single point failure does not affect others (marked quality=bad)
 func ReadPoints(handler *gos7.TCPClientHandler, points []Point, logger types.Logger) ([]Data, error) {
 	if handler == nil {
 		return nil, errors.New("s7 handler is nil")
@@ -196,14 +197,14 @@ func ReadPoints(handler *gos7.TCPClientHandler, points []Point, logger types.Log
 		}
 		results = append(results, d)
 	}
-	// 全部点位失败：疑似连接级错误，返回 error
+	// All points failed: suspected connection-level error, return error
 	if len(points) > 0 && failCount == len(points) {
 		return results, fmt.Errorf("all %d points failed (possible connection error): %w", failCount, lastErr)
 	}
 	return results, nil
 }
 
-// readPoint 读取单个点位
+// readPoint reads a single point
 func readPoint(client gos7.Client, p Point) (interface{}, error) {
 	area, err := parseArea(p.Area)
 	if err != nil {
@@ -245,7 +246,7 @@ func readPoint(client gos7.Client, p Point) (interface{}, error) {
 	return decodeScalar(buf, t, p.BitOffset)
 }
 
-// decodeScalar 解析单个值（大端，S7 默认字节序）
+// decodeScalar parses a single value (big-endian, S7 default byte order)
 func decodeScalar(buf []byte, t string, bitOffset int) (interface{}, error) {
 	switch t {
 	case "BOOL":
@@ -309,7 +310,7 @@ func decodeScalar(buf []byte, t string, bitOffset int) (interface{}, error) {
 	return nil, fmt.Errorf("unsupported type: %s", t)
 }
 
-// decodeArray 解析数组（count 个同类型值）
+// decodeArray parses array (count values of same type)
 func decodeArray(buf []byte, t string, count int) (interface{}, error) {
 	ts := sizeOfType(t)
 	arr := make([]interface{}, 0, count)
@@ -327,7 +328,7 @@ func decodeArray(buf []byte, t string, count int) (interface{}, error) {
 	return arr, nil
 }
 
-// WritePoints 批量写入点位。任一点位失败立即返回错误。
+// WritePoints batch writes points. Returns error immediately on any point failure
 func WritePoints(handler *gos7.TCPClientHandler, points []Point) error {
 	if handler == nil {
 		return errors.New("s7 handler is nil")
@@ -367,7 +368,7 @@ func writePoint(client gos7.Client, p Point) error {
 	return fmt.Errorf("unsupported area: %s", p.Area)
 }
 
-// writeBit 位写入：读-改-写
+// writeBit bit write: read-modify-write
 func writeBit(client gos7.Client, area int, p Point) error {
 	buf := make([]byte, 1)
 	switch area {
@@ -416,7 +417,7 @@ func writeBit(client gos7.Client, area int, p Point) error {
 	return nil
 }
 
-// parseBoolValue 解析 bool 值字符串（支持 true/false/0/1）
+// parseBoolValue parses bool value string (supports true/false/0/1)
 func parseBoolValue(s string) (bool, error) {
 	s = strings.TrimSpace(s)
 	if b, err := strconv.ParseBool(s); err == nil {
@@ -428,7 +429,7 @@ func parseBoolValue(s string) (bool, error) {
 	return false, fmt.Errorf("invalid bool value: %q", s)
 }
 
-// encodeScalar 将值的字符串形式编码为字节（大端，S7 默认）
+// encodeScalar encodes value string to bytes (big-endian, S7 default)
 func encodeScalar(value string, t string, stringLen int) ([]byte, error) {
 	v := strings.TrimSpace(value)
 	switch t {

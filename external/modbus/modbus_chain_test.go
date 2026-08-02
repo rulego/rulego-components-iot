@@ -29,9 +29,9 @@ import (
 	"github.com/rulego/rulego/engine"
 )
 
-// modbusStub 是最小 modbus TCP server：仅 accept 连接并计数，不响应 modbus 协议。
-// 用于验证「同链连接复用」——simonvetter/modbus 的 Open() 对 TCP 仅 net.Dial 建连，
-// 不发 modbus 请求，故 stub 无需实现协议即可让连接建立成功。accept 计数==1 即复用铁证。
+// modbusStub is minimal modbus TCP server: only accepts connections and counts, does not respond to modbus protocol.
+// Used to verify "same-chain connection reuse" — simonvetter/modbus's Open() only does net.Dial for TCP,
+// sends no modbus requests, so stub needs no protocol implementation for connection to succeed. accept count==1 is reuse proof.
 type modbusStub struct {
 	ln     net.Listener
 	accept int32
@@ -59,12 +59,12 @@ func (s *modbusStub) serve() {
 		atomic.AddInt32(&s.accept, 1)
 		go func(c net.Conn) {
 			defer c.Close()
-			io.Copy(io.Discard, c) // 保活连接，丢弃任何请求
+			io.Copy(io.Discard, c) // Keep-alive connection, discard any requests
 		}(c)
 	}
 }
 
-// waitAccept 轮询等待 accept 计数达到 want（Dial 与 stub goroutine 计数间有竞态，需等稳定）。
+// waitAccept polls waiting for accept count to reach want (race between Dial and stub goroutine counts, wait for stability).
 func (s *modbusStub) waitAccept(t *testing.T, want int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -75,7 +75,7 @@ func (s *modbusStub) waitAccept(t *testing.T, want int) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if got := s.accepted(); got != want {
-		t.Fatalf("accept 计数: got %d want %d", got, want)
+		t.Fatalf("accept count: got %d want %d", got, want)
 	}
 }
 
@@ -96,9 +96,9 @@ func getModbusNode(t *testing.T, eng *engine.RuleEngine, id string) *ModbusNode 
 	return node
 }
 
-// TestModbusChainConnectionReuse 验证同链 modbus 连接复用：
-// 源（本地模式）+ 借用方（ref://src）共享同一条 TCP 连接（stub1 accept==1）；
-// 连不同设备的节点独立建连（stub2 accept==1）。
+// TestModbusChainConnectionReuse verifies same-chain modbus connection reuse:
+// Source (local mode) + borrower (ref://src) share same TCP connection (stub1 accept==1);
+// Nodes connecting to different devices establish independent connections (stub2 accept==1).
 func TestModbusChainConnectionReuse(t *testing.T) {
 	stub1 := newModbusStub(t)
 	defer stub1.close()
@@ -130,7 +130,7 @@ func TestModbusChainConnectionReuse(t *testing.T) {
 	borrower := getModbusNode(t, ruleEng, "borrower")
 	other := getModbusNode(t, ruleEng, "other")
 
-	// 触发建连
+	// Trigger connection establishment
 	srcClient, err := src.SharedNode.GetSafely()
 	if err != nil {
 		t.Fatalf("src GetSafely: %v", err)
@@ -140,28 +140,28 @@ func TestModbusChainConnectionReuse(t *testing.T) {
 		t.Fatalf("borrower GetSafely: %v", err)
 	}
 
-	// 借用方复用源的同一 client 实例
+	// Borrower reuses source's same client instance
 	if borrowerClient != srcClient {
-		t.Fatalf("borrower 未复用 src 的 client：src=%p borrower=%p", srcClient, borrowerClient)
+		t.Fatalf("borrower did not reuse src's client: src=%p borrower=%p", srcClient, borrowerClient)
 	}
-	// 复用铁证：源+借用方只占 1 条 TCP 连接
+	// Reuse proof: source+borrower only occupy 1 TCP connection
 	stub1.waitAccept(t, 1)
 
-	// 连不同设备的节点独立建连
+	// Nodes connecting to different devices establish independent connections
 	otherClient, err := other.SharedNode.GetSafely()
 	if err != nil {
 		t.Fatalf("other GetSafely: %v", err)
 	}
 	if otherClient == srcClient {
-		t.Fatal("other 应独立建连，却复用了 src 的 client")
+		t.Fatal("other should establish independent connection, but reused src's client")
 	}
 	stub2.waitAccept(t, 1)
-	stub1.waitAccept(t, 1) // stub1 仍只有 1 条（other 走 stub2）
+	stub1.waitAccept(t, 1) // stub1 still only has 1 (other goes to stub2)
 
-	t.Logf("PASS: src+borrower 共享 1 条 TCP(stub1=%d)，other 独立(stub2=%d)", stub1.accepted(), stub2.accepted())
+	t.Logf("PASS: src+borrower share 1 TCP(stub1=%d), other independent(stub2=%d)", stub1.accepted(), stub2.accepted())
 }
 
-// TestModbusChainConnectionCloseUnregister 验证源 Destroy 后从同链目录注销，借用方不再命中。
+// TestModbusChainConnectionCloseUnregister verifies source unregisters from chain directory after Destroy, borrower no longer hits.
 func TestModbusChainConnectionCloseUnregister(t *testing.T) {
 	stub := newModbusStub(t)
 	defer stub.close()
@@ -186,22 +186,22 @@ func TestModbusChainConnectionCloseUnregister(t *testing.T) {
 	ruleEng := eng.(*engine.RuleEngine)
 
 	src := getModbusNode(t, ruleEng, "src")
-	if _, err := src.SharedNode.GetSafely(); err != nil { // 建连 + 注册
+	if _, err := src.SharedNode.GetSafely(); err != nil { // Establish connection + register
 		t.Fatalf("src GetSafely: %v", err)
 	}
 	if _, found := ruleEng.RootRuleChainCtx().Resources().Lookup("src"); !found {
-		t.Fatal("src 应已注册到同链目录")
+		t.Fatal("src should have been registered to chain directory")
 	}
-	// 销毁源：应注销
+	// Destroy source: should unregister
 	src.Destroy()
 	if _, found := ruleEng.RootRuleChainCtx().Resources().Lookup("src"); found {
-		t.Fatal("src Destroy 后应从同链目录注销")
+		t.Fatal("src should have been unregistered from chain directory after Destroy")
 	}
-	t.Log("PASS: src Destroy 后已从同链目录注销")
+	t.Log("PASS: src unregistered from chain directory after Destroy")
 }
 
-// TestModbusDestroyCleansOpLock 验证 owner Destroy 后其底层 client 的操作锁条目被清理（无泄漏）。
-// 覆盖 reconnect 路径之外的 Destroy 路径——节点在未重连情况下被销毁（最常见场景）时锁不残留。
+// TestModbusDestroyCleansOpLock verifies owner Destroy cleans up operation lock entries for its underlying client (no leak).
+// Covers Destroy path outside reconnect path — when nodes destroyed without reconnect (most common scenario), locks don't remain.
 func TestModbusDestroyCleansOpLock(t *testing.T) {
 	stub := newModbusStub(t)
 	defer stub.close()
@@ -229,15 +229,15 @@ func TestModbusDestroyCleansOpLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("src GetSafely: %v", err)
 	}
-	// 模拟操作产生的锁条目（executeWithRetry 会在操作前这样注册）
+	// Simulate lock entry created by operation (executeWithRetry would register like this before operation)
 	_ = modbusOpLocks.Lock(srcClient)
 	if !modbusOpLocks.Has(srcClient) {
-		t.Fatal("锁条目应已存在")
+		t.Fatal("Lock entry should exist")
 	}
-	// owner Destroy 应清理锁条目（borrower 不清理，此处 src 为 owner）
+	// owner Destroy should clean up lock entries (borrower doesn't clean, here src is owner)
 	src.Destroy()
 	if modbusOpLocks.Has(srcClient) {
-		t.Fatal("owner Destroy 后操作锁条目应被清理（检测到泄漏）")
+		t.Fatal("Operation lock entry should be cleaned after owner Destroy (leak detected)")
 	}
-	t.Log("PASS: owner Destroy 后操作锁条目已清理")
+	t.Log("PASS: Operation lock entry cleaned after owner Destroy")
 }

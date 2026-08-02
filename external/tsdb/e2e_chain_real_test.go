@@ -38,7 +38,7 @@ import (
 	_ "github.com/taosdata/driver-go/v3/taosRestful"
 )
 
-// chainPoints 采集点数组：temperature/humidity 将被映射，pressure 未映射应被筛掉。
+// chainPoints acquisition point array: temperature/humidity will be mapped, pressure unmapped should be filtered out.
 func chainPoints() string {
 	now := time.Now().UnixNano()
 	return fmt.Sprintf(
@@ -46,7 +46,7 @@ func chainPoints() string {
 		now, now, now)
 }
 
-// mappingConfig 采集数据映射：measurement + host tag + fields 筛选/重命名。
+// mappingConfig acquisition data mapping: measurement + host tag + fields filtering/renaming.
 func mappingConfig(measurement string) map[string]interface{} {
 	return map[string]interface{}{
 		"measurement": measurement,
@@ -58,7 +58,7 @@ func mappingConfig(measurement string) map[string]interface{} {
 	}
 }
 
-// runWriteChain 构建单节点 x/tsdbWrite 规则链并发送采集点数组，同步等待完成。
+// runWriteChain builds single node x/tsdbWrite rule chain and sends acquisition point array, waits for completion synchronously.
 func runWriteChain(t *testing.T, chainID string, config map[string]interface{}) {
 	t.Helper()
 	dsl := map[string]interface{}{
@@ -80,7 +80,7 @@ func runWriteChain(t *testing.T, chainID string, config map[string]interface{}) 
 	rg.OnMsgAndWait(msg)
 }
 
-// TestE2EChain_InfluxDB 采集点数组 -> x/tsdbWrite(influxdb) -> Flux 查询读回。
+// TestE2EChain_InfluxDB acquisition point array -> x/tsdbWrite(influxdb) -> Flux query read back.
 func TestE2EChain_InfluxDB(t *testing.T) {
 	url := os.Getenv("E2E_INFLUXDB_URL")
 	token := os.Getenv("E2E_INFLUXDB_TOKEN")
@@ -123,7 +123,7 @@ func TestE2EChain_InfluxDB(t *testing.T) {
 	assert.False(t, got["temperature"], "source name should be renamed, not written as-is")
 }
 
-// TestE2EChain_TimescaleDB 采集点数组 -> x/tsdbWrite(timescaledb) -> SQL 查询读回。
+// TestE2EChain_TimescaleDB acquisition point array -> x/tsdbWrite(timescaledb) -> SQL query read back.
 func TestE2EChain_TimescaleDB(t *testing.T) {
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
 	if dsn == "" {
@@ -159,7 +159,7 @@ func TestE2EChain_TimescaleDB(t *testing.T) {
 	assert.Equal(t, float64(60), humiPct)
 }
 
-// TestE2EChain_TDengine 采集点数组 -> x/tsdbWrite(tdengine) -> SQL 查询读回。
+// TestE2EChain_TDengine acquisition point array -> x/tsdbWrite(tdengine) -> SQL query read back.
 func TestE2EChain_TDengine(t *testing.T) {
 	dsn := os.Getenv("E2E_TDENGINE_DSN")
 	if dsn == "" {
@@ -175,7 +175,7 @@ func TestE2EChain_TDengine(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("tdengine not reachable within 60s: %v", err)
 	}
-	// 映射配置带 tags，按超级表模型预建（host 为保留字，须反引号）
+	// Mapping config with tags, pre-built per super table model (host is reserved word, requires backticks)
 	m := fmt.Sprintf("e2e_chain_%d", time.Now().UnixNano())
 	if _, err = db.ExecContext(ctx, fmt.Sprintf(
 		"CREATE STABLE iot_e2e.%s (ts TIMESTAMP, temp_c DOUBLE, humi_pct DOUBLE) TAGS (`host` NCHAR(32))", m)); err != nil {
@@ -198,7 +198,7 @@ func TestE2EChain_TDengine(t *testing.T) {
 	assert.Equal(t, float64(60), humiPct)
 }
 
-// TestE2EChain_PromRemote 采集点数组 -> x/tsdbWrite(promremote) -> VictoriaMetrics 查询读回。
+// TestE2EChain_PromRemote acquisition point array -> x/tsdbWrite(promremote) -> VictoriaMetrics query read back.
 func TestE2EChain_PromRemote(t *testing.T) {
 	vm := os.Getenv("E2E_VICTORIAMETRICS_URL")
 	if vm == "" {
@@ -211,14 +211,14 @@ func TestE2EChain_PromRemote(t *testing.T) {
 	config["url"] = vm + "/api/v1/write"
 	runWriteChain(t, "e2e_chain_prom", config)
 
-	// 多 field 时 promremote 把 metric 名拼为 measurement_field；VM 新序列索引有延迟，轮询至可查
+	// When multiple fields, promremote concatenates metric name as measurement_field; VM new series index has delay, poll until queryable
 	require.Eventually(t, func() bool { return vmHasSeries(t, vm, m+"_temp_c") },
 		120*time.Second, 5*time.Second, "mapped metric %s_temp_c should exist", m)
 	require.Eventually(t, func() bool { return vmHasSeries(t, vm, m+"_humi_pct") },
 		120*time.Second, 5*time.Second, "mapped metric %s_humi_pct should exist", m)
 }
 
-// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+// waitReady retries ready every 2s within timeout, returns last error if all attempts fail.
 func waitReady(timeout time.Duration, ready func() error) error {
 	var err error
 	deadline := time.Now().Add(timeout)
@@ -231,7 +231,7 @@ func waitReady(timeout time.Duration, ready func() error) error {
 	return err
 }
 
-// vmHasSeries 查询 VictoriaMetrics 序列是否存在。
+// vmHasSeries queries whether VictoriaMetrics series exists.
 func vmHasSeries(t *testing.T, vm, metric string) bool {
 	t.Helper()
 	now := time.Now().Unix()
@@ -259,7 +259,7 @@ const (
 	concurrentTotalRows = concurrentWorkers * concurrentMsgsPerW
 )
 
-// stressPoints 生成采集点数组，时间戳按全局序号毫秒递增（同表同时间戳为覆盖写语义）。
+// stressPoints generates acquisition point array, timestamp increments by millisecond per global sequence (same table same timestamp is overwrite semantics).
 func stressPoints(seq int64, baseNs int64) string {
 	ts := baseNs + seq*int64(time.Millisecond)
 	return fmt.Sprintf(
@@ -267,7 +267,7 @@ func stressPoints(seq int64, baseNs int64) string {
 		ts, ts, ts)
 }
 
-// runConcurrentWrite 多 goroutine 并发发送消息到单节点 x/tsdbWrite 链，统计成败。
+// runConcurrentWrite multiple goroutines concurrently send messages to single node x/tsdbWrite chain, counts success/failure.
 func runConcurrentWrite(t *testing.T, chainID string, config map[string]interface{}) (ok, fail int64) {
 	t.Helper()
 	dsl := map[string]interface{}{
@@ -312,7 +312,7 @@ func runConcurrentWrite(t *testing.T, chainID string, config map[string]interfac
 	return ok, fail
 }
 
-// TestConcurrent_TSDBWrite_TDengine 8 并发 ×25 消息写同一超级表子表，行数精确校验。
+// TestConcurrent_TSDBWrite_TDengine 8 concurrent ×25 messages write to same super table subtable, exact row count verification.
 func TestConcurrent_TSDBWrite_TDengine(t *testing.T) {
 	dsn := os.Getenv("E2E_TDENGINE_DSN")
 	if dsn == "" {
@@ -331,7 +331,7 @@ func TestConcurrent_TSDBWrite_TDengine(t *testing.T) {
 	assertTDengineCount(t, db, m, concurrentTotalRows)
 }
 
-// TestConcurrent_TSDBWrite_TimescaleDB 8 并发 ×25 消息写同一普通表，行数精确校验。
+// TestConcurrent_TSDBWrite_TimescaleDB 8 concurrent ×25 messages write to same normal table, exact row count verification.
 func TestConcurrent_TSDBWrite_TimescaleDB(t *testing.T) {
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
 	if dsn == "" {
@@ -352,7 +352,7 @@ func TestConcurrent_TSDBWrite_TimescaleDB(t *testing.T) {
 	require.Equal(t, concurrentTotalRows, count)
 }
 
-// TestConcurrent_TSDBWrite_InfluxDB 8 并发 ×25 消息，仅校验全部成功。
+// TestConcurrent_TSDBWrite_InfluxDB 8 concurrent ×25 messages, only verify all succeed.
 func TestConcurrent_TSDBWrite_InfluxDB(t *testing.T) {
 	url := os.Getenv("E2E_INFLUXDB_URL")
 	token := os.Getenv("E2E_INFLUXDB_TOKEN")
@@ -370,7 +370,7 @@ func TestConcurrent_TSDBWrite_InfluxDB(t *testing.T) {
 	require.EqualValues(t, concurrentTotalRows, ok)
 }
 
-// TestConcurrent_TSDBWrite_OpenGemini 8 并发 ×25 消息，仅校验全部成功。
+// TestConcurrent_TSDBWrite_OpenGemini 8 concurrent ×25 messages, only verify all succeed.
 func TestConcurrent_TSDBWrite_OpenGemini(t *testing.T) {
 	addr := os.Getenv("E2E_OPENGEMINI_ADDR")
 	if addr == "" {
@@ -386,7 +386,7 @@ func TestConcurrent_TSDBWrite_OpenGemini(t *testing.T) {
 	require.EqualValues(t, concurrentTotalRows, ok)
 }
 
-// TestConcurrent_TSDBWrite_PromRemote 8 并发 ×25 消息，仅校验全部成功。
+// TestConcurrent_TSDBWrite_PromRemote 8 concurrent ×25 messages, only verify all succeed.
 func TestConcurrent_TSDBWrite_PromRemote(t *testing.T) {
 	vm := os.Getenv("E2E_VICTORIAMETRICS_URL")
 	if vm == "" {
@@ -424,7 +424,7 @@ func dropTDengineStable(db *sql.DB, m string) {
 	_ = db.Close()
 }
 
-// assertTDengineCount 轮询行数至期望值。
+// assertTDengineCount polls row count to expected value.
 func assertTDengineCount(t *testing.T, db *sql.DB, m string, want int) {
 	var count int64
 	deadline := time.Now().Add(30 * time.Second)

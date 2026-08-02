@@ -30,7 +30,7 @@ import (
 
 const testTS = int64(1700000000000000000)
 
-// TestBuildInsertStatementsSinglePoint 单点：tags/fields/time 列齐全，与单点 INSERT 格式一致。
+// TestBuildInsertStatementsSinglePoint single point: tags/fields/time columns complete, matches single point INSERT format.
 func TestBuildInsertStatementsSinglePoint(t *testing.T) {
 	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{{
 		Measurement: "cpu",
@@ -43,7 +43,7 @@ func TestBuildInsertStatementsSinglePoint(t *testing.T) {
 	}, stmts)
 }
 
-// TestBuildInsertStatementsZeroTimestamp ts=0 用 NOW()。
+// TestBuildInsertStatementsZeroTimestamp ts=0 uses NOW().
 func TestBuildInsertStatementsZeroTimestamp(t *testing.T) {
 	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"value": 1}},
@@ -52,7 +52,7 @@ func TestBuildInsertStatementsZeroTimestamp(t *testing.T) {
 	assert.NotContains(t, stmts[0], "to_timestamp")
 }
 
-// TestBuildInsertStatementsNonZeroTimestamp ts!=0 用 to_timestamp。
+// TestBuildInsertStatementsNonZeroTimestamp ts!=0 uses to_timestamp.
 func TestBuildInsertStatementsNonZeroTimestamp(t *testing.T) {
 	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"value": 1}, Timestamp: testTS},
@@ -61,7 +61,7 @@ func TestBuildInsertStatementsNonZeroTimestamp(t *testing.T) {
 	assert.NotContains(t, stmts[0], "NOW()")
 }
 
-// TestBuildInsertStatementsEscapesStrings 字符串值单引号翻倍转义（PG 方言）。
+// TestBuildInsertStatementsEscapesStrings string values escape single quotes by doubling (PG dialect).
 func TestBuildInsertStatementsEscapesStrings(t *testing.T) {
 	stmts := buildInsertStatements("public", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Tags: map[string]string{"note": "O'Neil"}, Fields: map[string]interface{}{"value": 1}},
@@ -69,7 +69,7 @@ func TestBuildInsertStatementsEscapesStrings(t *testing.T) {
 	assert.Contains(t, stmts[0], "'O''Neil'")
 }
 
-// TestBuildInsertStatementsMultiRows 同表多行合并为一条语句的多行 VALUES。
+// TestBuildInsertStatementsMultiRows same table multiple rows merged into multi-row VALUES of single statement.
 func TestBuildInsertStatementsMultiRows(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"v": 1.0}, Timestamp: testTS},
@@ -81,7 +81,7 @@ func TestBuildInsertStatementsMultiRows(t *testing.T) {
 	}, stmts)
 }
 
-// TestBuildInsertStatementsColumnSuperset 同表不同字段集：列取超集、缺失补 NULL、列头只出现一次。
+// TestBuildInsertStatementsColumnSuperset same table different field sets: columns take superset, missing filled with NULL, column header appears only once.
 func TestBuildInsertStatementsColumnSuperset(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"v": 1.5}, Timestamp: testTS},
@@ -94,7 +94,7 @@ func TestBuildInsertStatementsColumnSuperset(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(stmts[0], "\"cpu\" ("))
 }
 
-// TestBuildInsertStatementsMultipleMeasurements 不同 measurement 各自成独立 INSERT（PG 单表限制）。
+// TestBuildInsertStatementsMultipleMeasurements different measurements each become independent INSERT (PG single table limit).
 func TestBuildInsertStatementsMultipleMeasurements(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"v": 1.0}},
@@ -105,7 +105,7 @@ func TestBuildInsertStatementsMultipleMeasurements(t *testing.T) {
 	assert.True(t, strings.HasPrefix(stmts[1], "INSERT INTO \"iot\".\"mem\" "))
 }
 
-// TestBuildInsertStatementsSkipsInvalid nil/NaN 字段跳过；无有效列的点整体跳过。
+// TestBuildInsertStatementsSkipsInvalid nil/NaN fields skipped; points with no valid columns skipped entirely.
 func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "m", Fields: map[string]interface{}{"a": nil, "b": 1.0}},
@@ -117,7 +117,7 @@ func TestBuildInsertStatementsSkipsInvalid(t *testing.T) {
 	assert.Empty(t, buildInsertStatements("iot", nil))
 }
 
-// TestBuildInsertStatementsChunking 大批量按字节预算拆分多条语句，行数不丢。
+// TestBuildInsertStatementsChunking large batches split into multiple statements by byte budget, no rows lost.
 func TestBuildInsertStatementsChunking(t *testing.T) {
 	const total = 30000
 	points := make([]tsdb.SeriesPoint, 0, total)
@@ -141,13 +141,13 @@ func TestBuildInsertStatementsChunking(t *testing.T) {
 	assert.Equal(t, total, rows)
 }
 
-// TestFormatTimestamp ts=0 为 NOW()，否则为 to_timestamp 字面量。
+// TestFormatTimestamp ts=0 is NOW(), otherwise is to_timestamp literal.
 func TestFormatTimestamp(t *testing.T) {
 	assert.Equal(t, "NOW()", formatTimestamp(0))
 	assert.Equal(t, "to_timestamp(1700000000000000000/1000000000.0)", formatTimestamp(testTS))
 }
 
-// TestWritePointsAllSkipped 点全部无效时返回错误；空输入无操作。
+// TestWritePointsAllSkipped returns error when all points invalid; empty input is no-op.
 func TestWritePointsAllSkipped(t *testing.T) {
 	d := newDriver(&sql.DB{})
 	err := d.WritePoints(context.Background(), "iot", []tsdb.SeriesPoint{
@@ -157,7 +157,7 @@ func TestWritePointsAllSkipped(t *testing.T) {
 	assert.Nil(t, d.WritePoints(context.Background(), "iot", nil))
 }
 
-// TestBuildInsertStatementsSkipsEmptyMeasurement 空 measurement 的点跳过。
+// TestBuildInsertStatementsSkipsEmptyMeasurement points with empty measurement are skipped.
 func TestBuildInsertStatementsSkipsEmptyMeasurement(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "", Fields: map[string]interface{}{"v": 1.0}},
@@ -168,7 +168,7 @@ func TestBuildInsertStatementsSkipsEmptyMeasurement(t *testing.T) {
 	}, stmts)
 }
 
-// TestBuildInsertStatementsReservedColumn 名为 time 的业务列被剔除，避免与时间列重复。
+// TestBuildInsertStatementsReservedColumn business column named time is excluded to avoid duplication with time column.
 func TestBuildInsertStatementsReservedColumn(t *testing.T) {
 	stmts := buildInsertStatements("iot", []tsdb.SeriesPoint{
 		{Measurement: "cpu", Fields: map[string]interface{}{"time": 1, "v": 2.0}},

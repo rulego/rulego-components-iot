@@ -16,8 +16,8 @@
 
 package control
 
-// 看门狗的时序行为（透传、失联触发、重新武装）由 e2e_test.go 通过真实规则引擎覆盖；
-// 这里只测不依赖引擎的基础行为。
+// Watchdog timing behavior (passthrough, disconnect trigger, re-arm) covered by e2e_test.go via real rule engine;
+// Here only test basic behavior that does not depend on engine.
 
 import (
 	"testing"
@@ -34,16 +34,16 @@ func TestWatchdogBasics(t *testing.T) {
 
 func TestWatchdogInit(t *testing.T) {
 	n := (&WatchdogNode{}).New()
-	// 缺 failsafe → 报错
+// Missing failsafe -> error
 	err := n.Init(types.NewConfig(), types.Configuration{"timeout": "1s"})
 	assert.NotNil(t, err)
 
-	// 静态 timeout 预解析
+// Static timeout pre-parsed
 	err = n.Init(types.NewConfig(), types.Configuration{"timeout": "2s", "failsafe": "{}"})
 	assert.Nil(t, err)
 	assert.Equal(t, int64(2000), n.(*WatchdogNode).staticTimeoutMs)
 
-	// 模板 timeout → -1（每次渲染）
+// Template timeout -> -1 (render each time)
 	err = n.Init(types.NewConfig(), types.Configuration{"timeout": "${metadata.to}", "failsafe": "{}"})
 	assert.Nil(t, err)
 	assert.Equal(t, int64(-1), n.(*WatchdogNode).staticTimeoutMs)

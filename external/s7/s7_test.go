@@ -28,7 +28,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestS7Nodes 节点类型与默认配置
+// TestS7Nodes node types and default configuration
 func TestS7Nodes(t *testing.T) {
 	r := &ReadNode{}
 	assert.Equal(t, "x/s7Read", r.Type())
@@ -43,9 +43,9 @@ func TestS7Nodes(t *testing.T) {
 	assert.Equal(t, 1, rn.Config.Slot)
 }
 
-// TestParseAddr 统一 Point.Addr 解析为 S7 寻址（西门子官方语法）。
+// TestParseAddr parses unified Point.Addr to S7 addressing (Siemens official syntax).
 func TestParseAddr(t *testing.T) {
-	// DB 双字
+	// DB double word
 	area, db, addr, bit, isBit, err := parseAddr("DB1.DBD0")
 	assert.Nil(t, err)
 	assert.Equal(t, "DB", area)
@@ -53,20 +53,20 @@ func TestParseAddr(t *testing.T) {
 	assert.Equal(t, 0, addr)
 	assert.False(t, isBit)
 
-	// DB 位
+	// DB bit
 	_, _, _, bit, isBit, err = parseAddr("DB1.DBX0.1")
 	assert.Nil(t, err)
 	assert.Equal(t, 1, bit)
 	assert.True(t, isBit)
 
-	// M 字
+	// M word
 	area, _, addr, _, isBit, err = parseAddr("MW10")
 	assert.Nil(t, err)
 	assert.Equal(t, "M", area)
 	assert.Equal(t, 10, addr)
 	assert.False(t, isBit)
 
-	// M 位简写
+	// M bit shorthand
 	_, _, _, bit, isBit, _ = parseAddr("M0.5")
 	assert.Equal(t, 5, bit)
 	assert.True(t, isBit)
@@ -77,30 +77,30 @@ func TestParseAddr(t *testing.T) {
 	area, _, _, _, _, _ = parseAddr("Q0.3")
 	assert.Equal(t, "Q", area)
 
-	// % 前缀
+	// % prefix
 	area, _, _, _, _, _ = parseAddr("%M0.1")
 	assert.Equal(t, "M", area)
 
-	// 非法
+	// invalid
 	_, _, _, _, _, err = parseAddr("")
 	assert.NotNil(t, err)
 	_, _, _, _, _, err = parseAddr("X0")
 	assert.NotNil(t, err)
-	_, _, _, _, _, err = parseAddr("DB1") // 缺 DBT
+	_, _, _, _, _, err = parseAddr("DB1") // missing DBT
 	assert.NotNil(t, err)
 }
 
-// TestMapType 统一类型 -> S7 原生类型。
+// TestMapType unified type -> S7 native type.
 func TestMapType(t *testing.T) {
 	assert.Equal(t, "INT", mapType("INT16"))
 	assert.Equal(t, "WORD", mapType("UINT16"))
 	assert.Equal(t, "REAL", mapType("FLOAT32"))
 	assert.Equal(t, "LREAL", mapType("FLOAT64"))
 	assert.Equal(t, "BOOL", mapType("BOOL"))
-	assert.Equal(t, "CUSTOM", mapType("CUSTOM")) // 未知透传
+	assert.Equal(t, "CUSTOM", mapType("CUSTOM")) // unknown pass-through
 }
 
-// TestS7ReadFailureNoPLC 无 PLC 时连接失败，节点走 Failure 链。
+// TestS7ReadFailureNoPLC connection fails when no PLC, node routes to Failure.
 func TestS7ReadFailureNoPLC(t *testing.T) {
 	registry := &types.SafeComponentSlice{}
 	registry.Add(&ReadNode{})
@@ -110,7 +110,7 @@ func TestS7ReadFailureNoPLC(t *testing.T) {
 		"slot":    1,
 		"timeout": 2,
 		"points": []map[string]interface{}{
-			{"name": "温度", "addr": "DB1.DBD0", "type": "FLOAT32"},
+			{"name": "temperature", "addr": "DB1.DBD0", "type": "FLOAT32"},
 		},
 	}, registry)
 	assert.Nil(t, err)
@@ -135,7 +135,7 @@ func TestS7ReadFailureNoPLC(t *testing.T) {
 	}
 }
 
-// TestS7WriteFailureNoPLC s7Write 无 PLC 同样走 Failure
+// TestS7WriteFailureNoPLC s7Write also routes to Failure when no PLC
 func TestS7WriteFailureNoPLC(t *testing.T) {
 	registry := &types.SafeComponentSlice{}
 	registry.Add(&WriteNode{})
@@ -166,9 +166,9 @@ func TestS7WriteFailureNoPLC(t *testing.T) {
 	}
 }
 
-// TestS7OpLockSerializes 验证同一 handler 指针的并发操作被串行化（并发度永不超过 1）。
-// 这是同链 ref:// 共享连接安全的基石：gos7 单连接非并发安全，必须串行收发。
-// 配合 `go test -race` 可进一步捕获未加锁路径的数据竞争。
+// TestS7OpLockSerializes verifies concurrent ops on same handler pointer are serialized (concurrency never exceeds 1).
+// This is the cornerstone of same-chain ref:// shared connection safety: gos7 single connection is not concurrency-safe,
+// must serialize send/receive. Use with `go test -race` to further catch data races on unlocked paths.
 func TestS7OpLockSerializes(t *testing.T) {
 	ptr := &gos7.TCPClientHandler{}
 	var cur int32
@@ -179,9 +179,9 @@ func TestS7OpLockSerializes(t *testing.T) {
 			defer wg.Done()
 			mu := s7OpLocks.Lock(ptr)
 			mu.Lock()
-			// 临界区内并发度必须 <=1；无锁时拉宽的 sleep 会必现重叠
+			// concurrency within critical section must be <=1; widened sleep without lock will guarantee overlap
 			if atomic.AddInt32(&cur, 1) > 1 {
-				t.Errorf("共享 handler 并发度 > 1（锁未生效）")
+				t.Errorf("shared handler concurrency > 1 (lock not effective)")
 			}
 			time.Sleep(time.Millisecond)
 			atomic.AddInt32(&cur, -1)
@@ -191,18 +191,18 @@ func TestS7OpLockSerializes(t *testing.T) {
 	wg.Wait()
 }
 
-// TestS7OpLockDelete 验证重连后 Delete 清理旧连接的锁条目（无累积泄漏），
-// 且不同 handler 指针映射到独立锁（不同连接可并行）。
+// TestS7OpLockDelete verifies Delete cleans up old connection lock entries after reconnect (no cumulative leak),
+// and different handler pointers map to independent locks (different connections can run in parallel).
 func TestS7OpLockDelete(t *testing.T) {
 	ptr := &gos7.TCPClientHandler{}
 	mu1 := s7OpLocks.Lock(ptr)
 	s7OpLocks.Delete(ptr)
 	mu2 := s7OpLocks.Lock(ptr)
 	if mu1 == mu2 {
-		t.Fatal("Delete 后应创建新锁，却返回同一 mutex（清理未生效）")
+		t.Fatal("Delete should create a new mutex but returned the same one (cleanup ineffective)")
 	}
-	// 不同 handler 指针互不影响
+	// different handler pointers don't interfere
 	if s7OpLocks.Lock(&gos7.TCPClientHandler{}) == mu2 {
-		t.Fatal("不同 handler 指针应映射到不同 mutex")
+		t.Fatal("different handler pointers should map to different mutex")
 	}
 }

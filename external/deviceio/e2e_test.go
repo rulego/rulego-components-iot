@@ -44,7 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 	_ "github.com/taosdata/driver-go/v3/taosRestful"
 
-	// endpoint 类型注册
+	// Register endpoint types
 	_ "github.com/rulego/rulego/endpoint/mqtt"
 	_ "github.com/rulego/rulego/endpoint/rest"
 	_ "github.com/rulego/rulego/endpoint/schedule"
@@ -52,7 +52,7 @@ import (
 	_ "github.com/rulego/rulego-components-iot/external/tsdb"
 )
 
-// e2eHandler 内存 modbus server，仅 holding register 读。
+// e2eHandler in-memory modbus server, holding register read only.
 type e2eHandler struct {
 	mu sync.Mutex
 	hr map[uint16]uint16
@@ -78,18 +78,18 @@ func (h *e2eHandler) HandleHoldingRegisters(req *modbus.HoldingRegistersRequest)
 	return res, nil
 }
 
-// TestEndToEnd_ModbusToPromremote 端到端：modbus 采集 -> tsdbWrite(promremote，AcquisitionMapping 透视)。
-// 全进程内 mock，不依赖硬件。解码 snappy+prompb 验证落盘语义：metric=device、值=23.5、无 timestamp 假序列。
+// TestEndToEnd_ModbusToPromremote end-to-end: modbus collection -> tsdbWrite(promremote, AcquisitionMapping perspective).
+// Fully in-process mock, no hardware dependency. Decode snappy+prompb to verify write semantics: metric=device, value=23.5, no timestamp pseudo-series.
 func TestEndToEnd_ModbusToPromremote(t *testing.T) {
-	// 1. modbus server 预填 40001 = FLOAT32 23.5 (0x41bc0000, ABCD: regs [0x41bc, 0x0000])
+	// 1. modbus server pre-fill 40001 = FLOAT32 23.5 (0x41bc0000, ABCD: regs [0x41bc, 0x0000])
 	h := &e2eHandler{hr: map[uint16]uint16{0: 0x41bc, 1: 0x0000}}
 	server, err := modbus.NewServer(&modbus.ServerConfiguration{URL: "tcp://127.0.0.1:5510"}, h)
 	assert.Nil(t, err)
 	assert.Nil(t, server.Start())
 	defer server.Stop()
-	time.Sleep(100 * time.Millisecond) // 等 server listen
+	time.Sleep(100 * time.Millisecond) // Wait for server to listen
 
-	// 2. promremote HTTP mock（存原始 snappy body）
+	// 2. promremote HTTP mock (stores raw snappy body)
 	var gotBody []byte
 	var bodyMu sync.Mutex
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +101,7 @@ func TestEndToEnd_ModbusToPromremote(t *testing.T) {
 	}))
 	defer prom.Close()
 
-	// 3. DSL 链：iotRead(modbus) -> tsdbWrite(promremote，AcquisitionMapping 透视 temp_c<-temp)
+	// 3. DSL chain: iotRead(modbus) -> tsdbWrite(promremote, AcquisitionMapping projects temp_c<-temp)
 	dsl := fmt.Sprintf(`{
 		"ruleChain":{"id":"e2e","name":"e2e","root":true,"debugMode":false},
 		"metadata":{"nodes":[
@@ -124,10 +124,10 @@ func TestEndToEnd_ModbusToPromremote(t *testing.T) {
 	assert.Nil(t, err, "create rule engine")
 	defer rg.Stop(context.Background())
 
-	// 4. 触发链（msg 触发 iotRead 读配置的 points，经 AcquisitionMapping 透视后落盘）
+	// 4. Trigger chain (msg triggers iotRead to read configured points, projected by AcquisitionMapping then written)
 	rg.OnMsg(types.NewMsg(0, "TRIGGER", types.JSON, types.NewMetadata(), ""))
 
-	// 5. 等 promremote 收到写入请求
+	// 5. Wait for promremote to receive write request
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		bodyMu.Lock()
@@ -141,12 +141,12 @@ func TestEndToEnd_ModbusToPromremote(t *testing.T) {
 	bodyMu.Lock()
 	defer bodyMu.Unlock()
 
-	// 6. 解码 snappy + prompb，验证落盘语义
+	// 6. Decode snappy + prompb, verify write semantics
 	decoded, err := snappy.Decode(nil, gotBody)
 	assert.Nil(t, err, "snappy decode")
 	var req prompb.WriteRequest
 	assert.Nil(t, req.Unmarshal(decoded), "prompb unmarshal")
-	// AcquisitionMapping 只透视 value 为字段：仅 1 条序列（无 name/timestamp 假序列）
+	// AcquisitionMapping only projects value as field: only 1 series (no name/timestamp dummy series)
 	assert.Equal(t, 1, len(req.Timeseries), "should write exactly 1 series")
 	labels := map[string]string{}
 	for _, l := range req.Timeseries[0].Labels {
@@ -157,10 +157,10 @@ func TestEndToEnd_ModbusToPromremote(t *testing.T) {
 	assert.Equal(t, 23.5, req.Timeseries[0].Samples[0].Value)
 }
 
-// TestEndToEnd_ModbusToInfluxDB 端到端标杆：
-// modbus 进程内 server 采集 -> x/iotRead -> x/tsdbWrite(influxdb，配 measurement/fields 映射) -> Flux 查询读回。
-// 验证「采集点数组 → SeriesPoint 可选映射」在规则链与真实 TSDB 下的完整链路。
-// 需设 E2E_INFLUXDB_URL/E2E_INFLUXDB_TOKEN 启用；未设则 skip。
+// TestEndToEnd_ModbusToInfluxDB end-to-end benchmark:
+// modbus in-process server collection -> x/iotRead -> x/tsdbWrite(influxdb, with measurement/fields mapping) -> Flux query readback.
+// Verifies complete "point array → SeriesPoint optional mapping" chain under rule chain and real TSDB.
+// Requires E2E_INFLUXDB_URL/E2E_INFLUXDB_TOKEN to enable; otherwise skips.
 func TestEndToEnd_ModbusToInfluxDB(t *testing.T) {
 	url := os.Getenv("E2E_INFLUXDB_URL")
 	token := os.Getenv("E2E_INFLUXDB_TOKEN")
@@ -176,7 +176,7 @@ func TestEndToEnd_ModbusToInfluxDB(t *testing.T) {
 		bucket = "iot"
 	}
 
-	// 1. modbus server 预填 40001 = FLOAT32 23.5 (ABCD: regs [0x41bc, 0x0000])
+	// 1. modbus server pre-fill 40001 = FLOAT32 23.5 (ABCD: regs [0x41bc, 0x0000])
 	h := &e2eHandler{hr: map[uint16]uint16{0: 0x41bc, 1: 0x0000}}
 	server, err := modbus.NewServer(&modbus.ServerConfiguration{URL: "tcp://127.0.0.1:5511"}, h)
 	assert.Nil(t, err)
@@ -184,7 +184,7 @@ func TestEndToEnd_ModbusToInfluxDB(t *testing.T) {
 	defer server.Stop()
 	time.Sleep(100 * time.Millisecond)
 
-	// 2. 规则链：iotRead(modbus) -> tsdbWrite(influxdb，配 fields 映射 temp_c<-temp)
+	// 2. Rule chain: iotRead(modbus) -> tsdbWrite(influxdb, with fields mapping temp_c<-temp)
 	m := fmt.Sprintf("e2e_modbus_%d", time.Now().UnixNano())
 	dsl := fmt.Sprintf(`{
 		"ruleChain":{"id":"e2e_modbus_influx","root":true},
@@ -202,7 +202,7 @@ func TestEndToEnd_ModbusToInfluxDB(t *testing.T) {
 
 	rg.OnMsg(types.NewMsg(0, "TRIGGER", types.JSON, types.NewMetadata(), ""))
 
-	// 3. 轮询查询 influxdb 直到 temp_c 可查（采集+落盘+索引需时间）
+	// 3. Poll query influxdb until temp_c is queryable (acquisition+write+indexing takes time)
 	client := influxdb2.NewClient(url, token)
 	defer client.Close()
 	flux := fmt.Sprintf(
@@ -223,7 +223,7 @@ func TestEndToEnd_ModbusToInfluxDB(t *testing.T) {
 	assert.True(t, found, "modbus -> tsdbWrite(influxdb) should persist mapped field temp_c=23.5")
 }
 
-// parseOGAddr 解析 host:port 为 OpenGemini 客户端地址列表。
+// parseOGAddr parses host:port into OpenGemini client address list.
 func parseOGAddr(t *testing.T, addr string) []opengeminiclient.Address {
 	t.Helper()
 	parts := strings.Split(addr, ":")
@@ -233,7 +233,7 @@ func parseOGAddr(t *testing.T, addr string) []opengeminiclient.Address {
 	return []opengeminiclient.Address{{Host: parts[0], Port: port}}
 }
 
-// s7ChainDSL 组装「S7 采集 -> tsdbWrite」两节点链 DSL。
+// s7ChainDSL assembles the DSL for "S7 collect -> tsdbWrite" two-node chain.
 func s7ChainDSL(chainID, s7Addr, writeCfg string) string {
 	return fmt.Sprintf(`{
 		"ruleChain":{"id":"%s","root":true},
@@ -249,7 +249,7 @@ func s7ChainDSL(chainID, s7Addr, writeCfg string) string {
 	}`, chainID, s7Addr, writeCfg)
 }
 
-// triggerAndWait 触发链一次并轮询 cond 至真（上限 wait）。
+// triggerAndWait triggers the chain once and polls cond until true (with wait limit).
 func triggerAndWait(t *testing.T, chainID, dsl string, wait time.Duration, cond func() bool) {
 	t.Helper()
 	rg, err := rulego.New(chainID, []byte(dsl))
@@ -266,7 +266,7 @@ func triggerAndWait(t *testing.T, chainID, dsl string, wait time.Duration, cond 
 	require.True(t, cond(), "condition not met within %s", wait)
 }
 
-// TestEndToEnd_S7ToTDengine S7 采集 -> x/tsdbWrite(tdengine) -> 读回核对。
+// TestEndToEnd_S7ToTDengine tests S7 collect -> x/tsdbWrite(tdengine) -> read back verification.
 func TestEndToEnd_S7ToTDengine(t *testing.T) {
 	s7Addr := os.Getenv("E2E_S7_ADDR")
 	dsn := os.Getenv("E2E_TDENGINE_DSN")
@@ -295,7 +295,7 @@ func TestEndToEnd_S7ToTDengine(t *testing.T) {
 	triggerAndWait(t, "e2e_s7_tdengine", s7ChainDSL("e2e_s7_tdengine", s7Addr, writeCfg), 15*time.Second, found)
 }
 
-// TestEndToEnd_S7ToTimescaleDB S7 采集 -> x/tsdbWrite(timescaledb) -> 读回核对。
+// TestEndToEnd_S7ToTimescaleDB tests S7 collect -> x/tsdbWrite(timescaledb) -> read back verification.
 func TestEndToEnd_S7ToTimescaleDB(t *testing.T) {
 	s7Addr := os.Getenv("E2E_S7_ADDR")
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
@@ -325,7 +325,7 @@ func TestEndToEnd_S7ToTimescaleDB(t *testing.T) {
 	triggerAndWait(t, "e2e_s7_timescale", s7ChainDSL("e2e_s7_timescale", s7Addr, writeCfg), 15*time.Second, found)
 }
 
-// TestEndToEnd_S7ToOpenGemini S7 采集 -> x/tsdbWrite(opengemini) -> 读回核对。
+// TestEndToEnd_S7ToOpenGemini tests S7 collect -> x/tsdbWrite(opengemini) -> read back verification.
 func TestEndToEnd_S7ToOpenGemini(t *testing.T) {
 	s7Addr := os.Getenv("E2E_S7_ADDR")
 	addr := os.Getenv("E2E_OPENGEMINI_ADDR")
@@ -364,7 +364,7 @@ func TestEndToEnd_S7ToOpenGemini(t *testing.T) {
 	triggerAndWait(t, "e2e_s7_opengemini", s7ChainDSL("e2e_s7_opengemini", s7Addr, writeCfg), 15*time.Second, found)
 }
 
-// TestEndToEnd_S7ToSeriesToTimescaleDB 三节点链：S7 采集 -> x/iotToSeries 转换 -> x/tsdbWrite -> 读回核对。
+// TestEndToEnd_S7ToSeriesToTimescaleDB tests three-node chain: S7 collect -> x/iotToSeries transform -> x/tsdbWrite -> read back verification.
 func TestEndToEnd_S7ToSeriesToTimescaleDB(t *testing.T) {
 	s7Addr := os.Getenv("E2E_S7_ADDR")
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
@@ -404,18 +404,18 @@ func TestEndToEnd_S7ToSeriesToTimescaleDB(t *testing.T) {
 	triggerAndWait(t, "e2e_s7_series", dsl, 15*time.Second, found)
 }
 
-// startEndpointEngine 创建启用 endpoint 模块的规则引擎。
+// startEndpointEngine creates a rule engine with endpoint module enabled.
 func startEndpointEngine(t *testing.T, chainID, dsl string) {
 	t.Helper()
 	config := rulego.NewConfig(types.WithDefaultPool())
 	config.EndpointEnabled = true
 	rg, err := rulego.New(chainID, []byte(dsl), engine.WithConfig(config))
 	require.Nil(t, err, "create rule engine with endpoints")
-	_ = rg // 引擎按 chainID 全局注册，t.Cleanup 统一注销
+	_ = rg // Engine is registered globally by chainID, t.Cleanup unifies cleanup
 	t.Cleanup(func() { rulego.Del(chainID) })
 }
 
-// pollPG 轮询 PostgreSQL 查询直到 cond 满足或超时。
+// pollPG polls PostgreSQL query until cond is met or timeout.
 func pollPG(t *testing.T, dsn string, wait time.Duration, cond func(db *sql.DB) bool) {
 	t.Helper()
 	db, err := sql.Open("postgres", dsn)
@@ -431,8 +431,8 @@ func pollPG(t *testing.T, dsn string, wait time.Duration, cond func(db *sql.DB) 
 	require.True(t, cond(db), "condition not met within %s", wait)
 }
 
-// TestEndToEnd_ScheduleS7Collect 定时采集：endpoint/schedule 每秒触发 -> x/iotRead(s7) -> x/tsdbWrite(timescaledb)，
-// 不手动发消息，等行数累积 >=3 验证持续落盘。
+// TestEndToEnd_ScheduleS7Collect tests scheduled collection: endpoint/schedule triggers every second -> x/iotRead(s7) -> x/tsdbWrite(timescaledb),
+// without manual message sending, wait for row accumulation >=3 to verify continuous writes.
 func TestEndToEnd_ScheduleS7Collect(t *testing.T) {
 	s7Addr := os.Getenv("E2E_S7_ADDR")
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
@@ -477,8 +477,8 @@ func TestEndToEnd_ScheduleS7Collect(t *testing.T) {
 	})
 }
 
-// TestEndToEnd_MqttToTimescaleDB MQTT 订阅：endpoint/mqtt 订阅 topic -> x/tsdbWrite(timescaledb)，
-// 测试用 paho 客户端发布 SeriesPoint JSON 后读回核对。
+// TestEndToEnd_MqttToTimescaleDB tests MQTT subscription: endpoint/mqtt subscribes to topic -> x/tsdbWrite(timescaledb),
+// test uses paho client to publish SeriesPoint JSON then reads back for verification.
 func TestEndToEnd_MqttToTimescaleDB(t *testing.T) {
 	broker := os.Getenv("E2E_MQTT_ADDR")
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
@@ -509,7 +509,7 @@ func TestEndToEnd_MqttToTimescaleDB(t *testing.T) {
 		}
 	}`, broker, topic, dsn)
 	startEndpointEngine(t, "e2e_mqtt", dsl)
-	time.Sleep(2 * time.Second) // 等订阅建立
+	time.Sleep(2 * time.Second) // Wait for subscription to establish
 
 	opts := mqtt.NewClientOptions().AddBroker(broker).SetClientID(fmt.Sprintf("e2e_pub_%d", time.Now().UnixNano()))
 	client := mqtt.NewClient(opts)
@@ -532,7 +532,7 @@ func TestEndToEnd_MqttToTimescaleDB(t *testing.T) {
 	})
 }
 
-// TestEndToEnd_HttpToTimescaleDB HTTP 推送：endpoint/http 接收 POST 遥测 -> x/tsdbWrite(timescaledb)。
+// TestEndToEnd_HttpToTimescaleDB tests HTTP push: endpoint/http receives POST telemetry -> x/tsdbWrite(timescaledb).
 func TestEndToEnd_HttpToTimescaleDB(t *testing.T) {
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
 	if dsn == "" {
@@ -562,7 +562,7 @@ func TestEndToEnd_HttpToTimescaleDB(t *testing.T) {
 		}
 	}`, addr, dsn)
 	startEndpointEngine(t, "e2e_http", dsl)
-	time.Sleep(500 * time.Millisecond) // 等 HTTP 监听就绪
+	time.Sleep(500 * time.Millisecond) // Wait for HTTP listener to be ready
 
 	payload := fmt.Sprintf(
 		`[{"measurement":"%s","tags":{"host":"e2e"},"fields":{"value":42.5},"timestamp":%d}]`,

@@ -46,7 +46,7 @@ func TestParseLine(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotEqual(t, int64(0), p2.Timestamp)
 
-	// 无 i 后缀的数值按 line protocol 标准解析为 float64
+	// Numeric values without i suffix are parsed as float64 per line protocol standard
 	p3, err := tsdb.ParseLine("m,k=v f=100")
 	assert.Nil(t, err)
 	assert.Equal(t, float64(100), p3.Fields["f"])

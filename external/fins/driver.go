@@ -26,7 +26,7 @@ import (
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 )
 
-// driver 适配 iot_points.Driver 到欧姆龙 FINS client。
+// driver adapts iot_points.Driver to Omron FINS client.
 type driver struct {
 	client *finsclient.Client
 }
@@ -37,7 +37,7 @@ func newDriver(client *finsclient.Client) *driver {
 	return &driver{client: client}
 }
 
-// ReadPoints 逐点读取。单点失败标记 Error；全部失败返回 error。
+// ReadPoints reads point by point. Single-point failure marks Error; all failure returns error.
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	out := make([]iot_points.Data, 0, len(points))
 	failCount := 0
@@ -56,7 +56,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	return out, nil
 }
 
-// WritePoints 逐点写入。任一失败立即返回 error。
+// WritePoints writes point by point. Any failure returns error immediately.
 func (d *driver) WritePoints(points []iot_points.Point) error {
 	for _, p := range points {
 		if err := d.writePoint(p); err != nil {
@@ -66,7 +66,7 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return nil
 }
 
-// readPoint 读取单个点位。带 .bit 读位区；否则读字区并按 Type 解码，Scale/Offset 做工程量转换。
+// readPoint reads a single point. With .bit reads bit area; otherwise reads word area and decodes by Type, Scale/Offset for engineering conversion.
 func (d *driver) readPoint(p iot_points.Point) (iot_points.Data, error) {
 	area, address, bitOffset, isBit, err := parseAddr(p.Addr)
 	if err != nil {
@@ -98,7 +98,7 @@ func (d *driver) readPoint(p iot_points.Point) (iot_points.Data, error) {
 	return iot_points.Data{Name: p.Name, Value: val}, nil
 }
 
-// writePoint 写入单个点位。带 .bit 写位区；否则按 Type 编码为字序列写入。
+// writePoint writes a single point. With .bit writes bit area; otherwise encodes by Type into word sequence.
 func (d *driver) writePoint(p iot_points.Point) error {
 	area, address, bitOffset, isBit, err := parseAddr(p.Addr)
 	if err != nil {
@@ -119,9 +119,9 @@ func (d *driver) writePoint(p iot_points.Point) error {
 	return d.client.WriteWords(area, address, words)
 }
 
-// parseAddr 解析欧姆龙内存区地址：<区><编号>[.<位>]。
-// 区：CIO I/O 区、D/DM 数据区、W/WR 工作区、H/HR 保持区、A/AR 辅助区。
-// 带 .位 返回位区码，否则返回字区码。内存区码采用 W342(CS/CJ 系列)标准值。
+// parseAddr parses Omron memory area address: <area><number>[.<bit>].
+// Areas: CIO I/O area, D/DM data area, W/WR work area, H/HR holding area, A/AR auxiliary area.
+// With .bit returns bit area code, otherwise word area code. Uses W342 (CS/CJ series) standard values.
 func parseAddr(addr string) (area byte, address uint16, bitOffset byte, isBit bool, err error) {
 	s := strings.TrimSpace(addr)
 	if s == "" {
@@ -174,7 +174,7 @@ func parseAddr(addr string) (area byte, address uint16, bitOffset byte, isBit bo
 	return area, address, bitOffset, isBit, nil
 }
 
-// wordCount 统一类型 -> 占用字数(16bit)；未知类型报错。
+// wordCount maps type to word count (16bit); unknown type errors.
 func wordCount(typ string) (int, error) {
 	switch typ {
 	case iot_points.TypeInt16, iot_points.TypeUint16, "":
@@ -188,7 +188,7 @@ func wordCount(typ string) (int, error) {
 	}
 }
 
-// decodeWords 字序列(大端) -> 统一类型值，同时返回原始浮点用于 Scale 转换。
+// decodeWords converts word sequence (big-endian) to typed value, also returns raw float for Scale conversion.
 func decodeWords(typ string, w []uint16) (val interface{}, raw float64) {
 	switch typ {
 	case iot_points.TypeInt16:
@@ -219,7 +219,7 @@ func decodeWords(typ string, w []uint16) (val interface{}, raw float64) {
 	}
 }
 
-// encodeWords 字符串值按统一类型编码为大端字序列。有符号类型用 ParseInt 支持负值。
+// encodeWords encodes string value to big-endian word sequence by type. Signed types use ParseInt for negative values.
 func encodeWords(typ, value string) ([]uint16, error) {
 	switch typ {
 	case iot_points.TypeInt16:
@@ -275,27 +275,27 @@ func encodeWords(typ, value string) ([]uint16, error) {
 	}
 }
 
-// wordsToUint32 大端双字 -> uint32。
+// wordsToUint32 big-endian double word -> uint32.
 func wordsToUint32(w []uint16) uint32 {
 	return uint32(w[0])<<16 | uint32(w[1])
 }
 
-// uint32ToWords uint32 -> 大端双字。
+// uint32ToWords uint32 -> big-endian double word.
 func uint32ToWords(v uint32) []uint16 {
 	return []uint16{uint16(v >> 16), uint16(v)}
 }
 
-// wordsToUint64 大端四字 -> uint64。
+// wordsToUint64 big-endian four words -> uint64.
 func wordsToUint64(w []uint16) uint64 {
 	return uint64(w[0])<<48 | uint64(w[1])<<32 | uint64(w[2])<<16 | uint64(w[3])
 }
 
-// uint64ToWords uint64 -> 大端四字。
+// uint64ToWords uint64 -> big-endian four words.
 func uint64ToWords(v uint64) []uint16 {
 	return []uint16{uint16(v >> 48), uint16(v >> 32), uint16(v >> 16), uint16(v)}
 }
 
-// parseBoolValue 字符串 -> bool，支持 0/1/true/false。
+// parseBoolValue string -> bool, supports 0/1/true/false.
 func parseBoolValue(s string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "0", "false":

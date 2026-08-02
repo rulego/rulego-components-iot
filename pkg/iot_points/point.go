@@ -22,17 +22,17 @@ import (
 	"github.com/rulego/rulego/utils/cast"
 )
 
-// 采集节点共享常量
+// Collection node shared constants
 const (
-	// DefaultMaxRetries 连接级失败后的最大重试次数
+	// DefaultMaxRetries max retries after connection-level failure
 	DefaultMaxRetries = 3
-	// ReconnectDelay 重连前等待
+	// ReconnectDelay wait before reconnection
 	ReconnectDelay = 200 * time.Millisecond
-	// DefaultTimeoutSec 默认请求超时（秒）
+	// DefaultTimeoutSec default request timeout (seconds)
 	DefaultTimeoutSec = 5
 )
 
-// 通用数据类型枚举（协议无关）。各 driver 负责映射到协议原生类型。
+// Common data type enumeration (protocol-independent). Each driver maps to protocol native types.
 const (
 	TypeBool    = "BOOL"
 	TypeInt16   = "INT16"
@@ -46,30 +46,30 @@ const (
 	TypeString  = "STRING"
 )
 
-// Point 统一采集点位（配置层，字段支持 ${msg.xx}/${metadata.xx} 模板）。
-// Addr 为协议寻址串，由各 driver 解析（如 s7 "DB1.DBD0"/"M0.1"、modbus Modicon "40001"、
-// opcua NodeID "ns=2;s=Temperature"、snmp OID "1.3.6.1..."、mc "D100"、fins "CIO100"/"D100.5"）。
+// Point unified acquisition point (configuration layer, fields support ${msg.xx}/${metadata.xx} templates).
+// Addr is protocol addressing string, parsed by each driver (e.g. s7 "DB1.DBD0"/"M0.1", modbus Modicon "40001",
+// opcua NodeID "ns=2;s=Temperature", snmp OID "1.3.6.1...", mc "D100", fins "CIO100"/"D100.5").
 type Point struct {
-	Name   string  `json:"name"`             // 点位名，输出时作为 Data.Name（下游取值的键）
-	Addr   string  `json:"addr"`             // 协议寻址串，由各 driver 解析（格式见包注释）
-	Type   string  `json:"type"`             // 数据类型，取 TypeXxx 枚举；留空按协议默认类型
-	Scale  float64 `json:"scale,omitempty"`  // 工程量缩放系数，0 表示不缩放（见 ApplyScale）
-	Offset float64 `json:"offset,omitempty"` // 工程量偏移量，0 表示不偏移
-	Endian string  `json:"endian,omitempty"` // 字节序 ABCD/CDAB/BADC/DCBA，仅多寄存器类型生效
-	Value  string  `json:"value,omitempty"`  // 写入值（字符串形式，driver 按 Type 解析）
+	Name   string  `json:"name"`             // Point name, used as Data.Name in output (for downstream access)
+	Addr   string  `json:"addr"`             // Protocol addressing string, parsed by each driver (see package comment for format)
+	Type   string  `json:"type"`             // Data type, values from TypeXxx enumeration; empty uses protocol default type
+	Scale  float64 `json:"scale,omitempty"`  // Engineering scaling factor, 0 means no scaling (see ApplyScale)
+	Offset float64 `json:"offset,omitempty"` // Engineering offset, 0 means no offset
+	Endian string  `json:"endian,omitempty"` // Byte order ABCD/CDAB/BADC/DCBA, only effective for multi-register types
+	Value  string  `json:"value,omitempty"`  // Write value (string form, driver parses by Type)
 }
 
-// Data 采集结果（单点）。读节点输出 []Data，单点失败标 Error 而非整批失败。
+// Data acquisition result (single point). Read node outputs []Data, single point failure marked with Error rather than batch failure.
 type Data struct {
-	Name      string      `json:"name"`                // 点位名，对应 Point.Name
-	Value     interface{} `json:"value"`               // 读到的值（协议原生类型）；坏点时为空
-	Timestamp int64       `json:"timestamp,omitempty"` // 采集时间戳（ns），0 表示协议未提供
-	Error     string      `json:"error,omitempty"`     // 单点错误信息，空表示成功
+	Name      string      `json:"name"`                // Point name, corresponds to Point.Name
+	Value     interface{} `json:"value"`               // Read value (protocol native type); empty for bad points
+	Timestamp int64       `json:"timestamp,omitempty"` // Acquisition timestamp (ns), 0 means protocol not provided
+	Error     string      `json:"error,omitempty"`     // Single point error message, empty means success
 }
 
-// ApplyScale 工程量转换：eng = raw*scale + offset。
-// Scale/Offset 均为 0 时原样返回 raw；注意 scale=0 而 offset≠0 时结果为 offset（raw 被丢弃，
-// 如需仅平移应显式配 scale=1）。
+// ApplyScale engineering conversion: eng = raw*scale + offset.
+// When Scale/Offset are both 0, returns raw as-is; note when scale=0 and offset≠0, result is offset (raw discarded,
+// if only translation needed explicitly configure scale=1).
 func ApplyScale(raw float64, p Point) float64 {
 	if p.Scale == 0 && p.Offset == 0 {
 		return raw
@@ -77,8 +77,8 @@ func ApplyScale(raw float64, p Point) float64 {
 	return raw*p.Scale + p.Offset
 }
 
-// ScaleValue 对数值型采集值应用点位工程量转换，结果为 float64。
-// Scale/Offset 均为 0、或值非数值类型（布尔等）时原样返回。
+// ScaleValue applies point engineering conversion to numeric values, result is float64.
+// When Scale/Offset are both 0, or value is non-numeric type (bool, etc.), returns as-is.
 func ScaleValue(v interface{}, p Point) interface{} {
 	if p.Scale == 0 && p.Offset == 0 {
 		return v
@@ -89,7 +89,7 @@ func ScaleValue(v interface{}, p Point) interface{} {
 	return v
 }
 
-// NewData 组装单点采集结果：qualityBad 标记坏点；否则对数值应用点位工程量转换。
+// NewData assembles single point acquisition result: qualityBad marks bad point; otherwise applies point engineering conversion to numeric values.
 func NewData(name string, value interface{}, qualityBad bool, timestamp time.Time, p Point) Data {
 	if qualityBad {
 		return Data{Name: name, Error: "read failed (quality=bad)"}
@@ -97,8 +97,8 @@ func NewData(name string, value interface{}, qualityBad bool, timestamp time.Tim
 	return Data{Name: name, Value: ScaleValue(value, p), Timestamp: timestamp.UnixNano()}
 }
 
-// RenderPoint 渲染 Point 的字符串字段模板（Name/Addr/Type/Endian/Value），Scale/Offset 透传。
-// 由节点层用 ctx+msg 构造的 env 调用，driver 只接渲染后的 Point（无 ${}）。
+// RenderPoint renders Point string field templates (Name/Addr/Type/Endian/Value), Scale/Offset pass through.
+// Called by node layer with env constructed from ctx+msg, driver receives rendered Point (no ${}).
 func RenderPoint(p Point, env map[string]interface{}) Point {
 	return Point{
 		Name:   RenderTemplate(p.Name, env),

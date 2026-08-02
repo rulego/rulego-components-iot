@@ -45,7 +45,7 @@ func newDriver(db *sql.DB) *driver {
 	return &driver{db: db}
 }
 
-// 以下两个函数把 PostgreSQL 方言参数（双引号标识符、标准字符串转义）绑定到 pkg/tsdb 通用实现。
+// The following two functions bind PostgreSQL dialect parameters (double quote identifiers, standard string escaping) to pkg/tsdb common implementation.
 
 func quoteIdentifier(s string) string { return tsdb.QuoteIdentifier(s, '"') }
 
@@ -53,30 +53,30 @@ func formatValue(v interface{}) string { return tsdb.FormatValue(v, false) }
 
 func validFieldValue(v interface{}) bool { return tsdb.ValidFieldValue(v) }
 
-// maxStatementBytes 单条 INSERT 的字节预算。
+// maxStatementBytes is the byte budget for a single INSERT statement.
 const maxStatementBytes = 1024 * 1024
 
 const insertPrefix = "INSERT INTO "
 
-// reservedColumn 与硬编码时间列重名的业务列名，剔除避免列重复。
+// reservedColumn is the business column name that conflicts with hardcoded time column, excluded to avoid duplication.
 const reservedColumn = "time"
 
-// rowGroup 同一 measurement 的一组点（tags 与 fields 均作为普通列）。
+// rowGroup is a group of points from same measurement (tags and fields both as normal columns).
 type rowGroup struct {
 	measurement string
 	colSet      map[string]struct{}
 	rows        []groupRow
 }
 
-// groupRow 单行：各列取值（tag 为 string，field 为任意）与时间戳。
+// groupRow is a single row: column values (tag as string, field as any) and timestamp.
 type groupRow struct {
 	ts     int64
 	values map[string]interface{}
 }
 
-// buildInsertStatements 按 measurement 分组拼装多 VALUES INSERT，并按字节预算拆条。
-// PostgreSQL 单条 INSERT 只能面向一张表，故不同 measurement 不合并到同一条语句。
-// 无可写点（输入为空或全部无有效列）时返回 nil。
+// buildInsertStatements assembles multi-VALUES INSERT by measurement grouping, splits statements by byte budget.
+// PostgreSQL single INSERT can only target one table, so different measurements are not merged into same statement.
+// Returns nil when no writable points (empty input or all with no valid columns).
 func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 	groups := make(map[string]*rowGroup)
 	var order []string
@@ -85,7 +85,7 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 		if p.Measurement == "" {
 			continue
 		}
-		// 先收集可写列（剔除保留列名与无效值），无可写列则跳过且不创建组
+		// First collect writable columns (exclude reserved names and invalid values), skip if no writable columns and do not create group
 		row := groupRow{ts: p.Timestamp, values: make(map[string]interface{}, len(p.Tags)+len(p.Fields))}
 		for k, v := range p.Tags {
 			if k == reservedColumn {
@@ -114,7 +114,7 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 		g.rows = append(g.rows, row)
 	}
 
-	// 每个组独立成条（PG 单表限制），同组多行拼多 VALUES，超预算则拆条。
+	// Each group becomes separate statement (PG single table limit), same group multi-rowmerged into multi VALUES, split when over budget.
 	var stmts []string
 	for _, m := range order {
 		for _, seg := range groupSegments(db, groups[m]) {
@@ -124,8 +124,8 @@ func buildInsertStatements(db string, points []tsdb.SeriesPoint) []string {
 	return stmts
 }
 
-// groupSegments 渲染一个组为若干表段：列头出现一次后接多行 VALUES，缺失列补 NULL。
-// 单组累计超过 maxStatementBytes 时断开另起段（重列头）。
+// groupSegments renders a group into multiple table segments: column header appears once followed by multiple row VALUES, missing columns filled with NULL.
+// When single group exceeds maxStatementBytes, break and start new segment (repeat column header).
 func groupSegments(db string, g *rowGroup) []string {
 	cols := sortedSetKeys(g.colSet)
 	head := tableHeader(db, g.measurement, cols)
@@ -150,7 +150,7 @@ func groupSegments(db string, g *rowGroup) []string {
 	return append(segs, b.String())
 }
 
-// tableHeader 渲染列头：schema.measurement (业务列...,time) VALUES 。
+// tableHeader renders column header: schema.measurement (business columns...,time) VALUES.
 func tableHeader(db, measurement string, cols []string) string {
 	var b strings.Builder
 	b.WriteString(quoteIdentifier(db))
@@ -166,7 +166,7 @@ func tableHeader(db, measurement string, cols []string) string {
 	return b.String()
 }
 
-// renderRow 渲染单行 VALUES：业务列值在前，时间戳在后，缺失列补 NULL。
+// renderRow renders single row VALUES: business column values first, timestamp last, missing columns filled with NULL.
 func renderRow(row groupRow, cols []string) string {
 	var b strings.Builder
 	b.WriteString("(")
@@ -186,7 +186,7 @@ func renderRow(row groupRow, cols []string) string {
 	return b.String()
 }
 
-// formatTimestamp 纳秒时间戳格式化；0 返回 NOW()。
+// formatTimestamp formats nanosecond timestamp; 0 returns NOW().
 func formatTimestamp(ts int64) string {
 	if ts == 0 {
 		return "NOW()"
@@ -194,7 +194,7 @@ func formatTimestamp(ts int64) string {
 	return fmt.Sprintf("to_timestamp(%d/1000000000.0)", ts)
 }
 
-// sortedSetKeys 返回集合键的排序切片，保证列顺序确定。
+// sortedSetKeys returns sorted slice of set keys, ensures deterministic column order.
 func sortedSetKeys(m map[string]struct{}) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -204,7 +204,7 @@ func sortedSetKeys(m map[string]struct{}) []string {
 	return keys
 }
 
-// WritePoints 批量写入：拼装多 VALUES INSERT，在单个事务内逐条执行，任一失败回滚。
+// WritePoints batch writes: assemble multi-VALUES INSERT, execute each statement in single transaction, rollback on any failure.
 func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.SeriesPoint) error {
 	stmts := buildInsertStatements(db, points)
 	if len(stmts) == 0 {

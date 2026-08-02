@@ -24,10 +24,10 @@ import (
 )
 
 func TestEscapeString(t *testing.T) {
-	// PostgreSQL 标准模式：单引号翻倍，反斜杠原样
+	// PostgreSQL standard mode: double single quotes, backslashes unchanged
 	assert.Equal(t, "O''Neil", EscapeString("O'Neil", false))
 	assert.Equal(t, "C:\\new", EscapeString("C:\\new", false))
-	// 反斜杠转义方言（TDengine）：先翻倍反斜杠再转义单引号
+	// Backslash escape dialect (TDengine): double backslashes first then escape single quotes
 	assert.Equal(t, "O\\'Neil", EscapeString("O'Neil", true))
 	assert.Equal(t, "C:\\\\new", EscapeString("C:\\new", true))
 	assert.Equal(t, "dir\\\\", EscapeString("dir\\", true))

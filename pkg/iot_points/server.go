@@ -24,8 +24,8 @@ import (
 	"strings"
 )
 
-// ParseServer 解析 "host" 或 "host:port" 格式地址，返回 host 与端口。
-// 缺省端口时用 defaultPort；空地址或非法端口（非数字/越界）返回 error。
+// ParseServer parses "host" or "host:port" format address, returns host and port.
+// Uses defaultPort when port omitted; returns error for empty address or invalid port (non-number/out of range).
 func ParseServer(server string, defaultPort int) (string, int, error) {
 	server = strings.TrimSpace(server)
 	if server == "" {

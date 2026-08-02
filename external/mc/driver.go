@@ -26,27 +26,27 @@ import (
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 )
 
-// bitDevices 位软元件，按位读写（MC 协议位单位批量访问）。
+// bitDevices bit devices, read/write by bit (MC protocol bit unit batch access).
 var bitDevices = map[string]bool{
 	"X": true, "Y": true, "M": true, "L": true, "F": true, "V": true, "B": true, "S": true,
 	"TC": true, "TS": true, "CC": true, "CS": true, "STC": true, "STS": true,
 	"SB": true, "DX": true, "DY": true,
-	"SM": true, // 特殊继电器是位软元件
+	"SM": true, // Special relay is a bit device
 }
 
-// wordDevices 字软元件，按字读写（16 位/字）。
+// wordDevices word devices, read/write by word (16-bit/word).
 var wordDevices = map[string]bool{
 	"D": true, "W": true, "R": true, "ZR": true, "Z": true,
 	"TN": true, "STN": true, "CN": true, "SD": true, "SW": true,
 }
 
-// hexDevices 十六进制编址软元件，地址数字部分按十六进制解析（如 X1F=31）；其余按十进制。
+// hexDevices hex-addressed devices, address numeric part parsed as hex (e.g. X1F=31); others use decimal.
 var hexDevices = map[string]bool{
 	"X": true, "Y": true, "B": true, "W": true, "ZR": true,
 	"SB": true, "SW": true, "DX": true, "DY": true,
 }
 
-// driver 适配 iot_points.Driver 到 gomcprotocol 3E 客户端。
+// driver adapts iot_points.Driver to gomcprotocol 3E client.
 type driver struct {
 	client *gomcprotocol.Client3E
 }
@@ -57,7 +57,7 @@ func newDriver(client *gomcprotocol.Client3E) *driver {
 	return &driver{client: client}
 }
 
-// ReadPoints 逐点读取。单点失败标记 Error；全部失败返回 error。
+// ReadPoints reads point by point. Single-point failure marks Error; all failure returns error.
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	out := make([]iot_points.Data, 0, len(points))
 	failCount := 0
@@ -76,7 +76,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	return out, nil
 }
 
-// WritePoints 逐点写入。任一失败立即返回 error。
+// WritePoints writes point by point. Any failure returns error immediately.
 func (d *driver) WritePoints(points []iot_points.Point) error {
 	for _, p := range points {
 		if err := d.writePoint(p); err != nil {
@@ -110,7 +110,7 @@ func (d *driver) readPoint(p iot_points.Point) (iot_points.Data, error) {
 	if err != nil {
 		return iot_points.Data{}, err
 	}
-	// 数值类型做工程量转换（bool 不转换）
+	// Numeric types do engineering conversion (bool not converted)
 	if p.Scale != 0 || p.Offset != 0 {
 		if f, ok := toFloat(val); ok {
 			val = iot_points.ApplyScale(f, p)
@@ -138,8 +138,8 @@ func (d *driver) writePoint(p iot_points.Point) error {
 	return d.client.WriteWords(device, offset, words)
 }
 
-// parseAddr 解析三菱软元件地址 <软元件><编号>，如 D100、M0、X1F、ZR10、TN5、STC3。
-// 软元件前缀按最长匹配（STC/TN/ZR 等优先于 S/T/Z）；十六进制编址软元件的数字部分按十六进制解析。
+// parseAddr parses Mitsubishi device address <device><number>, e.g. D100, M0, X1F, ZR10, TN5, STC3.
+// Device prefix matches longest first (STC/TN/ZR take precedence over S/T/Z); hex-addressed devices parse numeric part as hex.
 func parseAddr(addr string) (device string, offset int, isBit bool, err error) {
 	upper := strings.ToUpper(strings.TrimSpace(addr))
 	if upper == "" {
@@ -170,7 +170,7 @@ func knownDevice(d string) bool {
 	return bitDevices[d] || wordDevices[d]
 }
 
-// wordCount 类型占用的字数（1 字 = 16 位）。空类型按 UINT16（1 字）。
+// wordCount word count per type (1 word = 16 bits). Empty type defaults to UINT16 (1 word).
 func wordCount(typ string) (int, error) {
 	switch strings.ToUpper(strings.TrimSpace(typ)) {
 	case iot_points.TypeInt16, iot_points.TypeUint16, iot_points.TypeBool, "":
@@ -184,7 +184,7 @@ func wordCount(typ string) (int, error) {
 	}
 }
 
-// decodeWords 按 MELSEC 原生字节序（字内小端、低字在前）解码字序列为值。
+// decodeWords decodes word sequence to value per MELSEC native byte order (little-endian within word, low word first).
 func decodeWords(words []uint16, typ string) (interface{}, error) {
 	switch strings.ToUpper(strings.TrimSpace(typ)) {
 	case iot_points.TypeInt16, "":
@@ -210,7 +210,7 @@ func decodeWords(words []uint16, typ string) (interface{}, error) {
 	}
 }
 
-// encodeValue 解析写入值字符串为字序列（MELSEC 原生字节序）。空类型按 INT16。
+// encodeValue parses write value string to word sequence (MELSEC native byte order). Empty type defaults to INT16.
 func encodeValue(value, typ string) ([]uint16, error) {
 	value = strings.TrimSpace(value)
 	switch strings.ToUpper(strings.TrimSpace(typ)) {
@@ -267,27 +267,27 @@ func encodeValue(value, typ string) ([]uint16, error) {
 	}
 }
 
-// join32 组装 2 字为 32 位值（低字在前）。
+// join32 assembles 2 words into 32-bit value (low word first).
 func join32(w []uint16) uint32 {
 	return uint32(w[1])<<16 | uint32(w[0])
 }
 
-// join64 组装 4 字为 64 位值（低字在前）。
+// join64 assembles 4 words into 64-bit value (low word first).
 func join64(w []uint16) uint64 {
 	return uint64(join32(w[2:]))<<32 | uint64(join32(w[:2]))
 }
 
-// split32 拆分 32 位值为 2 字（低字在前）。
+// split32 splits 32-bit value into 2 words (low word first).
 func split32(v uint32) []uint16 {
 	return []uint16{uint16(v), uint16(v >> 16)}
 }
 
-// split64 拆分 64 位值为 4 字（低字在前）。
+// split64 splits 64-bit value into 4 words (low word first).
 func split64(v uint64) []uint16 {
 	return []uint16{uint16(v), uint16(v >> 16), uint16(v >> 32), uint16(v >> 48)}
 }
 
-// toFloat 数值转 float64（bool 等非数值返回 ok=false）。
+// toFloat converts numeric to float64 (bool etc. return ok=false).
 func toFloat(v interface{}) (float64, bool) {
 	switch n := v.(type) {
 	case int16:

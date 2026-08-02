@@ -28,7 +28,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestSnmpNodes 节点类型与默认配置
+// TestSnmpNodes node types and default configuration
 func TestSnmpNodes(t *testing.T) {
 	r := &ReadNode{}
 	assert.Equal(t, "x/snmpRead", r.Type())
@@ -44,23 +44,23 @@ func TestSnmpNodes(t *testing.T) {
 	assert.Equal(t, "public", rn.Config.Community)
 }
 
-// TestToSnmpClientPoint 统一 Point(Addr=OID) 映射为 snmpclient.Point。
+// TestToSnmpClientPoint maps unified Point(Addr=OID) to snmpclient.Point.
 func TestToSnmpClientPoint(t *testing.T) {
-	// get 默认
+	// get by default
 	p := iot_points.Point{Name: "sysName", Addr: "1.3.6.1.2.1.1.5.0"}
 	cp := toSnmpClientPoint(p)
 	assert.Equal(t, "sysName", cp.Name)
 	assert.Equal(t, "1.3.6.1.2.1.1.5.0", cp.OID)
 	assert.Equal(t, "get", cp.Op)
 
-	// walk 前缀
+	// walk prefix
 	p2 := iot_points.Point{Name: "ifTable", Addr: "walk:1.3.6.1.2.1.2.2"}
 	cp2 := toSnmpClientPoint(p2)
 	assert.Equal(t, "walk", cp2.Op)
 	assert.Equal(t, "1.3.6.1.2.1.2.2", cp2.OID)
 }
 
-// TestConfigPropImpl ConfigProp 接口实现
+// TestConfigPropImpl ConfigProp interface implementation
 func TestConfigPropImpl(t *testing.T) {
 	c := Configuration{
 		Server: "192.168.1.1:1161", Version: "v3", Community: "private",

@@ -34,9 +34,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_VictoriaMetrics 真实端到端：写 SeriesPoint 到 VictoriaMetrics，查询验证值。
-// 需先起 VictoriaMetrics（test/e2e/docker-compose.yml 或 docker run -p 8428:8428 victoriametrics/victoria-metrics），
-// 设 E2E_VICTORIAMETRICS_URL=http://localhost:8428 启用；未设则 skip。
+// TestE2E_VictoriaMetrics real end-to-end: write SeriesPoint to VictoriaMetrics, query and verify value.
+// Requires VictoriaMetrics running first (test/e2e/docker-compose.yml or docker run -p 8428:8428 victoriametrics/victoria-metrics),
+// set E2E_VICTORIAMETRICS_URL=http://localhost:8428 to enable; skip if not set.
 func TestE2E_VictoriaMetrics(t *testing.T) {
 	base := os.Getenv("E2E_VICTORIAMETRICS_URL")
 	if base == "" {
@@ -56,7 +56,7 @@ func TestE2E_VictoriaMetrics(t *testing.T) {
 	}})
 	assert.Nil(t, err, "write to VictoriaMetrics")
 
-	// 查询验证：VM 新序列索引建立有约 1 分钟延迟，轮询 query_range 直到可查
+	// Query verification: VM new series index creation has ~1 minute delay, poll query_range until queryable
 	q := url.QueryEscape(fmt.Sprintf(`%s{host="e2e"}`, metric))
 	ts := now / 1e9
 	queryURL := base + "/api/v1/query_range?query=" + q +

@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-// Package fins 提供欧姆龙 FINS 协议 PLC(CJ/CP/NJ/NX 系列)的读取(ReadNode)与写入(WriteNode)节点。
+// Package fins provides ReadNode and WriteNode for Omron FINS protocol PLCs (CJ/CP/NJ/NX series).
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule，点位在下方 points 配置。
-//   - 按需读/写：msg.Data 带点位列表则优先使用（动态场景）。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule, configure points below.
+//   - On-demand read/write: msg.Data points take precedence (dynamic scenarios).
 //
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
+// Point fields support ${msg.xx} / ${metadata.xx} template variables.
 package fins
 
 import (
@@ -39,36 +39,36 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// defaultFinsPort FINS 默认端口(UDP 与 TCP 均为 9600)
+// defaultFinsPort default FINS port (UDP and TCP both use 9600)
 const defaultFinsPort = 9600
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration 连接配置（读/写节点共用）
+// Configuration connection config (shared by read/write nodes)
 type Configuration struct {
-	// PLC 地址，格式 IP 或 IP:port，FINS 默认端口 9600
+	// PLC address, format IP or IP:port, FINS default port 9600
 	Server string `json:"server" label:"Server" desc:"PLC IP[:port], FINS default port 9600" required:"true" ref:"primary"`
-	// 传输方式：udp(默认) 或 tcp(FINS/TCP，含节点地址协商)
+	// Transport: udp (default) or tcp (FINS/TCP with node handshake)
 	Transport string `json:"transport" label:"Transport" desc:"transport: udp (default) or tcp (FINS/TCP with node handshake)"`
-	// FINS 网络号(DA1/SA1)，默认 0
+	// FINS network number (DA1/SA1), default 0
 	Network int `json:"network" label:"Network" desc:"FINS network number (DA1/SA1), default 0"`
-	// 目标节点号(DA2)，即 PLC 的 FINS 节点号，默认 0
+	// Destination node number (DA2), i.e. PLC FINS node number, default 0
 	DstNode int `json:"dstNode" label:"Dest Node" desc:"destination FINS node number (DA2), default 0"`
-	// 源节点号(SA2)，即本客户端的 FINS 节点号，默认 0
+	// Source node number (SA2), i.e. client FINS node number, default 0
 	SrcNode int `json:"srcNode" label:"Source Node" desc:"source FINS node number (SA2), default 0"`
-	// 单元地址(DA3)，CPU 单元号，默认 0
+	// Unit address (DA3), CPU unit number, default 0
 	Unit int `json:"unit" label:"Unit" desc:"unit address (DA3), default 0"`
-	// 请求超时(秒)，默认 5
+	// Request timeout in seconds, default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
-	// 默认点位表。定时采集(schedule 触发)时使用；msg.Data 带点位则优先
+	// Default points table. Used by scheduled collection (schedule trigger); msg.Data points take precedence
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// initClient 建立 FINS 客户端(UDP 默认；transport=tcp 走 FINS/TCP 并自动握手)。
+// initClient creates FINS client (UDP by default; transport=tcp uses FINS/TCP with auto handshake).
 func (c Configuration) initClient() (*finsclient.Client, error) {
 	host, port, err := iot_points.ParseServer(c.Server, defaultFinsPort)
 	if err != nil {
@@ -91,35 +91,35 @@ func (c Configuration) initClient() (*finsclient.Client, error) {
 	return finsclient.NewClient(local, plc, opts...)
 }
 
-// finsOpLocks 按底层 client 关联操作锁，串行化共享 client 的并发读写。
+// finsOpLocks operation locks per underlying client, serializes concurrent read/write with shared client.
 var finsOpLocks iot_points.OpLocks
 
-// finsReconnecter 连接重建能力接口。
+// finsReconnecter reconnection capability interface.
 type finsReconnecter interface {
 	reconnect(old *finsclient.Client) (*finsclient.Client, error)
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadNode FINS 读节点
+// ReadNode FINS read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadNode 批量读取 FINS 点位，结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadNode batch reads FINS points, results (unified Data list) written to msg.Data, routed via Success link.
 //
-// 输入(msg.Data 可选)：点位列表 JSON，格式同 points 配置。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]（timestamp 为 ns；error 仅单点失败时存在）
+// Input (msg.Data optional): point list JSON, same format as points config. Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp","error"}] (timestamp in ns; error present only on single-point failure)
 type ReadNode struct {
 	base.SharedNode[*finsclient.Client]
 	Config Configuration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnection
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/finsRead"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -133,7 +133,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*finsclient.Client, error) {
@@ -144,12 +144,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败（全部点位失败）自动重连重试 maxRetries 次。
+// OnMsg handles messages. Connection-level failure (all points failed) auto-reconnects with maxRetries.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -194,19 +194,19 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			finsOpLocks.Delete(oldClient) // 清理旧连接操作锁
+			finsOpLocks.Delete(oldClient) // Clean up old connection operation lock
 			client = newClient
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *finsclient.Client) (*finsclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(finsReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(finsReconnecter); ok { // cross-type: Read↔Write delegation
 					return source.reconnect(old)
 				}
 			}
@@ -240,9 +240,9 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
 			finsOpLocks.Delete(c)
 		}
@@ -250,30 +250,30 @@ func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "Omron FINS client for batch reading PLC points. Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode FINS 写节点
+// WriteNode FINS write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 把 msg.Data 的点位值列表写入 FINS PLC，成功走 Success 链。
+// WriteNode writes point value list from msg.Data to FINS PLC, routes via Success on success.
 //
-// 输入(msg.Data)：[{"name","addr","type","value"}]，value 支持 ${msg.xx}
+// Input (msg.Data): [{"name","addr","type","value"}], value supports ${msg.xx}
 type WriteNode struct {
 	base.SharedNode[*finsclient.Client]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/finsWrite"
 }
 
-// New 默认配置
+// New default configuration
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
@@ -287,7 +287,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*finsclient.Client, error) {
@@ -298,12 +298,12 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		}
 		return nil
 	})
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。写入失败自动重连重试 maxRetries 次。
+// OnMsg handles messages. Write failure auto-reconnects with maxRetries.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -341,19 +341,19 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, rerr)
 				return
 			}
-			finsOpLocks.Delete(oldClient) // 清理旧连接操作锁
+			finsOpLocks.Delete(oldClient) // Clean up old connection operation lock
 			client = newClient
 		}
 	}
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接（语义同 ReadNode.reconnect）
+// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
 func (x *WriteNode) reconnect(old *finsclient.Client) (*finsclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(finsReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(finsReconnecter); ok { // cross-type: Read↔Write delegation
 					return source.reconnect(old)
 				}
 			}
@@ -387,7 +387,7 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	if !x.SharedNode.IsFromPool() {
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
@@ -397,7 +397,7 @@ func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *WriteNode) Desc() string {
 	return "Omron FINS client for writing PLC points. Routes to Success/Failure"
 }

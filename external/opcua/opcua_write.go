@@ -33,12 +33,12 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register node
 func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// WriteNodeConfiguration  节点配置
+// WriteNodeConfiguration node configuration
 type WriteNodeConfiguration struct {
 	//OPC UA Server Endpoint, eg. opc.tcp://localhost:4840
 	Server string `json:"server" label:"Server" desc:"OPC UA server endpoint, format: opc.tcp://host:port" required:"true" ref:"primary"`
@@ -50,13 +50,13 @@ type WriteNodeConfiguration struct {
 	Auth     string `json:"auth" label:"Auth Mode" desc:"Authentication mode: Anonymous, UserName, Certificate" ref:"shared" group:"advanced"`
 	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared" group:"advanced"`
 	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared" group:"advanced"`
-	//OPC UA 客户端证书文件
+	//OPC UA client certificate file
 	CertFile string `json:"certFile" label:"Cert File" desc:"Client certificate file path" ref:"shared" group:"advanced"`
-	//OPC UA 客户端证书私钥文件
+	//OPC UA client private key file
 	CertKeyFile string `json:"certKeyFile" label:"Cert Key File" desc:"Client private key file path" ref:"shared" group:"advanced"`
-	// 请求超时（秒）
+	// Request timeout (seconds)
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5" ref:"shared"`
-	// 默认点位表（addr=NodeID）；为空则从 msg.Data 解析点位（旧兼容）
+	// Default points table (addr=NodeID); empty=parse from msg.Data (legacy compatible)
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points; addr=NodeID; empty=parse from msg.Data"`
 }
 
@@ -88,14 +88,14 @@ func (c WriteNodeConfiguration) GetTimeout() int {
 	return c.Timeout
 }
 
-// WriteNode 把点位值写入 OPC UA 服务器，成功走 Success 链，否则 Failure 链。
+// WriteNode writes point values to OPC UA server. Routes to Success on success, Failure otherwise.
 //
-// 点位来源（双入口，msg.Data 优先）：配置 points(addr=NodeID)；或 msg.Data 带点位/旧 {nodeId,value} 列表。
+// Points sources (dual entry, msg.Data takes priority): configure points(addr=NodeID); or msg.Data with points/legacy {nodeId,value} list.
 type WriteNode struct {
 	base.SharedNode[*opcua.Client]
-	//节点配置
+	// Node configuration
 	Config WriteNodeConfiguration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnection
 	reconnectLocker sync.Mutex
 }
 
@@ -114,7 +114,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/opcuaWrite"
 }
@@ -127,12 +127,12 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 	}, func(client *opcua.Client) error {
 		return client.Close(context.Background())
 	})
-	// 启用同链连接池：本地连接按节点ID注册到链目录
+	// Enable same-chain connection pool: local connections registered to chain directory by node ID
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。点位双入口（msg.Data 优先，兼容旧 write Data/旧 read nodeIds/新 points）；写入失败自动重连重试。
+// OnMsg processes messages. Points dual entry (msg.Data takes priority, compatible with legacy write Data/legacy read nodeIds/new points); auto reconnect retry on write failure.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -170,7 +170,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
@@ -190,12 +190,12 @@ func (x *WriteNode) initClient() (*opcua.Client, error) {
 	return client, err
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *WriteNode) reconnect(old *opcua.Client) (*opcua.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // Cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -229,7 +229,6 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// castValue 尝试将 []interface{} 转换为特定类型的切片，以便 ua.NewVariant 可以正确处理
 // castValue attempts to convert []interface{} to a slice of a specific type so that ua.NewVariant can handle it correctly
 func castValue(val interface{}, dataType string) interface{} {
 	if dataType != "" {
@@ -240,7 +239,7 @@ func castValue(val interface{}, dataType string) interface{} {
 		if len(v) == 0 {
 			return v
 		}
-		// 根据第一个元素的类型进行转换
+		// Convert based on first element type
 		// Convert based on the type of the first element
 		switch v[0].(type) {
 		case float64:
@@ -249,7 +248,7 @@ func castValue(val interface{}, dataType string) interface{} {
 				if f, ok := e.(float64); ok {
 					arr[i] = f
 				} else {
-					return val // 如果类型不一致，返回原始值 | If types are inconsistent, return the original value
+					return val // If types are inconsistent, return the original value
 				}
 			}
 			return arr
@@ -280,7 +279,7 @@ func castValue(val interface{}, dataType string) interface{} {
 
 func castValueByType(val interface{}, dataType string) interface{} {
 	dataType = strings.ToLower(dataType)
-	// 检查是否为数组类型
+	// Check if array type
 	// Check if it is an array type
 	if v, ok := val.([]interface{}); ok {
 		switch dataType {
@@ -393,7 +392,7 @@ func castValueByType(val interface{}, dataType string) interface{} {
 		}
 	}
 
-	// 标量类型处理
+	// Scalar type processing
 	// Scalar type handling
 	switch dataType {
 	case "boolean":
@@ -452,8 +451,8 @@ func castValueByType(val interface{}, dataType string) interface{} {
 		}
 	case "guid":
 		if v, ok := val.(string); ok {
-			// 如果需要支持 GUID，需要实现 ParseGUID 或者使用第三方库
-			// 暂时移除 ParseGUID 调用，避免编译错误
+			// To support GUID, need to implement ParseGUID or use third-party library
+			// Temporarily remove ParseGUID call to avoid compilation error
 			// if id, err := ua.ParseGUID(v); err == nil {
 			// 	return *id
 			// }

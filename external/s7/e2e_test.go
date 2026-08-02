@@ -34,9 +34,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_S7 真实端到端：对真实/模拟 S7 服务读 DB1 两个 FLOAT32 点。
-// 需先起 S7 服务（如 python-snap7 server，DB1.DBD0=25.5、DB1.DBD4=80.25），
-// 设 E2E_S7_ADDR（host:port，默认端口 102）启用；未设则 skip。
+// TestE2E_S7 real end-to-end: reads two FLOAT32 points from DB1 on real/simulated S7 server.
+// Requires S7 server running first (e.g. python-snap7 server with DB1.DBD0=25.5, DB1.DBD4=80.25),
+// set E2E_S7_ADDR (host:port, default port 102) to enable; skip if not set.
 func TestE2E_S7(t *testing.T) {
 	addr := os.Getenv("E2E_S7_ADDR")
 	if addr == "" {
@@ -80,7 +80,7 @@ func TestE2E_S7(t *testing.T) {
 	}
 }
 
-// TestConcurrent_S7Read 8 并发 ×10 消息共享同一 x/s7Read 节点读取，验证值正确且无数据竞争。
+// TestConcurrent_S7Read 8 concurrent goroutines x 10 messages sharing same x/s7Read node, verifies correct values and no data race.
 func TestConcurrent_S7Read(t *testing.T) {
 	addr := os.Getenv("E2E_S7_ADDR")
 	if addr == "" {

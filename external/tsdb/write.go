@@ -35,20 +35,20 @@ func init() {
 // Config defines the universal TSDB write configuration.
 type Config struct {
 	Driver string `json:"driver" label:"Driver" desc:"TSDB driver: opengemini, influxdb, tdengine, promremote, timescaledb" required:"true"`
-	// 采集数据映射（可选）。配置 Measurement 后，输入按采集点数组透视为 SeriesPoint；
-	// 不配置则输入须为 SeriesPoint 格式（原样透传）。
+	// Acquisition data mapping (optional). When Measurement is configured, input is projected as SeriesPoint from acquisition point array;
+	// when not configured, input must be SeriesPoint format (passed through as-is).
 	tsdb.AcquisitionMapping `json:",squash"`
 }
 
 // Node delegates writes to a concrete TSDB write node selected by driver.
 //
-// 输入(msg.Data)：
-//   - 未配置 measurement：SeriesPoint JSON 数组/单对象（见 pkg/tsdb.SeriesPoint），非 JSON 按 line protocol 解析。
-//   - 配置了 measurement：
-//     a) 采集点数组 [{"name","value","timestamp","error"}] → 透视为单个 SeriesPoint
-//     （fields=各点 name→value，timestamp=各点最大时间戳）；
-//     b) 扁平 map/map 数组 {"temp":25} 或 [{"avg":25},{"avg":26}] → 逐行转换为 SeriesPoint
-//     （fields=整个 map，timestamp=当前时间）。
+// Input (msg.Data):
+//   - measurement not configured: SeriesPoint JSON array/single object (see pkg/tsdb.SeriesPoint), non-JSON parsed as line protocol.
+//   - measurement configured:
+//     a) Acquisition point array [{"name","value","timestamp","error"}] → projected as single SeriesPoint
+//     (fields=point name→value, timestamp=max timestamp of all points);
+//     b) Flat map/map array {"temp":25} or [{"avg":25},{"avg":26}] → converted to SeriesPoint row by row
+//     (fields=entire map, timestamp=current time).
 type Node struct {
 	Config Config
 	// delegate holds the concrete write node selected at init time.
@@ -111,7 +111,7 @@ func (x *Node) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			msg.SetDataType(types.JSON)
 			msg.SetData(mapped)
 		}
-		// 映射不适用（输入非点数组）则原样透传，交由 delegate 处理
+		// If mapping not applicable (input not point array), pass through as-is, handled by delegate
 	}
 	x.delegate.OnMsg(ctx, msg)
 }

@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// fluxCSV 带注解的 Flux 查询响应样本，列序：result/table/_start/_stop/_time/_value/_field/_measurement/host/region。
+// fluxCSV annotated Flux query response sample, column order: result/table/_start/_stop/_time/_value/_field/_measurement/host/region.
 const fluxCSV = `#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string,string
 #group,false,false,true,true,false,false,false,false,true,true
 #default,_result,,,,,,,,,
@@ -93,7 +93,7 @@ func TestQueryNodeOnMsgInfluxDB(t *testing.T) {
 		Rows    []map[string]interface{} `json:"Rows"`
 	}
 	assert.Nil(t, json.Unmarshal([]byte(gotData), &res))
-	// 列序与 CSV 注解序一致
+	// Column order consistent with CSV annotation order
 	assert.Equal(t, []string{"result", "table", "_start", "_stop", "_time", "_value", "_field", "_measurement", "host", "region"}, res.Columns)
 	assert.Equal(t, 2, len(res.Rows))
 	assert.Equal(t, "srv1", res.Rows[0]["host"])

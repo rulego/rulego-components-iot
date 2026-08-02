@@ -81,7 +81,7 @@ func TestNodeOnMsgPromRemote(t *testing.T) {
 	}
 }
 
-// TestNodeAcquisitionMapping 配置 measurement 后，采集点数组透视为 SeriesPoint 落盘。
+// TestNodeAcquisitionMapping configures measurement, projects acquisition point array as SeriesPoint for persistence.
 func TestNodeAcquisitionMapping(t *testing.T) {
 	requests := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +102,7 @@ func TestNodeAcquisitionMapping(t *testing.T) {
 	assert.Nil(t, err)
 
 	done := make(chan struct{}, 1)
-	// 输入为采集点数组（含一个坏点 error，应被过滤）
+	// Input is acquisition point array (contains one bad point with error, should be filtered)
 	test.NodeOnMsg(t, node, []test.Msg{{
 		DataType: types.JSON,
 		MsgType:  "TEST",
@@ -124,7 +124,7 @@ func TestNodeAcquisitionMapping(t *testing.T) {
 		assert.Contains(t, body, "device_metrics")
 		assert.Contains(t, body, "temperature")
 		assert.Contains(t, body, "humidity")
-		assert.NotContains(t, body, "bad") // 坏点被过滤
+		assert.NotContains(t, body, "bad") // bad point filtered
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for mapped request")
 	}

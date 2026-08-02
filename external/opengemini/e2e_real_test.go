@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestE2E_OpenGemini 真实端到端：写 SeriesPoint 到 OpenGemini，SQL 查询验证落盘。
-// 需设 E2E_OPENGEMINI_ADDR（host:port，如 localhost:8087）启用；未设则 skip。
+// TestE2E_OpenGemini real end-to-end: write SeriesPoint to OpenGemini, verify persistence with SQL query.
+// Set E2E_OPENGEMINI_ADDR (host:port, e.g. localhost:8087) to enable; skip if not set.
 func TestE2E_OpenGemini(t *testing.T) {
 	addr := os.Getenv("E2E_OPENGEMINI_ADDR")
 	if addr == "" {
@@ -52,7 +52,7 @@ func TestE2E_OpenGemini(t *testing.T) {
 	defer client.Close()
 
 	database := "e2e_iot"
-	// 环境变量已设即期望可跑：等待服务就绪，持续不可达按失败处理（CreateDatabase 幂等）
+	// When env vars are set, expect to run: wait for service readiness, continuous unreachability treated as failure (CreateDatabase is idempotent)
 	if err := waitReady(60*time.Second, func() error { return client.CreateDatabase(database) }); err != nil {
 		t.Fatalf("opengemini not reachable within 60s: %v", err)
 	}
@@ -68,14 +68,14 @@ func TestE2E_OpenGemini(t *testing.T) {
 	}})
 	assert.Nil(t, err, "write to OpenGemini")
 
-	// OpenGemini 写入后可查需短暂等待
+	// Brief wait required before data becomes queryable after OpenGemini write
 	time.Sleep(2 * time.Second)
 	res, err := d.Query(ctx, database, fmt.Sprintf("select * from %s", measurement))
 	assert.Nil(t, err)
 	assert.True(t, len(res.Rows) > 0, "query should return the written point")
 }
 
-// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+// waitReady retries ready every 2s within timeout, returns last error if all attempts fail.
 func waitReady(timeout time.Duration, ready func() error) error {
 	var err error
 	deadline := time.Now().Add(timeout)

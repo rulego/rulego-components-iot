@@ -23,13 +23,13 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestParseVersion SNMP 版本字符串 -> 常量
+// TestParseVersion SNMP version string -> constant
 func TestParseVersion(t *testing.T) {
 	cases := []struct {
 		in   string
 		want gosnmp.SnmpVersion
 	}{
-		{"", gosnmp.Version2c}, // 默认 v2c
+		{"", gosnmp.Version2c}, // default v2c
 		{"v2c", gosnmp.Version2c},
 		{"v2", gosnmp.Version2c},
 		{"2c", gosnmp.Version2c},
@@ -43,15 +43,15 @@ func TestParseVersion(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, c.want, got)
 	}
-	// 非法版本
+	// Invalid version
 	if _, err := parseVersion("v4"); err == nil {
 		t.Fatal("parseVersion should fail for v4")
 	}
 }
 
-// TestParseSecurityLevel v3 安全级别
+// TestParseSecurityLevel v3 security level
 func TestParseSecurityLevel(t *testing.T) {
-	assert.Equal(t, gosnmp.NoAuthNoPriv, mustSecLevel("")) // 默认
+	assert.Equal(t, gosnmp.NoAuthNoPriv, mustSecLevel("")) // default
 	assert.Equal(t, gosnmp.NoAuthNoPriv, mustSecLevel("noAuthNoPriv"))
 	assert.Equal(t, gosnmp.AuthNoPriv, mustSecLevel("authNoPriv"))
 	assert.Equal(t, gosnmp.AuthPriv, mustSecLevel("authPriv"))
@@ -68,7 +68,7 @@ func mustSecLevel(s string) gosnmp.SnmpV3MsgFlags {
 	return v
 }
 
-// TestParseAuthProtocol v3 认证协议
+// TestParseAuthProtocol v3 authentication protocol
 func TestParseAuthProtocol(t *testing.T) {
 	cases := map[string]gosnmp.SnmpV3AuthProtocol{
 		"":       gosnmp.NoAuth,
@@ -81,11 +81,11 @@ func TestParseAuthProtocol(t *testing.T) {
 	for in, want := range cases {
 		assert.Equal(t, want, parseAuthProtocol(in))
 	}
-	// 未知协议默认 NoAuth
+	// Unknown protocol defaults to NoAuth
 	assert.Equal(t, gosnmp.NoAuth, parseAuthProtocol("unknown"))
 }
 
-// TestParsePrivProtocol v3 加密协议
+// TestParsePrivProtocol v3 encryption protocol
 func TestParsePrivProtocol(t *testing.T) {
 	cases := map[string]gosnmp.SnmpV3PrivProtocol{
 		"":       gosnmp.NoPriv,
@@ -100,7 +100,7 @@ func TestParsePrivProtocol(t *testing.T) {
 	assert.Equal(t, gosnmp.NoPriv, parsePrivProtocol("unknown"))
 }
 
-// TestPduTypeString PDU 类型 -> 字符串
+// TestPduTypeString PDU type -> string
 func TestPduTypeString(t *testing.T) {
 	cases := map[gosnmp.Asn1BER]string{
 		gosnmp.Integer:          "Integer",
@@ -116,11 +116,11 @@ func TestPduTypeString(t *testing.T) {
 	for typ, want := range cases {
 		assert.Equal(t, want, pduTypeString(typ))
 	}
-	// 未知类型带数值
+	// Unknown type with numeric value
 	assert.Equal(t, "Asn1BER(0)", pduTypeString(gosnmp.EndOfContents))
 }
 
-// TestEncodeValue 各类型字符串 -> Go 值 + Asn1BER（供 Set）
+// TestEncodeValue type strings -> Go values + Asn1BER (for Set)
 func TestEncodeValue(t *testing.T) {
 	// Integer
 	v, typ, err := encodeValue("42", "integer")
@@ -146,14 +146,14 @@ func TestEncodeValue(t *testing.T) {
 	assert.Equal(t, gosnmp.Counter32, typ)
 	assert.Equal(t, 100, v)
 
-	// 不支持的类型
+	// Unsupported type
 	_, _, err = encodeValue("x", "unknown")
 	if err == nil {
 		t.Fatal("encodeValue should fail for unknown type")
 	}
 }
 
-// TestPduToData PDU -> 统一 Data
+// TestPduToData PDU -> unified Data
 func TestPduToData(t *testing.T) {
 	pdu := gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.1.5.0", Value: "router1", Type: gosnmp.OctetString}
 	d := pduToData("sysName", pdu)

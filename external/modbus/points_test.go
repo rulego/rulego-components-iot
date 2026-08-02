@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// parseModiconAddr：4 类地址 + 扩展 + 1-based->0-based + 非法。
+// parseModiconAddr: 4 address types + extended + 1-based->0-based + invalid.
 func TestParseModiconAddr(t *testing.T) {
 	tests := []struct {
 		addr        string
@@ -41,7 +41,7 @@ func TestParseModiconAddr(t *testing.T) {
 		{"30010", modiconIR, 9, modbus.INPUT_REGISTER},
 		{"40001", modiconHR, 0, modbus.HOLDING_REGISTER},
 		{"40010", modiconHR, 9, modbus.HOLDING_REGISTER},
-		{"465535", modiconHR, 65534, modbus.HOLDING_REGISTER}, // 扩展 6 位
+		{"465535", modiconHR, 65534, modbus.HOLDING_REGISTER}, // extended 6 digits
 	}
 	for _, tt := range tests {
 		regType, proto, kind, err := parseModiconAddr(tt.addr)
@@ -51,16 +51,16 @@ func TestParseModiconAddr(t *testing.T) {
 		assert.Equal(t, tt.wantRegType, regType, "addr %s regType", tt.addr)
 	}
 
-	// 非法
+	// invalid
 	for _, bad := range []string{"0", "50000", "99999", "abc", ""} {
 		_, _, _, err := parseModiconAddr(bad)
 		assert.NotNil(t, err, "addr %q should be invalid", bad)
 	}
 }
 
-// --- 集成测试：用 simonvetter 自带 server 做真实 modbus 端到端 ---
+// --- integration test: real modbus end-to-end via simonvetter built-in server ---
 
-// testHandler 实现 modbus.RequestHandler，内存存 coil/di/hr/ir。
+// testHandler implements modbus.RequestHandler, storing coil/di/hr/ir in memory.
 type testHandler struct {
 	mu    sync.Mutex
 	coils map[uint16]bool
@@ -128,7 +128,7 @@ func (h *testHandler) HandleInputRegisters(req *modbus.InputRegistersRequest) ([
 	return res, nil
 }
 
-// newTestDriver 启动内存 server 并返回连它的 driver（测试结束自动清理）。
+// newTestDriver starts an in-memory server and returns a driver connected to it (auto-cleanup on test end).
 func newTestDriver(t *testing.T, handler *testHandler, port string) *driver {
 	t.Helper()
 	server, err := modbus.NewServer(&modbus.ServerConfiguration{URL: "tcp://127.0.0.1:" + port}, handler)
@@ -145,17 +145,17 @@ func newTestDriver(t *testing.T, handler *testHandler, port string) *driver {
 	return newDriver(retryable)
 }
 
-// TestDriver_WriteThenRead HR 写入再读出，验证 Type 映射 + 多寄存器编解码 + Modicon 解析。
+// TestDriver_WriteThenRead writes then reads HR, verifying Type mapping + multi-register codec + Modicon parsing.
 func TestDriver_WriteThenRead(t *testing.T) {
 	d := newTestDriver(t, newTestHandler(), "5502")
 
-	// 写：FLOAT32@40001, UINT16@40010
+	// write: FLOAT32@40001, UINT16@40010
 	assert.Nil(t, d.WritePoints([]iot_points.Point{
 		{Name: "temp", Addr: "40001", Type: iot_points.TypeFloat32, Value: "23.5"},
 		{Name: "count", Addr: "40010", Type: iot_points.TypeUint16, Value: "1234"},
 	}))
 
-	// 读回
+	// read back
 	data, err := d.ReadPoints([]iot_points.Point{
 		{Name: "temp", Addr: "40001", Type: iot_points.TypeFloat32},
 		{Name: "count", Addr: "40010", Type: iot_points.TypeUint16},
@@ -167,7 +167,7 @@ func TestDriver_WriteThenRead(t *testing.T) {
 	assert.Equal(t, uint16(1234), data[1].Value)
 }
 
-// TestDriver_SignedIntRoundTrip 有符号整型负值写读往返，守护 C1（INT16/32/64 读回须为有符号，修复前 -1 会读成 65535）。
+// TestDriver_SignedIntRoundTrip: signed integer negative value round-trip, guards C1 (INT16/32/64 must read back signed; before the fix -1 read as 65535).
 func TestDriver_SignedIntRoundTrip(t *testing.T) {
 	d := newTestDriver(t, newTestHandler(), "5503")
 
@@ -189,17 +189,17 @@ func TestDriver_SignedIntRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(-12345678901), data[2].Value)
 }
 
-// TestDriver_CoilAndDiscreteInput Coil 写读 + DI 预填读，验证 BOOL + 0xxxx/1xxxx。
+// TestDriver_CoilAndDiscreteInput: Coil write-read + DI prefilled read, verifying BOOL + 0xxxx/1xxxx.
 func TestDriver_CoilAndDiscreteInput(t *testing.T) {
 	handler := newTestHandler()
-	handler.di[0] = true // DI 10001 预填
+	handler.di[0] = true // DI 10001 prefilled
 	d := newTestDriver(t, handler, "5503")
 
-	// 写 coil 00001 = true
+	// write coil 00001 = true
 	assert.Nil(t, d.WritePoints([]iot_points.Point{
 		{Name: "motor", Addr: "00001", Type: iot_points.TypeBool, Value: "true"},
 	}))
-	// 读 coil 00001 + DI 10001
+	// read coil 00001 + DI 10001
 	data, err := d.ReadPoints([]iot_points.Point{
 		{Name: "motor", Addr: "00001", Type: iot_points.TypeBool},
 		{Name: "di0", Addr: "10001", Type: iot_points.TypeBool},
@@ -207,13 +207,13 @@ func TestDriver_CoilAndDiscreteInput(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, 2, len(data))
 	assert.Equal(t, true, data[0].Value) // coil
-	assert.Equal(t, true, data[1].Value) // DI 预填
+	assert.Equal(t, true, data[1].Value) // DI prefilled
 }
 
-// TestDriver_InputRegister IR 预填读，验证 3xxxx + INPUT_REGISTER。
+// TestDriver_InputRegister: IR prefilled read, verifying 3xxxx + INPUT_REGISTER.
 func TestDriver_InputRegister(t *testing.T) {
 	handler := newTestHandler()
-	handler.ir[0] = 5678 // IR 30001 预填
+	handler.ir[0] = 5678 // IR 30001 prefilled
 	d := newTestDriver(t, handler, "5504")
 
 	data, err := d.ReadPoints([]iot_points.Point{
@@ -224,7 +224,7 @@ func TestDriver_InputRegister(t *testing.T) {
 	assert.Equal(t, uint16(5678), data[0].Value)
 }
 
-// TestDriver_WriteReadOnlyReject DI/IR 只读拒写。
+// TestDriver_WriteReadOnlyReject: DI/IR read-only rejects write.
 func TestDriver_WriteReadOnlyReject(t *testing.T) {
 	d := newTestDriver(t, newTestHandler(), "5505")
 
@@ -237,11 +237,11 @@ func TestDriver_WriteReadOnlyReject(t *testing.T) {
 	assert.Contains(t, err.Error(), "read-only")
 }
 
-// TestDriver_Scale 工程量转换。
+// TestDriver_Scale: engineering unit conversion.
 func TestDriver_Scale(t *testing.T) {
 	d := newTestDriver(t, newTestHandler(), "5506")
 
-	// 写原始值 100，读时 scale=0.1 -> 10.0
+	// write raw value 100, scale=0.1 on read -> 10.0
 	assert.Nil(t, d.WritePoints([]iot_points.Point{
 		{Name: "raw", Addr: "40001", Type: iot_points.TypeUint16, Value: "100"},
 	}))

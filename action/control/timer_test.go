@@ -16,8 +16,8 @@
 
 package control
 
-// 定时器的时序行为（延时提交、中途取消、重触发、TOF）由 e2e_test.go 通过真实规则引擎覆盖；
-// 这里只测不依赖引擎的基础行为。
+// Timer timing behavior (delayed commit, mid-way cancel, retrigger, TOF) covered by e2e_test.go via real rule engine;
+// Here only test basic behavior that does not depend on engine.
 
 import (
 	"testing"
@@ -42,5 +42,5 @@ func TestTimerInitValidation(t *testing.T) {
 
 	err = n.Init(types.NewConfig(), types.Configuration{"mode": "TOF", "pt": "1s"})
 	assert.Nil(t, err)
-	assert.Equal(t, "q", n.(*TimerNode).Config.Out) // 默认输出键
+	assert.Equal(t, "q", n.(*TimerNode).Config.Out) // Default output key
 }

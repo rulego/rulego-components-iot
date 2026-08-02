@@ -29,9 +29,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestE2E_TimescaleDB 真实端到端：写 SeriesPoint 到 TimescaleDB，SQL 查询验证值。
-// 需先起 TimescaleDB（test/e2e/docker-compose.yml 或 docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres timescale/timescaledb:latest-pg16），
-// 设 E2E_TIMESCALEDB_DSN=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable 启用；未设则 skip。
+// TestE2E_TimescaleDB real end-to-end: write SeriesPoint to TimescaleDB, verify value with SQL query.
+// Requires TimescaleDB running first (test/e2e/docker-compose.yml or docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres timescale/timescaledb:latest-pg16),
+// set E2E_TIMESCALEDB_DSN=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable to enable; skip if not set.
 func TestE2E_TimescaleDB(t *testing.T) {
 	dsn := os.Getenv("E2E_TIMESCALEDB_DSN")
 	if dsn == "" {
@@ -69,7 +69,7 @@ func TestE2E_TimescaleDB(t *testing.T) {
 	assert.Equal(t, 42.5, res.Rows[0]["value"])
 }
 
-// waitReady 在时限内每隔 2s 重试 ready，全部失败返回最后错误。
+// waitReady retries ready every 2s within timeout, returns last error if all attempts fail.
 func waitReady(timeout time.Duration, ready func() error) error {
 	var err error
 	deadline := time.Now().Add(timeout)

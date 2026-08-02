@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-// Package iec104 提供 IEC 60870-5-104 电力远动协议主站(控制站)的读取(ReadNode)节点,
-// 用于电力调度/电网/变电站监控场景采集子站(被控站)的遥信/遥测/遥脉。
+// Package iec104 provides IEC 60870-5-104 power telecontrol protocol master (control station) read nodes,
+// for collecting substation (controlled station) telemetry/remote signaling/pulse from power dispatch/grid/substation monitoring.
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule,点位在下方 points 配置(addr=信息体地址 IOA)。
-//   - 按需读：msg.Data 带点位列表则优先使用(动态场景)。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule, configure points below (addr=Information Object Address IOA).
+//   - On-demand read: msg.Data points take precedence (dynamic scenarios).
 //
-// 采集模型：读时发起总召唤(GI),子站上送全数据后按 IOA 取值。
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
+// Collection model: read initiates general interrogation (GI), substation uploads all data then values fetched by IOA.
+// Point fields support ${msg.xx} / ${metadata.xx} template variables.
 package iec104
 
 import (
@@ -40,59 +40,59 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration 连接配置
+// Configuration connection configuration
 type Configuration struct {
-	// 子站地址,格式 host:port,IEC 104 默认端口 2404
+	// Substation address, format host:port, IEC 104 default port 2404
 	Server string `json:"server" label:"Server" desc:"host:port, default port 2404" required:"true" ref:"primary"`
-	// 公共地址(CA/站址),默认 1
+	// Common address (CA/station address), default 1
 	CommonAddr int `json:"commonAddr" label:"CommonAddr" desc:"common address of ASDU, default 1"`
-	// 总召唤等待超时(秒),默认 5
+	// General interrogation wait timeout in seconds, default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"interrogation wait timeout in seconds, default 5"`
-	// 默认点位表(addr=IOA)。定时采集(schedule 触发)时使用;msg.Data 带点位则优先
+	// Default points table (addr=IOA). Used by scheduled collection (schedule trigger); msg.Data points take precedence
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table (addr=IOA); msg.Data points take precedence"`
 }
 
-// GetServer 实现 iec104client.ConfigProp
+// GetServer implements iec104client.ConfigProp
 func (c Configuration) GetServer() string { return c.Server }
 
-// GetCommonAddr 实现 iec104client.ConfigProp
+// GetCommonAddr implements iec104client.ConfigProp
 func (c Configuration) GetCommonAddr() int { return c.CommonAddr }
 
-// GetTimeout 实现 iec104client.ConfigProp
+// GetTimeout implements iec104client.ConfigProp
 func (c Configuration) GetTimeout() int { return c.Timeout }
 
-// iec104Reconnecter 连接重建能力接口。
+// iec104Reconnecter reconnection capability interface.
 type iec104Reconnecter interface {
 	reconnect(old *iec104client.Client) (*iec104client.Client, error)
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadNode IEC 104 读节点
+// ReadNode IEC 104 read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadNode 发起总召唤批量采集子站点位,结果(统一契约 Data 列表)写回 msg.Data,经 Success 链转出。
+// ReadNode initiates general interrogation to batch collect substation points, results (unified Data list) written to msg.Data, routed via Success link.
 //
-// 输入(msg.Data 可选)：点位列表 JSON,格式同 points 配置。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]（timestamp 为 ns；error 仅单点失败时存在）
+// Input (msg.Data optional): point list JSON, same format as points config. Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp","error"}] (timestamp in ns; error present only on single-point failure)
 type ReadNode struct {
 	base.SharedNode[*iec104client.Client]
 	Config Configuration
-	// reconnectLocker 保护重连
+	// reconnectLocker protects reconnection
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/iec104Read"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -106,7 +106,7 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*iec104client.Client, error) {
@@ -117,12 +117,12 @@ func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configurati
 		}
 		return nil
 	})
-	// 启用同链连接池：本地连接按节点ID注册到链目录,供链内 ref:// 借用复用
+	// Enable same-chain connection pool: local connections registered to chain directory by node ID, for chain-internal ref:// borrowing
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败自动重连重试 maxRetries 次。
+// OnMsg handles messages. Connection-level failure auto-reconnects with maxRetries.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -168,7 +168,7 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *iec104client.Client) (*iec104client.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
@@ -207,38 +207,38 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "IEC 60870-5-104 master for reading substation points via interrogation. Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode IEC 104 写节点（遥控/遥调）
+// WriteNode IEC 104 write node (remote control/remote adjustment)
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 向子站下发遥控(单命令/双命令)或遥调(设点)命令。
+// WriteNode sends control commands (single/double) or setpoint commands to substation.
 //
-// 输入(msg.Data)：点位列表 JSON [{"name","addr","type","value"}]，
-//   - addr=IOA（信息体地址）
-//   - type=命令类型：C_SC_NA_1(单命令) / C_DC_NA_1(双命令) / C_SE_NB_1(标度化设点) / C_SE_NC_1(短浮点设点)
-//   - value：单命令 true/false；双命令 1(合)/2(分)；设点为数值
+// Input (msg.Data): point list JSON [{"name","addr","type","value"}],
+//   - addr=IOA (Information Object Address)
+//   - type=command type: C_SC_NA_1(single) / C_DC_NA_1(double) / C_SE_NB_1(scaled setpoint) / C_SE_NC_1(float setpoint)
+//   - value: single command true/false; double command 1(close)/2(open); setpoint is numeric value
 type WriteNode struct {
 	base.SharedNode[*iec104client.Client]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/iec104Write"
 }
 
-// New 默认配置
+// New default configuration
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
@@ -249,7 +249,7 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*iec104client.Client, error) {
@@ -264,7 +264,7 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 	return err
 }
 
-// OnMsg 处理消息。从 msg.Data 解析点位列表,逐点下发控制命令。写入失败自动重连重试。
+// OnMsg handles messages. Parse point list from msg.Data, send control commands point by point. Write failure auto-reconnects.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -303,7 +303,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接（语义同 ReadNode.reconnect）
+// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
 func (x *WriteNode) reconnect(old *iec104client.Client) (*iec104client.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
@@ -342,12 +342,12 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *WriteNode) Desc() string {
 	return "IEC 60870-5-104 master for control commands (single/double/setpoint). Routes to Success/Failure"
 }

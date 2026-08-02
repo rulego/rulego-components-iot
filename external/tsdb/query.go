@@ -29,13 +29,13 @@ func init() {
 }
 
 // QueryConfig defines the universal TSDB query configuration.
-// 连接与查询字段（server/database、url/bucket/org/token、dsn/db、command/query）由所选 driver 的查询节点解析。
+// Connection and query fields (server/database, url/bucket/org/token, dsn/db, command/query) are parsed by the selected driver's query node.
 type QueryConfig struct {
 	Driver string `json:"driver" label:"Driver" desc:"TSDB driver: opengemini, influxdb, tdengine, timescaledb" required:"true"`
 }
 
 // QueryNode delegates queries to a concrete TSDB query node selected by driver.
-// 查询结果统一为 tsdb.QueryResult（Columns+Rows）JSON 写入 msg.Data，走 Success/Failure 路由。
+// Query results unified as tsdb.QueryResult (Columns+Rows) JSON written to msg.Data, routed via Success/Failure.
 type QueryNode struct {
 	Config QueryConfig
 	// delegate holds the concrete query node selected at init time.

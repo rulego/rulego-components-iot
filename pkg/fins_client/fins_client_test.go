@@ -29,7 +29,7 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// TestBuildMemAreaPayload 读/写命令载荷字节布局
+// TestBuildMemAreaPayload read/write command payload byte layout
 func TestBuildMemAreaPayload(t *testing.T) {
 	p := buildMemAreaPayload(cmdMemoryAreaRead, MemoryAreaDMWord, 100, 0, 4, nil)
 	assert.Equal(t, 8, len(p))
@@ -37,25 +37,25 @@ func TestBuildMemAreaPayload(t *testing.T) {
 	assert.Equal(t, byte(0x01), p[1]) // SRC
 	assert.Equal(t, MemoryAreaDMWord, p[2])
 	assert.Equal(t, uint16(100), binary.BigEndian.Uint16(p[3:5]))
-	assert.Equal(t, byte(0), p[5]) // 位偏移
+	assert.Equal(t, byte(0), p[5]) // Bit offset
 	assert.Equal(t, uint16(4), binary.BigEndian.Uint16(p[6:8]))
 
 	p = buildMemAreaPayload(cmdMemoryAreaWrite, MemoryAreaCIOBit, 5, 3, 1, []byte{0x01})
 	assert.Equal(t, byte(0x01), p[0])
-	assert.Equal(t, byte(0x02), p[1]) // 写命令 SRC
+	assert.Equal(t, byte(0x02), p[1]) // Write command SRC
 	assert.Equal(t, MemoryAreaCIOBit, p[2])
-	assert.Equal(t, byte(3), p[5])    // 位偏移
-	assert.Equal(t, byte(0x01), p[8]) // 写数据紧随 8 字节命令头
+	assert.Equal(t, byte(3), p[5])    // Bit offset
+	assert.Equal(t, byte(0x01), p[8]) // Write data follows 8-byte command header
 }
 
-// TestBuildFrame FINS 帧头字节布局
+// TestBuildFrame FINS frame header byte layout
 func TestBuildFrame(t *testing.T) {
 	c := &Client{
 		src: NewAddress("0.0.0.0", 0, 0, 10, 0),
 		dst: NewAddress("1.2.3.4", 9600, 0, 20, 0),
 	}
 	f := c.buildFrame(0x07, []byte{0xAA})
-	assert.Equal(t, byte(0x80), f[0]) // ICF 命令帧
+	assert.Equal(t, byte(0x80), f[0]) // ICF command frame
 	assert.Equal(t, byte(0x02), f[2]) // GCT
 	assert.Equal(t, byte(20), f[4])   // DA1
 	assert.Equal(t, byte(10), f[7])   // SA1
@@ -63,7 +63,7 @@ func TestBuildFrame(t *testing.T) {
 	assert.Equal(t, byte(0xAA), f[10])
 }
 
-// TestWrapTCPFrame FINS/TCP 帧头封装
+// TestWrapTCPFrame FINS/TCP frame header wrapping
 func TestWrapTCPFrame(t *testing.T) {
 	f := wrapTCPFrame(tcpCmdSendFrame, []byte{1, 2, 3})
 	assert.Equal(t, "FINS", string(f[0:4]))
@@ -72,12 +72,12 @@ func TestWrapTCPFrame(t *testing.T) {
 	assert.Equal(t, 19, len(f))
 }
 
-// mockPLC 进程内 FINS PLC 模拟器：按内存区码维护字/位存储，支持 UDP 与 TCP
+// mockPLC in-process FINS PLC simulator: maintains word/bit storage by memory area code, supports UDP and TCP
 type mockPLC struct {
 	mu    sync.Mutex
-	words map[byte][]byte // 字区码 -> 字节存储
-	bits  map[byte][]byte // 位区码 -> 位存储(每位 1 字节)
-	// failNext 下次请求返回非零 end code
+	words map[byte][]byte // Word area code -> byte storage
+	bits  map[byte][]byte // Bit area code -> bit storage (1 byte per bit)
+	// failNext next request returns non-zero end code
 	failNext bool
 }
 
@@ -100,15 +100,15 @@ func newMockPLC() *mockPLC {
 	}
 }
 
-// handle 处理一个 FINS 命令帧，返回完整响应帧
+// handle processes one FINS command frame, returns complete response frame
 func (m *mockPLC) handle(frame []byte) []byte {
 	if len(frame) < 10 {
 		return nil
 	}
 	resp := make([]byte, 14)
 	copy(resp[0:10], frame[0:10])
-	resp[0] = 0xC0 // 响应帧
-	// 交换源/目的
+	resp[0] = 0xC0 // Response frame
+	// Swap source/destination
 	resp[3], resp[6] = frame[6], frame[3]
 	resp[4], resp[7] = frame[7], frame[4]
 	resp[5], resp[8] = frame[8], frame[5]
@@ -123,7 +123,7 @@ func (m *mockPLC) handle(frame []byte) []byte {
 	defer m.mu.Unlock()
 	if m.failNext {
 		m.failNext = false
-		resp[12] = 0x21 // 非零 end code
+		resp[12] = 0x21 // Non-zero end code
 		return resp
 	}
 
@@ -138,14 +138,14 @@ func (m *mockPLC) handle(frame []byte) []byte {
 		store = m.bits[area]
 	}
 	if store == nil {
-		resp[12] = 0x22 // 不支持的内存区
+		resp[12] = 0x22 // Unsupported memory area
 		return resp
 	}
 
 	switch cmd {
 	case cmdMemoryAreaRead:
 		if isBit {
-			start := addr*0 + addr + bitOff // 位区按 位地址+偏移 线性取
+			start := addr*0 + addr + bitOff // Bit area linear access by bit address+offset
 			if start+count > len(store) {
 				resp[12] = 0x23
 				return resp
@@ -182,7 +182,7 @@ func (m *mockPLC) handle(frame []byte) []byte {
 	return resp
 }
 
-// startUDPMock 启动 UDP 模拟 PLC，返回地址与清理函数
+// startUDPMock starts UDP mock PLC, returns address and cleanup function
 func startUDPMock(t *testing.T) (*mockPLC, string, func()) {
 	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -204,7 +204,7 @@ func startUDPMock(t *testing.T) (*mockPLC, string, func()) {
 	return plc, conn.LocalAddr().String(), func() { conn.Close() }
 }
 
-// startTCPMock 启动 FINS/TCP 模拟 PLC(含节点地址握手)，返回地址与清理函数
+// startTCPMock starts FINS/TCP mock PLC (includes node address handshake), returns address and cleanup function
 func startTCPMock(t *testing.T) (*mockPLC, string, func()) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -219,7 +219,7 @@ func startTCPMock(t *testing.T) (*mockPLC, string, func()) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				// 节点地址握手：回服务端地址 + 分配客户端节点号 17
+				// Node address handshake: respond with server address + assign client node number 17
 				handshake := wrapTCPFrame(tcpCmdNodeAddress, []byte{0, 0, 0, 21, 0, 0, 0, 17})
 				if _, err := c.Write(handshake); err != nil {
 					return
@@ -253,7 +253,7 @@ func startTCPMock(t *testing.T) (*mockPLC, string, func()) {
 	return plc, l.Addr().String(), func() { l.Close() }
 }
 
-// parseHostPort 把 127.0.0.1:port 拆成 NewAddress 参数
+// parseHostPort splits 127.0.0.1:port into NewAddress parameters
 func parseHostPort(t *testing.T, addr string) (string, int) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -266,7 +266,7 @@ func parseHostPort(t *testing.T, addr string) (string, int) {
 	return host, port
 }
 
-// TestUDPWordsRoundTrip UDP 字区读写(CIO/DM 区)
+// TestUDPWordsRoundTrip UDP word area read/write (CIO/DM areas)
 func TestUDPWordsRoundTrip(t *testing.T) {
 	_, addr, cleanup := startUDPMock(t)
 	defer cleanup()
@@ -280,21 +280,21 @@ func TestUDPWordsRoundTrip(t *testing.T) {
 	assert.Nil(t, err)
 	defer client.Close()
 
-	// CIO 字区读写
+	// CIO word area read/write
 	assert.Nil(t, client.WriteWords(MemoryAreaCIOWord, 50, []uint16{0x1234, 0xABCD}))
 	words, err := client.ReadWords(MemoryAreaCIOWord, 50, 2)
 	assert.Nil(t, err)
 	assert.Equal(t, uint16(0x1234), words[0])
 	assert.Equal(t, uint16(0xABCD), words[1])
 
-	// DM 字区读写
+	// DM word area read/write
 	assert.Nil(t, client.WriteWords(MemoryAreaDMWord, 100, []uint16{250}))
 	words, err = client.ReadWords(MemoryAreaDMWord, 100, 1)
 	assert.Nil(t, err)
 	assert.Equal(t, uint16(250), words[0])
 }
 
-// TestUDPBitsRoundTrip UDP 位区读写(CIO 位)
+// TestUDPBitsRoundTrip UDP bit area read/write (CIO bits)
 func TestUDPBitsRoundTrip(t *testing.T) {
 	_, addr, cleanup := startUDPMock(t)
 	defer cleanup()
@@ -313,13 +313,13 @@ func TestUDPBitsRoundTrip(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, true, bits[0])
 
-	// 相邻位不受影响
+	// Adjacent bits unaffected
 	bits, err = client.ReadBits(MemoryAreaCIOBit, 10, 6, 1)
 	assert.Nil(t, err)
 	assert.Equal(t, false, bits[0])
 }
 
-// TestTCPHandshakeAndIO FINS/TCP 握手协商节点号 + 字区读写
+// TestTCPHandshakeAndIO FINS/TCP handshake negotiates node numbers + word area read/write
 func TestTCPHandshakeAndIO(t *testing.T) {
 	_, addr, cleanup := startTCPMock(t)
 	defer cleanup()
@@ -334,7 +334,7 @@ func TestTCPHandshakeAndIO(t *testing.T) {
 	assert.Nil(t, err)
 	defer client.Close()
 
-	// 握手后节点号已协商(mock 分配服务端 21/客户端 17)
+	// After handshake node numbers negotiated (mock assigned server 21/client 17)
 	assert.Equal(t, byte(21), client.dst.Node)
 	assert.Equal(t, byte(17), client.src.Node)
 
@@ -344,7 +344,7 @@ func TestTCPHandshakeAndIO(t *testing.T) {
 	assert.Equal(t, uint16(0x77), words[0])
 }
 
-// TestEndCodeError 非零 end code 返回错误
+// TestEndCodeError non-zero end code returns error
 func TestEndCodeError(t *testing.T) {
 	plc, addr, cleanup := startUDPMock(t)
 	defer cleanup()
@@ -366,7 +366,7 @@ func TestEndCodeError(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-// TestCloseThenUse 关闭后使用返回错误
+// TestCloseThenUse using after close returns error
 func TestCloseThenUse(t *testing.T) {
 	_, addr, cleanup := startUDPMock(t)
 	defer cleanup()

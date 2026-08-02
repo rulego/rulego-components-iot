@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-// Package snmp 提供 SNMP（v1/v2c/v3）的读取(ReadNode)与写入(WriteNode)节点，
-// 用于对接网络/设施设备（交换机/路由器/UPS/传感器等）。
+// Package snmp provides SNMP (v1/v2c/v3) read (ReadNode) and write (WriteNode) nodes,
+// for interfacing with network/facility devices (switches/routers/UPS/sensors etc.).
 //
-// 用法：
-//   - 定时采集：前置 endpoint/schedule，OID 在下方 points 配置。
-//   - 按需读/写：msg.Data 带点位列表则优先使用（动态场景）。
+// Usage:
+//   - Scheduled collection: use endpoint/schedule upstream, configure OIDs in points field.
+//   - On-demand read/write: msg.Data with point list takes priority (dynamic scenarios).
 //
-// 点位字段均支持 ${msg.xx} / ${metadata.xx} 模板变量。
+// All point fields support ${msg.xx} / ${metadata.xx} template variables.
 package snmp
 
 import (
@@ -40,39 +40,39 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// 注册节点
+// Register nodes
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// Configuration 连接配置（读/写节点共用）
+// Configuration connection config (shared by read/write nodes)
 type Configuration struct {
-	// 设备地址 host 或 host:port
+	// Device address host or host:port
 	Server string `json:"server" label:"Server" desc:"host or host:port, default port 161" required:"true" ref:"primary"`
-	// SNMP 版本：v1/v2c/v3，默认 v2c
+	// SNMP version: v1/v2c/v3, default v2c
 	Version string `json:"version" label:"Version" desc:"v1/v2c/v3, default v2c"`
-	// community（v1/v2c）
+	// community string (v1/v2c)
 	Community string `json:"community" label:"Community" desc:"community string for v1/v2c" ref:"shared"`
-	// 请求超时(秒)，默认 5
+	// Request timeout (seconds), default 5
 	Timeout int `json:"timeout" label:"Timeout" desc:"request timeout in seconds, default 5"`
-	// v3 安全级别：noAuthNoPriv/authNoPriv/authPriv
+	// v3 security level: noAuthNoPriv/authNoPriv/authPriv
 	SecurityLevel string `json:"securityLevel" label:"Security Level" desc:"v3 only: noAuthNoPriv/authNoPriv/authPriv"`
-	// v3 用户名
+	// v3 username
 	UserName string `json:"username" label:"Username" desc:"v3 only"`
-	// v3 认证协议：None/MD5/SHA/SHA256/SHA512
+	// v3 auth protocol: None/MD5/SHA/SHA256/SHA512
 	AuthProtocol string `json:"authProtocol" label:"Auth Protocol" desc:"v3 only: None/MD5/SHA/SHA256/SHA512"`
-	// v3 认证密码
+	// v3 auth password
 	AuthPassword string `json:"authPassword" label:"Auth Password" desc:"v3 only" ref:"shared"`
-	// v3 加密协议：None/DES/AES/AES256
+	// v3 priv protocol: None/DES/AES/AES256
 	PrivProtocol string `json:"privProtocol" label:"Priv Protocol" desc:"v3 only: None/DES/AES/AES256"`
-	// v3 加密密码
+	// v3 priv password
 	PrivPassword string `json:"privPassword" label:"Priv Password" desc:"v3 only" ref:"shared"`
-	// 默认点位表。定时采集(schedule 触发)时使用；msg.Data 带点位则优先
+	// Default points table. Used for scheduled collection (schedule trigger); msg.Data points take precedence
 	Points []iot_points.Point `json:"points" label:"Points" desc:"default points table; msg.Data points take precedence"`
 }
 
-// ConfigProp 接口实现（GetServer 等略写法省空间）
+// ConfigProp interface implementation (GetServer etc. abbreviated to save space)
 func (c Configuration) GetServer() string        { return c.Server }
 func (c Configuration) GetVersion() string       { return c.Version }
 func (c Configuration) GetCommunity() string     { return c.Community }
@@ -84,7 +84,7 @@ func (c Configuration) GetAuthPassword() string  { return c.AuthPassword }
 func (c Configuration) GetPrivProtocol() string  { return c.PrivProtocol }
 func (c Configuration) GetPrivPassword() string  { return c.PrivPassword }
 
-// closeClient 关闭 SNMP 客户端连接
+// closeClient closes SNMP client connection
 func closeClient(client *gosnmp.GoSNMP) error {
 	if client != nil && client.Conn != nil {
 		return client.Conn.Close()
@@ -92,35 +92,35 @@ func closeClient(client *gosnmp.GoSNMP) error {
 	return nil
 }
 
-// snmpOpLocks 按底层 client 关联操作锁，串行化共享 client 的 Get/Set/Walk。
+// snmpOpLocks associates operation locks by underlying client, serializes Get/Set/Walk on shared client.
 var snmpOpLocks iot_points.OpLocks
 
-// snmpReconnecter 连接重建能力接口。
+// snmpReconnecter connection rebuild capability interface.
 type snmpReconnecter interface {
 	reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error)
 }
 
 // ------------------------------------------------------------------------------------------------
-// ReadNode SNMP 读节点
+// ReadNode SNMP read node
 // ------------------------------------------------------------------------------------------------
 
-// ReadNode 批量读取 SNMP OID（get/walk），结果(统一契约 Data 列表)写回 msg.Data，经 Success 链转出。
+// ReadNode batch reads SNMP OIDs (get/walk), writes results (unified Data list) back to msg.Data, routes via Success.
 //
-// 输入(msg.Data 可选)：点位列表 JSON，格式同 points 配置。空则用配置的 points。
-// 输出(msg.Data)：[{"name","value","timestamp","error"}]（timestamp 为 ns；error 仅单点失败时存在；
-// walk 结果的 name 并入实际 OID 以区分同名子树节点）
+// Input (msg.Data optional): point list JSON, same format as points config. Empty uses configured points.
+// Output (msg.Data): [{"name","value","timestamp","error"}] (timestamp in ns; error only present on single-point failure;
+// walk result name appends actual OID to distinguish same-name subtree nodes)
 type ReadNode struct {
 	base.SharedNode[*gosnmp.GoSNMP]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *ReadNode) Type() string {
 	return "x/snmpRead"
 }
 
-// New 默认配置
+// New default configuration
 func (x *ReadNode) New() types.Node {
 	return &ReadNode{
 		Config: Configuration{
@@ -138,18 +138,18 @@ func (x *ReadNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gosnmp.GoSNMP, error) {
 		return snmpclient.DefaultHolder(x.Config).NewClient()
 	}, closeClient)
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。连接级失败（全部 OID 失败）自动重连重试 maxRetries 次。
+// OnMsg processes message. Auto reconnect retry maxRetries times on connection-level failure (all OIDs failed).
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -201,12 +201,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接。
+// reconnect safely rebuilds connection.
 func (x *ReadNode) reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -238,9 +238,9 @@ func (x *ReadNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *ReadNode) Destroy() {
-	if !x.SharedNode.IsFromPool() { // 仅 owner 清理操作锁
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
 			snmpOpLocks.Delete(c)
 		}
@@ -248,30 +248,30 @@ func (x *ReadNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ReadNode) Desc() string {
 	return "SNMP client for batch reading OIDs (get/walk). Routes to Success/Failure"
 }
 
 // ------------------------------------------------------------------------------------------------
-// WriteNode SNMP 写节点
+// WriteNode SNMP write node
 // ------------------------------------------------------------------------------------------------
 
-// WriteNode 把 msg.Data 的 OID 值列表写入设备（Set），成功走 Success 链。
+// WriteNode writes OID value list from msg.Data to device (Set), routes via Success on success.
 //
-// 输入(msg.Data)：[{"name","addr","type","value"}]（addr 为 OID 如 "1.3.6.1..."），value 支持 ${msg.xx}
+// Input (msg.Data): [{"name","addr","type","value"}] (addr is OID like "1.3.6.1..."), value supports ${msg.xx}
 type WriteNode struct {
 	base.SharedNode[*gosnmp.GoSNMP]
 	Config          Configuration
 	reconnectLocker sync.Mutex
 }
 
-// Type 返回组件类型
+// Type returns component type
 func (x *WriteNode) Type() string {
 	return "x/snmpWrite"
 }
 
-// New 默认配置
+// New default configuration
 func (x *WriteNode) New() types.Node {
 	return &WriteNode{
 		Config: Configuration{
@@ -289,18 +289,18 @@ func (x *WriteNode) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gosnmp.GoSNMP, error) {
 		return snmpclient.DefaultHolder(x.Config).NewClient()
 	}, closeClient)
-	// 启用同链连接池
+	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg 处理消息。写入失败自动重连重试 maxRetries 次。
+// OnMsg processes message. Auto reconnect retry maxRetries times on write failure.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
@@ -346,12 +346,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-// reconnect 安全重建连接（语义同 ReadNode.reconnect）
+// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
 func (x *WriteNode) reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // 跨类型：Read↔Write 均可委派
+				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // cross-type: Read↔Write both can delegate
 					return source.reconnect(old)
 				}
 			}
@@ -383,7 +383,7 @@ func (x *WriteNode) warnf(format string, v ...interface{}) {
 	}
 }
 
-// Destroy 清理资源
+// Destroy cleans up resources
 func (x *WriteNode) Destroy() {
 	if !x.SharedNode.IsFromPool() {
 		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
@@ -393,7 +393,7 @@ func (x *WriteNode) Destroy() {
 	_ = x.SharedNode.Close()
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *WriteNode) Desc() string {
 	return "SNMP client for writing OIDs (set). Routes to Success/Failure"
 }
