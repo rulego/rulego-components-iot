@@ -29,17 +29,17 @@ import (
 	"github.com/rulego/rulego/utils/maps"
 )
 
-// timerAlarmMsgType 内部闹钟消息类型,用于在 OnMsg 里区分"定时到期回调"与"业务输入"。
+// timerAlarmMsgType internal alarm message type, used in OnMsg to distinguish "timer expiry callback" from "business input".
 const timerAlarmMsgType = "CONTROL_TIMER_ALARM"
 
-// timerCommitMsgType 闹钟到点提交后重新注入、用于透传的消息类型（走全新 ctx）。
+// timerCommitMsgType message type for reinjection after alarm expiry for passthrough (via new ctx).
 const timerCommitMsgType = "CONTROL_TIMER_COMMIT"
 
 func init() {
 	_ = rulego.Registry.Register(&TimerNode{})
 }
 
-// TimerConfig 软 PLC 定时器配置。
+// TimerConfig soft-PLC timer configuration.
 type TimerConfig struct {
 	Mode string `json:"mode" label:"Mode" desc:"TON(on-delay: output true after input held true for PT) / TOF(off-delay: output false after input held false for PT)" required:"true"`
 	PT   string `json:"pt" label:"PresetTime" desc:"preset duration, e.g. 3s / 500ms, supports ${metadata.xx}" required:"true"`
@@ -47,14 +47,14 @@ type TimerConfig struct {
 	Out  string `json:"out" label:"OutputKey" desc:"metadata key to write the boolean output, default q"`
 }
 
-// TimerNode 软 PLC 定时器(TON/TOF)。可取消、可重触发:用代次计数作废旧闹钟。
-// 每次业务输入都按当前 q 转发;上升/下降沿按模式武装定时,到点提交 q。
+// TimerNode soft-PLC timer (TON/TOF). Cancelable, retriggerable: uses generation count to invalidate old alarms.
+// Each business input forwards current q; rising/falling edge arms timer by mode, commits q on expiry.
 type TimerNode struct {
 	Config TimerConfig
 	mu     sync.Mutex
-	in     bool   // 上一扫描输入
-	q      bool   // 当前输出
-	gen    uint64 // 代次:输入边沿自增,作废在途闹钟
+	in     bool   // Previous scan input
+	q      bool   // Current output
+	gen    uint64 // Generation: increments on input edge, invalidates pending timers
 }
 
 func (x *TimerNode) New() types.Node {
@@ -82,7 +82,17 @@ func (x *TimerNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		x.onAlarm(ctx, msg)
 		return
 	case timerCommitMsgType:
-		ctx.TellSuccess(msg) // 闹钟提交消息透传（来自全新 ctx）
+		// A newer edge may have changed q after this commit was scheduled but before it is
+		// dispatched; re-validate under lock and drop the stale output to avoid a flip.
+		if committed, err := strconv.ParseBool(msg.Metadata.GetValue(x.Config.Out)); err == nil {
+			x.mu.Lock()
+			stale := committed != x.q
+			x.mu.Unlock()
+			if stale {
+				return
+			}
+		}
+		ctx.TellSuccess(msg)
 		return
 	}
 	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
@@ -100,23 +110,23 @@ func (x *TimerNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	schedule := false
 	if x.Config.Mode == "TON" {
 		switch {
-		case edge && newIn: // 上升沿:武装延时,到点置 true
+		case edge && newIn: // Rising edge: arm delay, set to true on timeout
 			x.gen++
 			if ptMs <= 0 {
 				x.q = true
 			} else {
 				g, schedule = x.gen, true
 			}
-		case edge && !newIn: // 下降沿:取消,立即置 false
+		case edge && !newIn: // Falling edge: cancel, immediately set to false
 			x.gen++
 			x.q = false
 		}
 	} else { // TOF
 		switch {
-		case edge && newIn: // 上升沿:取消,立即置 true
+		case edge && newIn: // Rising edge: cancel, immediately set to true
 			x.gen++
 			x.q = true
-		case edge && !newIn: // 下降沿:武装延时,到点置 false
+		case edge && !newIn: // Falling edge: arm delay, set to false on timeout
 			x.gen++
 			if ptMs <= 0 {
 				x.q = false
@@ -128,8 +138,8 @@ func (x *TimerNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	q := x.q
 	x.mu.Unlock()
 
-	// 先输出当前 q，并为闹钟准备独立副本（改副本而非原 msg）。
-	// TellSuccess 异步派发到下游，转发后不再修改 msg，避免与下游并发读取竞态。
+// First output current q, and prepare independent copy for alarm (modify copy, not original msg).
+// TellSuccess asynchronously dispatches to downstream, after forwarding no longer modify msg to avoid race with downstream concurrent reads.
 	msg.Metadata.PutValue(x.Config.Out, strconv.FormatBool(q))
 	var alarmMsg types.RuleMsg
 	if schedule {
@@ -143,28 +153,28 @@ func (x *TimerNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 }
 
-// onAlarm 定时到期:仅当代次未被新边沿作废时提交目标 q。
+// onAlarm timer expiry: only commit target q when generation not invalidated by new edge.
 func (x *TimerNode) onAlarm(ctx types.RuleContext, msg types.RuleMsg) {
 	g, _ := strconv.ParseUint(msg.Metadata.GetValue(genKey), 10, 64)
 	x.mu.Lock()
 	if g != x.gen {
 		x.mu.Unlock()
-		return // 已被新边沿取消
+		return // Already cancelled by new edge
 	}
 	x.q = x.targetQ()
 	q := x.q
 	x.mu.Unlock()
 
-	// 经全新 ctx 重新注入提交消息再透传，避免与踢消息的业务派发复用同一 ctx 产生数据竞争
+// Reinject commit message via new ctx then passthrough, avoid data race from reusing same ctx with business dispatch of kick message
 	msg.Metadata.PutValue(x.Config.Out, strconv.FormatBool(q))
 	msg.Type = timerCommitMsgType
 	ctx.TellNode(context.Background(), ctx.GetSelfId(), msg, false, nil, nil)
 }
 
-// targetQ 定时提交的目标输出:TON 延时到置 true,TOF 延时到置 false。
+// targetQ target output on timer commit: TON delays to true, TOF delays to false.
 func (x *TimerNode) targetQ() bool { return x.Config.Mode == "TON" }
 
-// readInput 解析布尔输入:配了 In 走模板,否则取 msg.Data 原始内容判真假。
+// readInput parses boolean input: if In is configured, use template; otherwise use msg.Data raw content to determine true/false.
 func (x *TimerNode) readInput(env map[string]interface{}, msg types.RuleMsg) bool {
 	if x.Config.In == "" {
 		return toBool(msg.GetData())

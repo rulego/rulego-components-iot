@@ -22,7 +22,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,7 +33,7 @@ import (
 
 const OPC_UA_DATA_MSG_TYPE = "OPC_UA_DATA"
 
-// Data OPC数据封装结构体
+// Data OPC UA data encapsulation structure
 type Data struct {
 	DisplayName string      `json:"displayName"`
 	NodeId      string      `json:"nodeId"`
@@ -47,7 +46,7 @@ type Data struct {
 	DataType    string      `json:"dataType"`
 }
 
-// ParseValue 解析数据FloatValue
+// ParseValue parses data FloatValue
 func (d *Data) ParseValue() (*Data, error) {
 	var err error
 	if d != nil && d.Value != nil {
@@ -69,15 +68,7 @@ func (d *Data) ParseValue() (*Data, error) {
 		case float64:
 			d.FloatValue = d.Value.(float64)
 		case byte:
-			s := string(d.Value.(byte))
-			parseBool, err := strconv.ParseBool(s)
-			if err == nil {
-				if parseBool {
-					d.FloatValue = 1
-				} else {
-					d.FloatValue = 0
-				}
-			}
+			d.FloatValue = float64(d.Value.(byte))
 		case bool:
 			if d.Value.(bool) {
 				d.FloatValue = 1
@@ -96,48 +87,48 @@ func (d *Data) ParseValue() (*Data, error) {
 	return d, nil
 }
 
-// ConfigProp 统一OPCUA客户端初始化参数接口
+// ConfigProp unified OPC UA client initialization parameter interface
 type ConfigProp interface {
-	// GetServer 获取OPCUA服务地址
+	// GetServer gets OPC UA service address
 	GetServer() string
-	// GetPolicy 获取OPCUA安全策略
+	// GetPolicy gets OPC UA security policy
 	GetPolicy() string
-	// GetMode 获取OPCUA安全模式
+	// GetMode gets OPC UA security mode
 	GetMode() string
-	// GetAuth 获取OPCUA认证方式
+	// GetAuth gets OPC UA authentication method
 	GetAuth() string
-	// GetUsername 获取OPCUA认证用户名
+	// GetUsername gets OPC UA authentication username
 	GetUsername() string
-	// GetPassword 获取OPCUA认证密码
+	// GetPassword gets OPC UA authentication password
 	GetPassword() string
-	// GetCertFile 获取OPCUA证书文件
+	// GetCertFile gets OPC UA certificate file
 	GetCertFile() string
-	// GetCertKeyFile 获取OPCUA证书私钥文件
+	// GetCertKeyFile gets OPC UA certificate private key file
 	GetCertKeyFile() string
-	// GetTimeout 获取请求超时（秒），<=0 用默认 5 秒
+	// GetTimeout gets request timeout (seconds), <=0 uses default 5 seconds
 	GetTimeout() int
 }
 
-// OpcUaClientHolder OPCUA客户端相关配置
+// OpcUaClientHolder OPC UA client related configuration
 type OpcUaClientHolder struct {
-	// Config OPC客户端配置
+	// Config OPC client configuration
 	Config ConfigProp
-	// Ctx 上下文
+	// Ctx context
 	Ctx context.Context
-	// Logger 日志
+	// Logger logger
 	Logger types.Logger
-	// endpointOptionsPrinted 跟踪是否已经打印过端点选项
+	// endpointOptionsPrinted tracks whether endpoint options have been printed
 	endpointOptionsPrinted bool
 }
 
-// Printf 日志输出
+// Printf log output
 func (x *OpcUaClientHolder) Printf(format string, v ...interface{}) {
 	if x.Logger != nil {
 		x.Logger.Printf(format, v...)
 	}
 }
 
-// DefaultHolder 默认配置
+// DefaultHolder default configuration
 func DefaultHolder(c ConfigProp, logger types.Logger) *OpcUaClientHolder {
 	return &OpcUaClientHolder{
 		Config: c,
@@ -146,7 +137,7 @@ func DefaultHolder(c ConfigProp, logger types.Logger) *OpcUaClientHolder {
 	}
 }
 
-// NewOpcUaClient 创建OPCUA客户端
+// NewOpcUaClient creates OPC UA client
 func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	if x.Config == nil {
 		return nil, errors.New("config is nil")
@@ -158,7 +149,7 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	}
 	// Get the options to pass into the client based on the flags passed into the executable
 	opts := x.createOptions(endpoints)
-	// 请求超时，<=0 用默认 5 秒
+	// Request timeout, <=0 uses default 5 seconds
 	timeout := x.Config.GetTimeout()
 	if timeout <= 0 {
 		timeout = iot_points.DefaultTimeoutSec
@@ -175,7 +166,7 @@ func (x *OpcUaClientHolder) NewOpcUaClient() (*opcua.Client, error) {
 	return c, nil
 }
 
-// createOptions 构建Options
+// createOptions builds Options
 func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) []opcua.Option {
 	if x.Config == nil {
 		return []opcua.Option{}
@@ -270,7 +261,7 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 		}
 
 	default: // User cares about both
-		fmt.Println("secMode: ", secMode, "secPolicy:", secPolicy)
+		x.Printf("selecting endpoint by secMode: %s, secPolicy: %s", secMode, secPolicy)
 		for _, e := range endpoints {
 			if e.SecurityPolicyURI == secPolicy && e.SecurityMode == secMode && (serverEndpoint == nil || e.SecurityLevel >= serverEndpoint.SecurityLevel) {
 				serverEndpoint = e
@@ -279,7 +270,7 @@ func (x *OpcUaClientHolder) createOptions(endpoints []*ua.EndpointDescription) [
 	}
 
 	if serverEndpoint == nil { // Didn't find an endpoint with matching policy and mode.
-		// 只在首次失败时打印端点选项
+		// log endpoint options only on first failure
 		if !x.endpointOptionsPrinted && x.Logger != nil {
 			x.Printf("unable to find suitable server endpoint with selected sec-policy and sec-mode")
 			x.printEndpointOptions(endpoints)
@@ -352,7 +343,7 @@ func (x *OpcUaClientHolder) validateEndpointConfig(endpoints []*ua.EndpointDescr
 
 	err := fmt.Errorf("server does not support an endpoint with security : %s , %s, %s", secPolicy, secMode, authMode)
 
-	// 只在首次失败时打印端点选项
+	// log endpoint options only on first failure
 	if !x.endpointOptionsPrinted && x.Logger != nil {
 		x.Printf("OPC UA endpoint validation failed: %v", err)
 		x.printEndpointOptions(endpoints)
@@ -389,7 +380,7 @@ func (x *OpcUaClientHolder) printEndpointOptions(endpoints []*ua.EndpointDescrip
 	}
 }
 
-// Read 读取点位数据
+// Read reads point data
 func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, *ua.ReadResponse, error) {
 	ctx := context.Background()
 	allIds := make([]*ua.ReadValueID, 0)
@@ -445,10 +436,10 @@ func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, 
 	return data, resp, nil
 }
 
-// ToPointsData 把 Read 的结果转为统一的 iot_points.Data 列表。供 read 节点与采集端点共用。
-// points 与 resp.Results 按序对齐（Name/Addr 用于命名，Scale/Offset 工程量转换）。
-// Name 优先级：points[i].Name → DisplayName → points[i].Addr。
-// 单点非 OK 标记 Error；OK 点填 Value 与 ServerTimestamp(ns)。
+// ToPointsData converts Read results to unified iot_points.Data list. Shared by read node and acquisition endpoint.
+// points and resp.Results are aligned by index (Name/Addr for naming, Scale/Offset for engineering conversion).
+// Name priority: points[i].Name → DisplayName → points[i].Addr.
+// Non-OK points marked Error; OK points filled with Value and ServerTimestamp(ns).
 func ToPointsData(points []iot_points.Point, data []Data, resp *ua.ReadResponse) []iot_points.Data {
 	out := make([]iot_points.Data, 0, len(points))
 	for i, result := range resp.Results {

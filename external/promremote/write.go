@@ -17,7 +17,6 @@
 package promremote
 
 import (
-	"context"
 
 	"github.com/castai/promwrite"
 
@@ -35,7 +34,7 @@ func init() {
 // WriteConfig PromRemote write connection configuration.
 type WriteConfig struct {
 	URL string `json:"url" label:"URL" desc:"Prometheus Remote Write endpoint URL (e.g., http://localhost:9090/api/v1/write)" required:"true" ref:"primary"`
-	// 采集点数组 → SeriesPoint 可选映射（配置 measurement 后直接接收 x/iotRead 输出）
+	// Acquisition point array → SeriesPoint optional mapping (after configuring measurement, directly receive x/iotRead output)
 	tsdb.AcquisitionMapping `json:",squash"`
 }
 
@@ -87,7 +86,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	if err = newDriver(client, x.logger).WritePoints(context.Background(), "", points); err != nil {
+	if err = newDriver(client, x.logger).WritePoints(ctx.GetContext(), "", points); err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
 		ctx.TellSuccess(msg)

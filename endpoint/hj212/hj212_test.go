@@ -33,21 +33,21 @@ import (
 	"github.com/rulego/rulego/test/assert"
 )
 
-// buildTestFrame 按 HJ212 格式组帧（自动算长度与 CRC）
+// buildTestFrame assembles frame in HJ212 format (automatically calculates length and CRC)
 func buildTestFrame(seg string) []byte {
 	return []byte(fmt.Sprintf("##%04d%s%04X\r\n", len(seg), seg, crc16(seg)))
 }
 
 // ------------------------------------------------------------------------------------------------
-// 纯函数测试
+// Pure function tests
 // ------------------------------------------------------------------------------------------------
 
-// TestCrc16 标准 CRC-16/MODBUS 测试向量（HJ 212-2017 附录A 算法）
+// TestCrc16 standard CRC-16/MODBUS test vectors (HJ 212-2017 Annex A algorithm)
 func TestCrc16(t *testing.T) {
 	assert.Equal(t, uint16(0x4B37), crc16("123456789"))
 }
 
-// TestParseFramePollutionSource 污染源实时数据帧（ST=32/CN=2011，Rtd 后缀）
+// TestParseFramePollutionSource pollution source real-time data frame (ST=32/CN=2011, Rtd suffix)
 func TestParseFramePollutionSource(t *testing.T) {
 	seg := "QN=20170818122101000;ST=32;CN=2011;PW=123456;MN=DEVICE001;Flag=5;" +
 		"CP=&&DataTime=20170818122101;a34004-Rtd=2.3,a34004-Flag=N;a34002-Rtd=167.5,a34002-Flag=N;B01-Rtd=1.28&&"
@@ -66,21 +66,21 @@ func TestParseFramePollutionSource(t *testing.T) {
 	assert.Equal(t, iot_points.Data{Name: "B01", Value: 1.28, Timestamp: wantTs}, f.Points[2])
 }
 
-// TestParseFrameMinuteData 分钟数据帧（CN=2051，Avg/Min/Max/Cou 后缀）
+// TestParseFrameMinuteData minute data frame (CN=2051, Avg/Min/Max/Cou suffix)
 func TestParseFrameMinuteData(t *testing.T) {
 	seg := "QN=20170818122101000;ST=32;CN=2051;PW=123456;MN=DEVICE001;Flag=4;" +
 		"CP=&&DataTime=20170818122000;a34004-Avg=2.1,a34004-Min=1.8,a34004-Max=2.5,a34004-Cou=10.5,a34004-Flag=N&&"
 	f, err := ParseFrame(buildTestFrame(seg))
 	assert.Nil(t, err)
 	assert.Equal(t, "2051", f.CN)
-	assert.Equal(t, 4, len(f.Points)) // Flag 非数值后缀不输出
+	assert.Equal(t, 4, len(f.Points)) // Flag non-numeric suffix not output
 	names := []string{f.Points[0].Name, f.Points[1].Name, f.Points[2].Name, f.Points[3].Name}
 	assert.Equal(t, []string{"a34004-Avg", "a34004-Min", "a34004-Max", "a34004-Cou"}, names)
 	values := []interface{}{f.Points[0].Value, f.Points[1].Value, f.Points[2].Value, f.Points[3].Value}
 	assert.Equal(t, []interface{}{2.1, 1.8, 2.5, 10.5}, values)
 }
 
-// TestParseFrameNoDataTime 无 DataTime：Timestamp 为 0
+// TestParseFrameNoDataTime no DataTime: Timestamp is 0
 func TestParseFrameNoDataTime(t *testing.T) {
 	seg := "QN=20170818122101000;ST=32;CN=2011;PW=123456;MN=DEVICE001;Flag=5;" +
 		"CP=&&a34004-Rtd=2.3&&"
@@ -91,46 +91,51 @@ func TestParseFrameNoDataTime(t *testing.T) {
 	assert.Equal(t, int64(0), f.Points[0].Timestamp)
 }
 
-// TestParseFrameBadCrc CRC 校验失败
+// TestParseFrameBadCrc CRC check failure
 func TestParseFrameBadCrc(t *testing.T) {
 	seg := "QN=20170818122101000;ST=32;CN=2011;PW=123456;MN=DEVICE001;Flag=5;" +
 		"CP=&&DataTime=20170818122101;a34004-Rtd=2.3&&"
 	frame := buildTestFrame(seg)
-	frame[len(frame)-5] = '0' // 篡改 CRC 一位
+	frame[len(frame)-5] = '0' // Tamper with one CRC bit
 	_, err := ParseFrame(frame)
 	assert.NotNil(t, err)
 }
 
-// TestParseFrameMalformed 非法帧：缺 CP / 长度不符 / 无 ## 前缀
+// TestParseFrameMalformed invalid frame: missing CP / length mismatch / no ## prefix
 func TestParseFrameMalformed(t *testing.T) {
-	// 缺 CP
+// Missing CP
 	seg := "QN=20170818122101000;ST=32;CN=2011;PW=123456;MN=DEVICE001;Flag=5;"
 	_, err := ParseFrame(buildTestFrame(seg))
 	assert.NotNil(t, err)
 
-	// 长度字段与实际不符
+// Length field does not match actual
 	frame := []byte("##9999ST=32;CN=2011;CP=&&a34004-Rtd=2.3&&0000\r\n")
 	_, err = ParseFrame(frame)
 	assert.NotNil(t, err)
 
-	// 无 ## 前缀
+// No ## prefix
 	_, err = ParseFrame([]byte("ST=32;CN=2011;CP=&&a34004-Rtd=2.3&&\r\n"))
+	assert.NotNil(t, err)
+
+// CP=&& without closing && must return error, not panic (regression: seg[cpIdx+5:end] slice bounds).
+	seg = "QN=1;ST=32;CN=2011;CP=&&"
+	_, err = ParseFrame(buildTestFrame(seg))
 	assert.NotNil(t, err)
 }
 
-// TestExtractFrame 流式切帧：前导垃圾跳过、连续两帧、不完整帧等待
+// TestExtractFrame streaming frame splitting: skip leading garbage, consecutive two frames, incomplete frame waiting
 func TestExtractFrame(t *testing.T) {
 	seg1 := "QN=20170818122101000;ST=32;CN=2011;PW=123456;MN=D1;Flag=5;CP=&&a34004-Rtd=1.1&&"
 	seg2 := "QN=20170818122201000;ST=32;CN=2011;PW=123456;MN=D2;Flag=5;CP=&&a34004-Rtd=2.2&&"
 	f1 := buildTestFrame(seg1)
 	f2 := buildTestFrame(seg2)
 
-	// 前导垃圾 + 完整帧
+// Leading garbage + complete frame
 	buf := append([]byte("garbage##noise"), f1...)
 	_, used, ok := extractFrame(buf)
 	assert.False(t, ok)
-	assert.Equal(t, len("garbage"), used) // 跳过首个 ## 前的垃圾（到第一个 ## 处）
-	// 实际 "garbage##noise" 中 ## 在 index 7，used=7；丢弃后 buf 以 ##noise... 开头但长度非法再跳
+	assert.Equal(t, len("garbage"), used) // Skip garbage before first ##
+// In "garbage##noise" ## is at index 7, used=7; after discard buf starts with ##noise... but length is invalid, skip again
 	buf = buf[used:]
 	for {
 		frame, used, ok := extractFrame(buf)
@@ -147,7 +152,7 @@ func TestExtractFrame(t *testing.T) {
 		buf = buf[used:]
 	}
 
-	// 连续两帧
+// Consecutive two frames
 	buf = append(append([]byte{}, f1...), f2...)
 	var mns []string
 	for {
@@ -162,17 +167,17 @@ func TestExtractFrame(t *testing.T) {
 	}
 	assert.Equal(t, []string{"D1", "D2"}, mns)
 
-	// 不完整帧：返回 used=0，等待更多数据
+// Incomplete frame: return used=0, wait for more data
 	_, used, ok = extractFrame(f1[:10])
 	assert.False(t, ok)
 	assert.Equal(t, 0, used)
 }
 
 // ------------------------------------------------------------------------------------------------
-// 端点元信息测试
+// Endpoint metadata tests
 // ------------------------------------------------------------------------------------------------
 
-// TestHJ212EndpointMeta 端点类型/默认配置/ID
+// TestHJ212EndpointMeta endpoint type/default config/ID
 func TestHJ212EndpointMeta(t *testing.T) {
 	ep := &HJ212Endpoint{}
 	assert.Equal(t, "endpoint/hj212", ep.Type())
@@ -184,10 +189,10 @@ func TestHJ212EndpointMeta(t *testing.T) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// 端到端集成测试：endpoint 收设备上报帧
+// End-to-end integration test: endpoint receives device-reported frames
 // ------------------------------------------------------------------------------------------------
 
-// TestHJ212EndpointReceive 端到端：endpoint 监听，模拟设备发帧，验证消息数据与 metadata。
+// TestHJ212EndpointReceive end-to-end: endpoint listens, simulate device sending frames, verify message data and metadata.
 func TestHJ212EndpointReceive(t *testing.T) {
 	const listenAddr = "127.0.0.1:18212"
 	config := rulego.NewConfig(types.WithDefaultPool())
@@ -225,9 +230,9 @@ func TestHJ212EndpointReceive(t *testing.T) {
 	err = ep.Start()
 	assert.Nil(t, err)
 	defer ep.Destroy()
-	time.Sleep(300 * time.Millisecond) // 等监听就绪
+	time.Sleep(300 * time.Millisecond) // Wait for listener ready
 
-	// 模拟设备上报一帧污染源实时数据
+// Simulate device reporting one pollution source real-time data frame
 	seg := "QN=20170818122101000;ST=32;CN=2011;PW=123456;MN=DEVICE001;Flag=5;" +
 		"CP=&&DataTime=20170818122101;a34004-Rtd=2.3,a34004-Flag=N;a34002-Rtd=167.5,a34002-Flag=N&&"
 	conn, err := net.Dial("tcp", listenAddr)
@@ -260,4 +265,32 @@ func TestHJ212EndpointReceive(t *testing.T) {
 	assert.Equal(t, "2011", gotCN)
 	assert.True(t, strings.Contains(gotDT, "2017-08-18"))
 	t.Logf("received hj212 payload: %s", gotData)
+}
+
+// TestHJ212EndpointDestroyWithActiveConn verifies Destroy returns promptly even when a device
+// holds an open connection (server-side handleConn blocks on conn.Read). Regression for wg.Wait() hang.
+func TestHJ212EndpointDestroyWithActiveConn(t *testing.T) {
+	const listenAddr = "127.0.0.1:18213"
+	config := rulego.NewConfig(types.WithDefaultPool())
+
+	ep := (&HJ212Endpoint{}).New().(*HJ212Endpoint)
+	assert.Nil(t, ep.Init(config, types.Configuration{"server": listenAddr}))
+	_, err := ep.AddRouter(impl.NewRouter())
+	assert.Nil(t, err)
+	assert.Nil(t, ep.Start())
+	time.Sleep(300 * time.Millisecond) // Wait for listener ready
+
+	// Open and hold a connection: server accepts it and blocks inside handleConn's conn.Read.
+	conn, err := net.Dial("tcp", listenAddr)
+	assert.Nil(t, err)
+	time.Sleep(300 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() { ep.Destroy(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Destroy blocked: active connection did not unblock conn.Read")
+	}
+	_ = conn.Close()
 }

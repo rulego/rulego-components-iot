@@ -17,7 +17,6 @@
 package opengemini
 
 import (
-	"context"
 	"encoding/json"
 
 	"github.com/rulego/rulego"
@@ -31,7 +30,7 @@ func init() {
 	_ = rulego.Registry.Register(&QueryNode{})
 }
 
-// QueryConfig OpenGemini 查询配置（连接字段与 WriteConfig 一致，额外带 Command）。
+// QueryConfig OpenGemini query configuration (connection fields consistent with WriteConfig, plus Command).
 type QueryConfig struct {
 	Server   string `json:"server" label:"Server" desc:"OpenGemini server address, format: host:port" required:"true" ref:"primary"`
 	Database string `json:"database" label:"Database" desc:"Database name" required:"true"`
@@ -41,8 +40,8 @@ type QueryConfig struct {
 	Command  string `json:"command" label:"Query" desc:"SQL query, supports ${metadata.key} and ${msg.key} substitution" required:"true"`
 }
 
-// QueryNode 执行 SQL 查询，结果以通用 QueryResult（列+行）写入 msg.Data。
-// 连接复用 WriteNode 的 SharedNode client。
+// QueryNode executes SQL query, writes result to msg.Data as generic QueryResult (columns + rows).
+// Reuses WriteNode's SharedNode client for connection.
 type QueryNode struct {
 	*WriteNode
 	Config          QueryConfig
@@ -68,7 +67,7 @@ func (x *QueryNode) Init(ruleConfig types.Config, configuration types.Configurat
 	if err := maps.Map2Struct(configuration, &x.Config); err != nil {
 		return err
 	}
-	// 复用 WriteNode 建立连接
+	// Reuse WriteNode to establish connection
 	x.WriteNode = &WriteNode{}
 	if err := x.WriteNode.Init(ruleConfig, configuration); err != nil {
 		return err
@@ -91,7 +90,7 @@ func (x *QueryNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	res, err := newDriver(client).Query(context.Background(), database, command)
+	res, err := newDriver(client).Query(ctx.GetContext(), database, command)
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return

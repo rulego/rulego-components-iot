@@ -17,7 +17,6 @@
 package influxdb
 
 import (
-	"context"
 	"encoding/json"
 
 	"github.com/rulego/rulego"
@@ -93,7 +92,7 @@ func (x *QueryNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	res, err := newDriver(client, org, bucket).Query(context.Background(), org, query)
+	res, err := newDriver(client, org, bucket).Query(ctx.GetContext(), org, query)
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return

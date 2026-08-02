@@ -54,6 +54,9 @@ func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.Serie
 	totalFields := 0
 
 	for _, p := range points {
+		if p.Measurement == "" {
+			continue
+		}
 		labels := []promwrite.Label{{Name: "__name__", Value: p.Measurement}}
 		for k, v := range p.Tags {
 			labels = append(labels, promwrite.Label{Name: k, Value: v})
@@ -65,6 +68,10 @@ func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.Serie
 		}
 
 		for k, v := range p.Fields {
+			if !tsdb.ValidFieldValue(v) {
+				d.logger.Printf("[promremote] skip non-numeric field %q (value %v) in measurement %q", k, v, p.Measurement)
+				continue
+			}
 			totalFields++
 			// For each field, create a separate time series with field name as __name__ suffix
 			fieldLabels := make([]promwrite.Label, len(labels))
@@ -123,7 +130,7 @@ func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.Serie
 	}
 
 	if len(promPoints) == 0 {
-		// 有字段但全为非数值被跳过：返回 error 避免静默丢数据
+		// Has fields but all non-numeric and skipped: return error to avoid silent data loss
 		if totalFields > 0 {
 			return fmt.Errorf("promremote: all %d field(s) non-numeric, nothing written", totalFields)
 		}

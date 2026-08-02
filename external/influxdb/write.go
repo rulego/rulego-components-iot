@@ -17,7 +17,6 @@
 package influxdb
 
 import (
-	"context"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/rulego/rulego"
@@ -38,7 +37,7 @@ type WriteConfig struct {
 	Bucket string `json:"bucket" label:"Bucket" desc:"Bucket name" required:"true"`
 	Org    string `json:"org" label:"Org" desc:"Organization name" required:"true"`
 	Token  string `json:"token" label:"Token" desc:"Authentication token" required:"true" ref:"shared"`
-	// 采集点数组 → SeriesPoint 可选映射（配置 measurement 后直接接收 x/iotRead 输出）
+	// Acquisition point array → SeriesPoint optional mapping (after configuring measurement, directly receive x/iotRead output)
 	tsdb.AcquisitionMapping `json:",squash"`
 }
 
@@ -101,7 +100,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	if err = newDriver(client, org, bucket).WritePoints(context.Background(), bucket, points); err != nil {
+	if err = newDriver(client, org, bucket).WritePoints(ctx.GetContext(), bucket, points); err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
 		ctx.TellSuccess(msg)

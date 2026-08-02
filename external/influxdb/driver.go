@@ -56,6 +56,18 @@ func newDriver(client influxdb2.Client, org, bucket string) *driver {
 func (d *driver) WritePoints(ctx context.Context, bucket string, points []tsdb.SeriesPoint) error {
 	pts := make([]*write.Point, 0, len(points))
 	for i := range points {
+		if points[i].Measurement == "" {
+			continue
+		}
+		fields := make(map[string]interface{}, len(points[i].Fields))
+		for k, v := range points[i].Fields {
+			if tsdb.ValidFieldValue(v) {
+				fields[k] = v
+			}
+		}
+		if len(fields) == 0 {
+			continue
+		}
 		ts := points[i].Timestamp
 		if ts == 0 {
 			ts = time.Now().UnixNano()
@@ -63,7 +75,7 @@ func (d *driver) WritePoints(ctx context.Context, bucket string, points []tsdb.S
 		pts = append(pts, influxdb2.NewPoint(
 			points[i].Measurement,
 			points[i].Tags,
-			points[i].Fields,
+			fields,
 			time.Unix(0, ts),
 		))
 	}
@@ -88,8 +100,8 @@ func (d *driver) Close() error {
 }
 
 // toQueryResult converts InfluxDB query result to generic QueryResult (columns + rows).
-// Columns 取自 Flux 表元数据（按 CSV 注解序），多表结果按首次出现顺序取并集；Rows 为列名→值的 map。
-// 查询中途出错时经 result.Err() 返回。
+// Columns are taken from Flux table metadata (in CSV annotation order), multi-table results use union of first occurrence order; Rows are column name→value maps.
+// Query errors during execution are returned via result.Err().
 func toQueryResult(result *api.QueryTableResult) (*tsdb.QueryResult, error) {
 	out := &tsdb.QueryResult{Columns: []string{}, Rows: []map[string]interface{}{}}
 	if result == nil {

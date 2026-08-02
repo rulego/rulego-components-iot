@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-// Package finsclient 实现欧姆龙 FINS 协议客户端(CS/CJ/CP/NJ/NX 系列 PLC)，
-// 支持 FINS/UDP 与 FINS/TCP 两种传输。纯标准库实现，请求/响应同步配对，无后台 goroutine。
+// Package finsclient implements Omron FINS protocol client (CS/CJ/CP/NJ/NX series PLCs),
+// supporting both FINS/UDP and FINS/TCP transports. Pure standard library implementation,
+// synchronous request/response pairing, no background goroutine.
 //
-// 内存区代码采用 W342 FINS Commands Reference(CS/CJ 系列)标准值：
-// CIO=0x30/0x31、WR=0xB1/0xB2、AR=0xB3/0xB4、HR=0xB4/0xB5、DM=0x02/0x03。
+// Memory area codes follow W342 FINS Commands Reference (CS/CJ series) standard values,
+// where word code = bit code | 0x80:
+// CIO=0x30/0xB0, WR=0x31/0xB1, HR=0x32/0xB2, AR=0x33/0xB3, DM=0x02/0x03.
+
 package finsclient
 
 import (
@@ -33,9 +36,10 @@ import (
 	"time"
 )
 
-// 内存区代码(字/位)，命令 0x0101/0x0102，CS/CJ/CP/NSJ 系列。
-// 继电器区字码 = 位码 | 0x80(0x3x 位 / 0xBx 字)，DM 为早期保留码(0x02/0x03)。
-// 依据 W342 命令参考与 PcVue/KEPware 等商用驱动码表；真机部署前建议用 H/A/CIO 各读一次核对。
+// Memory area codes (word/bit), commands 0x0101/0x0102, CS/CJ/CP/NSJ series.
+// Relay area word code = bit code | 0x80 (0x3x bit / 0xBx word), DM uses legacy reserved code (0x02/0x03).
+// Based on W342 command reference and PcVue/KEPware commercial driver code tables;
+// verify by reading H/A/CIO once before real device deployment.
 const (
 	MemoryAreaDMWord  byte = 0x02
 	MemoryAreaDMBit   byte = 0x03
@@ -49,46 +53,46 @@ const (
 	MemoryAreaARWord  byte = 0xB3
 )
 
-// 命令与帧常量
+// Command and frame constants
 const (
 	cmdMemoryAreaRead  uint16 = 0x0101
 	cmdMemoryAreaWrite uint16 = 0x0102
 
-	// defaultPort FINS 默认端口(UDP 与 TCP 均为 9600)
+	// defaultPort FINS default port (both UDP and TCP are 9600)
 	defaultPort = 9600
-	// defaultTimeout 默认请求超时
+	// defaultTimeout default request timeout
 	defaultTimeout = 5 * time.Second
-	// maxFrameSize 单帧上限
+	// maxFrameSize max single frame size
 	maxFrameSize = 65535
 )
 
-// FINS/TCP 帧头常量
+// FINS/TCP frame header constants
 var finsTCPHeader = []byte("FINS")
 
 const (
-	// tcpCmdNodeAddress FINS/TCP 节点地址协商命令
+	// tcpCmdNodeAddress FINS/TCP node address negotiation command
 	tcpCmdNodeAddress uint32 = 0x00000000
-	// tcpCmdSendFrame FINS/TCP 帧发送命令
+	// tcpCmdSendFrame FINS/TCP frame send command
 	tcpCmdSendFrame uint32 = 0x00000002
-	// tcpHeaderSize FINS/TCP 帧头长度
+	// tcpHeaderSize FINS/TCP frame header length
 	tcpHeaderSize = 16
 )
 
-// Address FINS 节点地址
+// Address FINS node address
 type Address struct {
-	// Host PLC 地址(IP 或主机名)
+	// Host PLC address (IP or hostname)
 	Host string
-	// Port 端口，0 使用默认 9600
+	// Port port, 0 uses default 9600
 	Port int
-	// Network FINS 网络号(DNA/SNA)
+	// Network FINS network number (DNA/SNA)
 	Network byte
-	// Node FINS 节点号(DA1/SA1；TCP 下由握手协商)
+	// Node FINS node number (DA1/SA1; negotiated by handshake in TCP)
 	Node byte
-	// Unit 单元地址(DA2)
+	// Unit unit address (DA2)
 	Unit byte
 }
 
-// NewAddress 构造 FINS 节点地址
+// NewAddress constructs FINS node address
 func NewAddress(host string, port int, network, node, unit byte) Address {
 	if port == 0 {
 		port = defaultPort
@@ -96,7 +100,7 @@ func NewAddress(host string, port int, network, node, unit byte) Address {
 	return Address{Host: host, Port: port, Network: network, Node: node, Unit: unit}
 }
 
-// Client FINS 客户端。并发安全：内部互斥串行化请求-响应配对。
+// Client FINS client. Concurrent-safe: internal mutex serializes request-response pairing.
 type Client struct {
 	src     Address
 	dst     Address
@@ -106,19 +110,19 @@ type Client struct {
 	mu      sync.Mutex
 	conn    net.Conn
 	sid     byte
-	readBuf [maxFrameSize]byte // UDP 读缓冲区复用(exchange 串行访问)
+	readBuf [maxFrameSize]byte // UDP read buffer reuse (exchange serial access)
 	closed  atomic.Bool
 }
 
-// Option 可选配置
+// Option optional configuration
 type Option func(*Client)
 
-// WithTCP 使用 FINS/TCP 传输(默认 FINS/UDP)
+// WithTCP uses FINS/TCP transport (default FINS/UDP)
 func WithTCP() Option {
 	return func(c *Client) { c.tcp = true }
 }
 
-// WithTimeout 设置请求超时
+// WithTimeout sets request timeout
 func WithTimeout(d time.Duration) Option {
 	return func(c *Client) {
 		if d > 0 {
@@ -127,7 +131,7 @@ func WithTimeout(d time.Duration) Option {
 	}
 }
 
-// NewClient 创建并连接 FINS 客户端。TCP 传输自动完成节点地址协商。
+// NewClient creates and connects FINS client. TCP transport automatically completes node address negotiation.
 func NewClient(local, plc Address, opts ...Option) (*Client, error) {
 	c := &Client{
 		src:     local,
@@ -166,7 +170,7 @@ func NewClient(local, plc Address, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
-// Close 关闭连接
+// Close closes connection
 func (c *Client) Close() error {
 	c.closed.Store(true)
 	c.mu.Lock()
@@ -177,7 +181,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// ReadWords 读字区，返回 count 个大端字
+// ReadWords reads word area, returns count big-endian words
 func (c *Client) ReadWords(area byte, address, count uint16) ([]uint16, error) {
 	payload := buildMemAreaPayload(cmdMemoryAreaRead, area, address, 0, count, nil)
 	data, err := c.exchange(payload)
@@ -194,7 +198,7 @@ func (c *Client) ReadWords(area byte, address, count uint16) ([]uint16, error) {
 	return words, nil
 }
 
-// ReadBits 读位区，每个位占 1 字节(0/1)
+// ReadBits reads bit area, each bit occupies 1 byte (0/1)
 func (c *Client) ReadBits(area byte, address uint16, bitOffset byte, count uint16) ([]bool, error) {
 	payload := buildMemAreaPayload(cmdMemoryAreaRead, area, address, bitOffset, count, nil)
 	data, err := c.exchange(payload)
@@ -211,7 +215,7 @@ func (c *Client) ReadBits(area byte, address uint16, bitOffset byte, count uint1
 	return bits, nil
 }
 
-// WriteWords 写字区(大端)
+// WriteWords writes word area (big-endian)
 func (c *Client) WriteWords(area byte, address uint16, words []uint16) error {
 	data := make([]byte, len(words)*2)
 	for i, w := range words {
@@ -222,7 +226,7 @@ func (c *Client) WriteWords(area byte, address uint16, words []uint16) error {
 	return err
 }
 
-// WriteBits 写位区，每个位占 1 字节(0x00/0x01)
+// WriteBits writes bit area, each bit occupies 1 byte (0x00/0x01)
 func (c *Client) WriteBits(area byte, address uint16, bitOffset byte, bits []bool) error {
 	data := make([]byte, len(bits))
 	for i, b := range bits {
@@ -235,7 +239,7 @@ func (c *Client) WriteBits(area byte, address uint16, bitOffset byte, bits []boo
 	return err
 }
 
-// buildMemAreaPayload 构造内存区读/写命令载荷：MRC SRC + 区码(1) + 字地址(2) + 位偏移(1) + 数量(2) [+ 数据]
+// buildMemAreaPayload constructs memory area read/write command payload: MRC SRC + area code(1) + word address(2) + bit offset(1) + count(2) [+ data]
 func buildMemAreaPayload(cmd uint16, area byte, address uint16, bitOffset byte, count uint16, data []byte) []byte {
 	payload := make([]byte, 8, 8+len(data))
 	binary.BigEndian.PutUint16(payload[0:2], cmd)
@@ -246,10 +250,10 @@ func buildMemAreaPayload(cmd uint16, area byte, address uint16, bitOffset byte, 
 	return append(payload, data...)
 }
 
-// buildFrame 构造 FINS 帧：ICF RSV GCT DNA DA1 DA2 SNA SA1 SA2 SID + 命令载荷
+// buildFrame constructs FINS frame: ICF RSV GCT DNA DA1 DA2 SNA SA1 SA2 SID + command payload
 func (c *Client) buildFrame(sid byte, payload []byte) []byte {
 	frame := make([]byte, 10, 10+len(payload))
-	frame[0] = 0x80 // 命令帧，要求响应
+	frame[0] = 0x80 // Command frame, requires response
 	frame[1] = 0x00
 	frame[2] = 0x02 // GCT
 	frame[3] = c.dst.Network
@@ -262,8 +266,8 @@ func (c *Client) buildFrame(sid byte, payload []byte) []byte {
 	return append(frame, payload...)
 }
 
-// exchange 发送一帧并等待同 SID 响应，返回响应数据段(MRC SRC MRES SRES 之后)。
-// UDP 读单包；TCP 先读 16 字节帧头按长度读载荷。非本 SID 的响应丢弃重读。
+// exchange sends one frame and waits for matching SID response, returns response data segment (after MRC SRC MRES SRES).
+// UDP reads single packet; TCP first reads 16-byte frame header then payload by length. Non-matching SID responses are discarded and retried.
 func (c *Client) exchange(payload []byte) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -295,7 +299,7 @@ func (c *Client) exchange(payload []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fins read: %w", err)
 		}
-		// 丢弃非响应帧：过短帧(FINS/TCP 心跳/空载荷)与 SID 不匹配的帧
+		// Discard non-response frames: too-short frames (FINS/TCP heartbeat/empty payload) and SID-mismatched frames
 		if len(frame) < 14 || frame[9] != sid {
 			continue
 		}
@@ -307,7 +311,7 @@ func (c *Client) exchange(payload []byte) ([]byte, error) {
 	}
 }
 
-// readFrame 读一个 FINS 帧(UDP 为单包；TCP 解 16 字节帧头取载荷)
+// readFrame reads one FINS frame (UDP is single packet; TCP parses 16-byte frame header and extracts payload)
 func (c *Client) readFrame() ([]byte, error) {
 	if !c.tcp {
 		n, err := c.conn.Read(c.readBuf[:])
@@ -328,11 +332,11 @@ func (c *Client) readFrame() ([]byte, error) {
 	if _, err := io.ReadFull(c.conn, payload); err != nil {
 		return nil, err
 	}
-	// 非帧发送命令(如节点地址回声)不在此处理，由握手阶段消费
+	// Non-frame-send commands (e.g. node address echo) not handled here, consumed by handshake stage
 	return payload, nil
 }
 
-// wrapTCPFrame 封装 FINS/TCP 帧头："FINS" + 长度(4) + 命令(4) + 错误码(4) + 载荷
+// wrapTCPFrame wraps FINS/TCP frame header: "FINS" + length(4) + command(4) + error code(4) + payload
 func wrapTCPFrame(command uint32, payload []byte) []byte {
 	frame := make([]byte, tcpHeaderSize, tcpHeaderSize+len(payload))
 	copy(frame[0:4], finsTCPHeader)
@@ -342,8 +346,8 @@ func wrapTCPFrame(command uint32, payload []byte) []byte {
 	return append(frame, payload...)
 }
 
-// tcpHandshake FINS/TCP 节点地址协商：发送本端地址，对端回其地址+分配给本端的地址。
-// 协商结果写入 dst.Node(DA1) 与 src.Node(SA1)。
+// tcpHandshake FINS/TCP node address negotiation: sends local address, peer responds with its address + assigned local address.
+// Negotiation result written to dst.Node (DA1) and src.Node (SA1).
 func (c *Client) tcpHandshake() error {
 	clientAddr := []byte{c.src.Network, 0, 0, c.src.Node}
 	if err := c.conn.SetWriteDeadline(time.Now().Add(c.timeout)); err != nil {
@@ -375,10 +379,10 @@ func (c *Client) tcpHandshake() error {
 		return fmt.Errorf("fins tcp handshake read payload: %w", err)
 	}
 	if len(payload) >= 4 {
-		c.dst.Node = payload[3] // 对端节点号
+		c.dst.Node = payload[3] // Peer node number
 	}
 	if len(payload) >= 8 && payload[7] != 0 {
-		c.src.Node = payload[7] // 对端分配的本端节点号
+		c.src.Node = payload[7] // Local node number assigned by peer
 	}
 	return nil
 }

@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-// Package hj212 提供 HJ212（HJ 212-2017 污染物在线监控数据传输标准）被动接收端点：
-// 监听 TCP 端口，接收设备主动上报的帧，解析污染物因子为统一 iot_points.Data 流入规则链。
-// 仅做被动采集，不主动应答设备（Flag bit0 应答由下游规则自行处理）。
+// Package hj212 provides HJ212 (HJ 212-2017 pollution online monitoring data transmission standard) passive receiver endpoint:
+// Listens TCP port, receives device-initiated frames, parses pollutant factors into unified iot_points.Data for rule chain processing.
+// Passive collection only, does not actively respond to devices (Flag bit0 response handled by downstream rules).
 package hj212
 
 import (
@@ -40,7 +40,7 @@ import (
 const Type = types.EndpointTypePrefix + "hj212"
 const HJ212MsgType = "HJ212"
 
-// 帧字段注入 msg.Metadata 的 key，下游用 ${metadata.xx} 取值
+// Frame field injection key for msg.Metadata, downstream uses ${metadata.xx} to get value
 const (
 	MetadataKeyFrom     = "from"
 	MetadataKeyMN       = "mn"
@@ -49,17 +49,17 @@ const (
 	MetadataKeyDataTime = "dataTime"
 )
 
-// Endpoint 别名
+// Endpoint alias
 type Endpoint = HJ212Endpoint
 
 var _ endpointApi.Endpoint = (*Endpoint)(nil)
 
-// 注册端点
+// Register endpoint
 func init() {
 	_ = endpoint.Registry.Register(&Endpoint{})
 }
 
-// RequestMessage 包装一帧解析出的点位数据
+// RequestMessage wraps parsed point data from one frame
 type RequestMessage struct {
 	headers    textproto.MIMEHeader
 	body       []byte
@@ -91,7 +91,7 @@ func (r *RequestMessage) SetBody(b []byte)    { r.body = b }
 func (r *RequestMessage) SetError(err error)  { r.err = err }
 func (r *RequestMessage) GetError() error     { return r.err }
 
-// ResponseMessage 响应消息（被动接收端不使用，占位满足接口）
+// ResponseMessage response message (passive receiver does not use, placeholder to satisfy interface)
 type ResponseMessage struct {
 	headers    textproto.MIMEHeader
 	body       []byte
@@ -122,31 +122,33 @@ func (r *ResponseMessage) SetBody(b []byte)    { r.body = b }
 func (r *ResponseMessage) SetError(err error)  { r.err = err }
 func (r *ResponseMessage) GetError() error     { return r.err }
 
-// HJ212Config HJ212 端点配置
+// HJ212Config HJ212 endpoint configuration
 type HJ212Config struct {
-	// 监听地址，默认 0.0.0.0:8005
+// Listen address, default 0.0.0.0:8005
 	Server string `json:"server" label:"Server" desc:"listen address, e.g. 0.0.0.0:8005" required:"true" ref:"primary"`
 }
 
-// HJ212Endpoint HJ212 被动接收端点
+// HJ212Endpoint HJ212 passive receiver endpoint
 type HJ212Endpoint struct {
 	impl.BaseEndpoint
-	// GracefulShutdown 优雅停机
+// GracefulShutdown graceful shutdown
 	base.GracefulShutdown
 	RuleConfig types.Config
 	Config     HJ212Config
-	// 路由（单路由，上报数据无路径区分）
+// Router (single router, reported data has no path distinction)
 	Router   endpointApi.Router
 	listener net.Listener
 	connCtx  context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+	mu       sync.Mutex
+	conns    map[net.Conn]struct{}
 }
 
-// Type 组件类型
+// Type component type
 func (x *HJ212Endpoint) Type() string { return Type }
 
-// New 创建组件实例
+// New creates component instance
 func (x *HJ212Endpoint) New() types.Node {
 	return &HJ212Endpoint{
 		Config: HJ212Config{
@@ -155,31 +157,32 @@ func (x *HJ212Endpoint) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *HJ212Endpoint) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
 	x.GracefulShutdown.InitGracefulShutdown(x.RuleConfig.Logger, 10*time.Second)
 	x.connCtx, x.cancel = context.WithCancel(context.Background())
+	x.conns = make(map[net.Conn]struct{})
 	return err
 }
 
-// Destroy 销毁
+// Destroy destroys
 func (x *HJ212Endpoint) Destroy() {
 	x.GracefulShutdown.GracefulStop(func() {
 		_ = x.Close()
 	})
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *HJ212Endpoint) Desc() string {
 	return "HJ212 receiver endpoint. Listens on TCP port for pollution source monitoring devices to report data (HJ 212-2017)"
 }
 
-// Category 组件分类
+// Category component category
 func (x *HJ212Endpoint) Category() string { return "endpoint" }
 
-// Def 组件定义
+// Def component definition
 func (x *HJ212Endpoint) Def() types.ComponentForm {
 	return types.ComponentForm{
 		Desc: "HJ212 receiver endpoint. Listens on TCP port for pollution source monitoring devices to report data (HJ 212-2017)",
@@ -189,7 +192,7 @@ func (x *HJ212Endpoint) Def() types.ComponentForm {
 	}
 }
 
-// Close 关闭监听
+// Close closes listener
 func (x *HJ212Endpoint) Close() error {
 	if x.cancel != nil {
 		x.cancel()
@@ -197,14 +200,20 @@ func (x *HJ212Endpoint) Close() error {
 	if x.listener != nil {
 		_ = x.listener.Close()
 	}
+	// Close active connections to unblock handleConn's blocking conn.Read.
+	x.mu.Lock()
+	for c := range x.conns {
+		_ = c.Close()
+	}
+	x.mu.Unlock()
 	x.wg.Wait()
 	return nil
 }
 
-// Id 返回端点 ID
+// Id returns endpoint ID
 func (x *HJ212Endpoint) Id() string { return x.Config.Server }
 
-// AddRouter 添加路由（单路由，上报数据无路径区分）
+// AddRouter adds router (single router, reported data has no path distinction)
 func (x *HJ212Endpoint) AddRouter(router endpointApi.Router, params ...interface{}) (string, error) {
 	if router == nil {
 		return "", errors.New("router cannot be nil")
@@ -220,13 +229,13 @@ func (x *HJ212Endpoint) AddRouter(router endpointApi.Router, params ...interface
 	return router.GetId(), nil
 }
 
-// RemoveRouter 移除路由
+// RemoveRouter removes router
 func (x *HJ212Endpoint) RemoveRouter(routerId string, params ...interface{}) error {
 	x.Router = nil
 	return nil
 }
 
-// Start 启动 TCP 监听
+// Start starts TCP listening
 func (x *HJ212Endpoint) Start() error {
 	listener, err := net.Listen("tcp", x.Config.Server)
 	if err != nil {
@@ -251,9 +260,17 @@ func (x *HJ212Endpoint) Start() error {
 	return nil
 }
 
-// handleConn 读取连接流，按 ##+长度 边界切帧并解析
+// handleConn reads connection stream, splits frames by ##+length boundary and parses
 func (x *HJ212Endpoint) handleConn(conn net.Conn) {
 	defer conn.Close()
+	x.mu.Lock()
+	x.conns[conn] = struct{}{}
+	x.mu.Unlock()
+	defer func() {
+		x.mu.Lock()
+		delete(x.conns, conn)
+		x.mu.Unlock()
+	}()
 	x.GracefulShutdown.IncrementActiveOperations()
 	defer x.GracefulShutdown.DecrementActiveOperations()
 	addr := conn.RemoteAddr().String()
@@ -263,7 +280,7 @@ func (x *HJ212Endpoint) handleConn(conn net.Conn) {
 		n, err := conn.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
-			if len(buf) > maxDataLen+12 { // 超限保护：丢弃缓冲
+			if len(buf) > maxDataLen+12 { // Overflow protection: discard buffer
 				x.Printf("hj212: buffer overflow from %s, drop connection data", addr)
 				buf = buf[:0]
 			}
@@ -286,14 +303,14 @@ func (x *HJ212Endpoint) handleConn(conn net.Conn) {
 	}
 }
 
-// handleFrame 解析一帧，Flag bit0=1 时回写 ACK，点位列表转消息流入规则链
+// handleFrame parses one frame, writes ACK when Flag bit0=1, converts point list to message and flows into rule chain
 func (x *HJ212Endpoint) handleFrame(conn net.Conn, from string, raw []byte) {
 	frame, err := ParseFrame(raw)
 	if err != nil {
 		x.Printf("hj212 parse error from %s: %v", from, err)
 		return
 	}
-	// Flag bit0=1 表示设备要求应答，立即回写确认帧
+// Flag bit0=1 means device requires response, immediately write ACK frame
 	if flagVal, ferr := strconv.Atoi(frame.Flag); ferr == nil && flagVal&0x01 != 0 {
 		ack := BuildAckFrame(frame)
 		if _, werr := conn.Write(ack); werr != nil {
@@ -323,7 +340,7 @@ func (x *HJ212Endpoint) handleFrame(conn net.Conn, from string, raw []byte) {
 	x.DoProcess(x.connCtx, x.Router, exchange)
 }
 
-// Printf 日志
+// Printf logs
 func (x *HJ212Endpoint) Printf(format string, v ...interface{}) {
 	if x.RuleConfig.Logger != nil {
 		x.RuleConfig.Logger.Printf(format, v...)

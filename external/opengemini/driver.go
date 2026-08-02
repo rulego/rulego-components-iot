@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-// Package opengemini 提供 OpenGemini 时序数据库的写入(WriteNode)与查询(QueryNode)节点，
-// 并通过 driver 适配 pkg/tsdb.Driver。
+// Package opengemini provides OpenGemini time-series database write (WriteNode) and query (QueryNode) nodes,
+// and adapts to pkg/tsdb.Driver via driver.
 package opengemini
 
 import (
@@ -27,7 +27,7 @@ import (
 	"github.com/rulego/rulego-components-iot/pkg/tsdb"
 )
 
-// driver 把 tsdb.SeriesPoint 适配到 OpenGemini client。
+// driver adapts tsdb.SeriesPoint to OpenGemini client.
 type driver struct {
 	client opengemini.Client
 }
@@ -44,10 +44,22 @@ func newDriver(client opengemini.Client) *driver {
 	return &driver{client: client}
 }
 
-// WritePoints 把 SeriesPoint 映射为 OpenGemini Point 并批量写入。
+// WritePoints maps SeriesPoint to OpenGemini Point and batch writes.
 func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.SeriesPoint) error {
 	ops := make([]*opengemini.Point, 0, len(points))
 	for i := range points {
+		if points[i].Measurement == "" {
+			continue
+		}
+		fields := make(map[string]interface{}, len(points[i].Fields))
+		for k, v := range points[i].Fields {
+			if tsdb.ValidFieldValue(v) {
+				fields[k] = v
+			}
+		}
+		if len(fields) == 0 {
+			continue
+		}
 		ts := points[i].Timestamp
 		if ts == 0 {
 			ts = time.Now().UnixNano()
@@ -55,7 +67,7 @@ func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.Serie
 		ops = append(ops, &opengemini.Point{
 			Measurement: points[i].Measurement,
 			Tags:        points[i].Tags,
-			Fields:      points[i].Fields,
+			Fields:      fields,
 			Timestamp:   ts,
 			Precision:   opengemini.PrecisionNanosecond,
 		})
@@ -63,7 +75,7 @@ func (d *driver) WritePoints(ctx context.Context, db string, points []tsdb.Serie
 	return d.client.WriteBatchPoints(ctx, db, ops)
 }
 
-// Query 执行 SQL，结果按列+行组织为通用 QueryResult。
+// Query executes SQL, results organized as generic QueryResult (columns + rows).
 func (d *driver) Query(ctx context.Context, db, sql string) (*tsdb.QueryResult, error) {
 	res, err := d.client.Query(opengemini.Query{Database: db, Command: sql})
 	if err != nil {
@@ -75,12 +87,12 @@ func (d *driver) Query(ctx context.Context, db, sql string) (*tsdb.QueryResult, 
 	return toQueryResult(res), nil
 }
 
-// Close 关闭底层 client。
+// Close closes underlying client.
 func (d *driver) Close() error {
 	return d.client.Close()
 }
 
-// hasError 检查查询结果中的错误信息。
+// hasError checks error information in query result.
 func hasError(result *opengemini.QueryResult) error {
 	if result == nil {
 		return nil
@@ -96,7 +108,7 @@ func hasError(result *opengemini.QueryResult) error {
 	return nil
 }
 
-// toQueryResult 把 OpenGemini 查询结果转为通用 QueryResult（列+行）。
+// toQueryResult converts OpenGemini query result to generic QueryResult (columns + rows).
 func toQueryResult(result *opengemini.QueryResult) *tsdb.QueryResult {
 	out := &tsdb.QueryResult{Columns: []string{}, Rows: []map[string]interface{}{}}
 	if result == nil {

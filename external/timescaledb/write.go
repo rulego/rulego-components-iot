@@ -17,7 +17,6 @@
 package timescaledb
 
 import (
-	"context"
 	"database/sql"
 
 	_ "github.com/lib/pq"
@@ -38,7 +37,7 @@ func init() {
 type WriteConfig struct {
 	DSN string `json:"dsn" label:"DSN" desc:"PostgreSQL DSN, format: host=localhost port=5432 user=postgres dbname=ts sslmode=disable" required:"true" ref:"primary"`
 	DB  string `json:"db" label:"DB" desc:"Schema name" required:"true"`
-	// 采集点数组 → SeriesPoint 可选映射（配置 measurement 后直接接收 x/iotRead 输出）
+	// Acquisition point array → SeriesPoint optional mapping (after configuring measurement, directly receive x/iotRead output)
 	tsdb.AcquisitionMapping `json:",squash"`
 }
 
@@ -104,7 +103,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	if err = newDriver(dbConn).WritePoints(context.Background(), db, points); err != nil {
+	if err = newDriver(dbConn).WritePoints(ctx.GetContext(), db, points); err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
 		ctx.TellSuccess(msg)

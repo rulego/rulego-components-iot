@@ -17,7 +17,6 @@
 package opengemini
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,18 +34,18 @@ func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
-// WriteConfig OpenGemini 写入连接配置。
+// WriteConfig OpenGemini write connection configuration.
 type WriteConfig struct {
 	Server   string `json:"server" label:"Server" desc:"OpenGemini server address, format: host:port" required:"true" ref:"primary"`
 	Database string `json:"database" label:"Database" desc:"Database name" required:"true"`
 	Username string `json:"username" label:"Username" desc:"Authentication username" ref:"shared"`
 	Password string `json:"password" label:"Password" desc:"Authentication password" ref:"shared"`
 	Token    string `json:"token" label:"Token" desc:"Authentication token" ref:"shared"`
-	// 采集点数组 → SeriesPoint 可选映射（配置 measurement 后直接接收 x/iotRead 输出）
+	// Acquisition point array → SeriesPoint optional mapping (after configuring measurement, directly receive x/iotRead output)
 	tsdb.AcquisitionMapping `json:",squash"`
 }
 
-// WriteNode 接收 msg.Data（JSON SeriesPoint 数组或 line protocol 文本），写入 OpenGemini。
+// WriteNode receives msg.Data (JSON SeriesPoint array or line protocol text), writes to OpenGemini.
 type WriteNode struct {
 	base.SharedNode[opengemini.Client]
 	Config           WriteConfig
@@ -105,7 +104,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	if err = newDriver(client).WritePoints(context.Background(), database, points); err != nil {
+	if err = newDriver(client).WritePoints(ctx.GetContext(), database, points); err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
 		ctx.TellSuccess(msg)
@@ -124,7 +123,7 @@ func (x *WriteNode) Desc() string {
 	return "OpenGemini client for writing time-series data. Routes to Success/Failure"
 }
 
-// CreateOpengeminiConfig 解析 Server（逗号分隔多地址）与认证方式。
+// CreateOpengeminiConfig parses Server (comma-separated multi-address) and authentication method.
 func (x *WriteNode) CreateOpengeminiConfig() (*opengemini.Config, error) {
 	var addresses []opengemini.Address
 	for _, server := range strings.Split(x.Config.Server, ",") {

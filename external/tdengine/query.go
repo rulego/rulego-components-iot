@@ -17,7 +17,6 @@
 package tdengine
 
 import (
-	"context"
 	"encoding/json"
 
 	_ "github.com/taosdata/driver-go/v3/taosRestful"
@@ -89,7 +88,7 @@ func (x *QueryNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	res, err := newDriver(dbConn).Query(context.Background(), db, query)
+	res, err := newDriver(dbConn).Query(ctx.GetContext(), db, query)
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return

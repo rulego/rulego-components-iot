@@ -26,7 +26,7 @@ import (
 	"github.com/wendy512/go-iecp5/asdu"
 )
 
-// driver 适配 iot_points.Driver 到 IEC 104 client。
+// driver adapts iot_points.Driver to IEC 104 client.
 type driver struct {
 	client *iec104client.Client
 }
@@ -37,12 +37,12 @@ func newDriver(client *iec104client.Client) *driver {
 	return &driver{client: client}
 }
 
-// ReadPoints 总召唤批量采集。无效 IOA 单点标记 Error 不参与召唤；
-// 子站未上送(quality=bad)标记 Error 与真实空值区分；client 层全失败才返回 error。
+// ReadPoints general interrogation batch collection. Invalid IOA marks single-point Error without participation;
+// substation not uploaded (quality=bad) marks Error to distinguish from real empty values; client layer returns error only on all failure.
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	out := make([]iot_points.Data, 0, len(points))
 	cp := make([]iec104client.Point, 0, len(points))
-	slots := make([]int, 0, len(points)) // cp 各点在 out 中的下标
+	slots := make([]int, 0, len(points)) // cp stores index of each point in out
 	for _, p := range points {
 		ip, err := toIec104Point(p)
 		if err != nil {
@@ -78,7 +78,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	return out, nil
 }
 
-// WritePoints 逐点下发遥控/遥调命令。Type 指定命令类型,value 为命令值。
+// WritePoints sends remote control/setpoint commands point by point. Type specifies command type, value is command value.
 func (d *driver) WritePoints(points []iot_points.Point) error {
 	for _, p := range points {
 		ioa, err := strconv.ParseUint(strings.TrimSpace(p.Addr), 10, 32)
@@ -96,7 +96,7 @@ func (d *driver) WritePoints(points []iot_points.Point) error {
 	return nil
 }
 
-// parseControlCmd 解析点位 Type+Value 为命令类型标识和命令值。
+// parseControlCmd parses point Type+Value to command type ID and command value.
 func parseControlCmd(p iot_points.Point) (asdu.TypeID, any, error) {
 	switch strings.ToUpper(strings.TrimSpace(p.Type)) {
 	case "C_SC_NA_1", "SINGLE", "BOOL":
@@ -104,7 +104,7 @@ func parseControlCmd(p iot_points.Point) (asdu.TypeID, any, error) {
 		return asdu.C_SC_NA_1, v, nil
 	case "C_DC_NA_1", "DOUBLE":
 		n, err := strconv.ParseUint(strings.TrimSpace(p.Value), 10, 8)
-		if err != nil {
+		if err != nil || n < 1 || n > 2 {
 			return 0, nil, fmt.Errorf("double command value %q: expect 1(on) or 2(off)", p.Value)
 		}
 		return asdu.C_DC_NA_1, uint8(n), nil
@@ -125,7 +125,7 @@ func parseControlCmd(p iot_points.Point) (asdu.TypeID, any, error) {
 	}
 }
 
-// toIec104Point 把统一 Point(Addr=信息体地址 IOA)映射为 iec104client.Point。
+// toIec104Point maps unified Point (Addr=Information Object Address IOA) to iec104client.Point.
 func toIec104Point(p iot_points.Point) (iec104client.Point, error) {
 	ioa, err := strconv.ParseUint(strings.TrimSpace(p.Addr), 10, 32)
 	if err != nil {

@@ -38,7 +38,7 @@ func init() {
 type WriteConfig struct {
 	DSN string `json:"dsn" label:"DSN" desc:"TDengine DSN, format: root:taosdata@http(localhost:6041)/" required:"true" ref:"primary"`
 	DB  string `json:"db" label:"DB" desc:"Database name" required:"true"`
-	// 采集点数组 → SeriesPoint 可选映射（配置 measurement 后直接接收 x/iotRead 输出）
+	// Acquisition point array → SeriesPoint optional mapping (after configuring measurement, directly receive x/iotRead output)
 	tsdb.AcquisitionMapping `json:",squash"`
 }
 
@@ -72,7 +72,7 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		if err != nil {
 			return nil, err
 		}
-		// 执行真实查询验证连接可用性
+		// Execute real query to verify connection availability
 		rows, err := db.QueryContext(context.Background(), "SELECT SERVER_VERSION()")
 		if err != nil {
 			_ = db.Close()
@@ -106,7 +106,7 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	if err = newDriver(dbConn).WritePoints(context.Background(), db, points); err != nil {
+	if err = newDriver(dbConn).WritePoints(ctx.GetContext(), db, points); err != nil {
 		ctx.TellFailure(msg, err)
 	} else {
 		ctx.TellSuccess(msg)

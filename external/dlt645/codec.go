@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-// Package dlt645 提供 DL/T 645-2007 多功能电能表通信协议的自实现帧编解码与采集节点。
+// Package dlt645 provides self-implemented frame encoding/decoding and collection nodes for DL/T 645-2007 multi-function energy meter communication protocol.
 //
-// 帧格式（请求帧，主站→表）：
+// Frame format (request frame, master→meter):
 //
-//	0x68 | A0-A5(6字节BCD地址,低字节在前) | 0x68 | C(控制码) | L(数据长度) | DATA(每字节+0x33) | CS | 0x16
+//	0x68 | A0-A5(6-byte BCD address, low-byte-first) | 0x68 | C(control code) | L(data length) | DATA(each byte+0x33) | CS | 0x16
 //
-// CS 为帧起始符到数据域末字节的算术和低 8 位。读数据控制码 0x11，正常应答 0x91，异常应答 0xD1。
-// 数据标识 DI 配置按标准书写顺序 "DI3-DI2-DI1-DI0"（高字节在前，如 "02-01-01-00"），
-// 上线传输时反转为低字节在前。
+// CS is arithmetic sum low 8 bits from frame start to data field end. Read data control code 0x11, normal response 0x91, error response 0xD1.
+// Data ID DI configuration follows standard writing order "DI3-DI2-DI1-DI0" (high-byte-first, e.g. "02-01-01-00"),
+// transmitted in wire order reversed to low-byte-first.
 package dlt645
 
 import (
@@ -32,19 +32,19 @@ import (
 )
 
 const (
-	frameStart  = 0x68 // 帧起始符/地址域分隔符
-	frameEnd    = 0x16 // 帧结束符
-	ctrlRead    = 0x11 // 主站读数据
-	ctrlWrite   = 0x14 // 主站写数据
-	respMask    = 0x80 // 控制码 D7：从站应答标志
-	errMask     = 0x40 // 控制码 D6：异常应答标志
-	dataMask    = 0x33 // 数据域传输掩码
-	addrLen     = 6    // 地址域字节数
-	diLen       = 4    // 数据标识字节数
-	minFrameLen = 12   // 最小帧长：68+A(6)+68+C+L+CS+16
+	frameStart  = 0x68 // frame start/address separator
+	frameEnd    = 0x16 // frame end
+	ctrlRead    = 0x11 // master read data
+	ctrlWrite   = 0x14 // master write data
+	respMask    = 0x80 // control code D7: slave response flag
+	errMask     = 0x40 // control code D6: error response flag
+	dataMask    = 0x33 // data field transmission mask
+	addrLen     = 6    // address field bytes
+	diLen       = 4    // data ID bytes
+	minFrameLen = 12   // minimum frame length: 68+A(6)+68+C+L+CS+16
 )
 
-// 异常应答错误码
+// Error response codes
 var errCodes = map[byte]string{
 	0x01: "other error",
 	0x02: "rate count exceeded",
@@ -52,7 +52,7 @@ var errCodes = map[byte]string{
 	0x04: "permission denied",
 }
 
-// Checksum 计算 CS：所有字节的算术和低 8 位。
+// Checksum calculates CS: arithmetic sum low 8 bits of all bytes.
 func Checksum(b []byte) byte {
 	var sum byte
 	for _, c := range b {
@@ -61,7 +61,7 @@ func Checksum(b []byte) byte {
 	return sum
 }
 
-// EncodeBCD 把 v 编码为 n 字节 BCD（高位数字在高字节，不足高位补 0）。
+// EncodeBCD encodes v to n-byte BCD (high-digit in high-byte, high-byte padding with zeros).
 func EncodeBCD(v uint64, n int) []byte {
 	out := make([]byte, n)
 	for i := n - 1; i >= 0; i-- {
@@ -74,7 +74,7 @@ func EncodeBCD(v uint64, n int) []byte {
 	return out
 }
 
-// DecodeBCD 解码 BCD 字节（高位数字在高字节）为无符号整数。
+// DecodeBCD decodes BCD bytes (high-digit in high-byte) to unsigned integer.
 func DecodeBCD(b []byte) uint64 {
 	var v uint64
 	for _, c := range b {
@@ -83,8 +83,8 @@ func DecodeBCD(b []byte) uint64 {
 	return v
 }
 
-// ParseAddr 解析 12 位十进制表地址串（如 "000000000001"，不足左补 0）为
-// 6 字节地址域（A0 低字节在前）。
+// ParseAddr parses 12-digit decimal meter address string (e.g. "000000000001", left-padded with 0) to
+// 6-byte address field (A0 low-byte-first).
 func ParseAddr(addr string) ([]byte, error) {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
@@ -98,8 +98,12 @@ func ParseAddr(addr string) ([]byte, error) {
 			return nil, fmt.Errorf("dlt645: meter address %q has non-digit", addr)
 		}
 	}
+	// Left-pad odd-length address to even so the leading digit is parsed, not silently dropped.
+	if len(addr)%2 != 0 {
+		addr = "0" + addr
+	}
 	out := make([]byte, addrLen)
-	// 从个位起每两位一字节，低字节在前
+	// From ones place every two digits per byte, low-byte-first
 	for i, pos := 0, len(addr)-2; i < addrLen; i, pos = i+1, pos-2 {
 		if pos >= 0 {
 			out[i] = (addr[pos]-'0')<<4 | (addr[pos+1] - '0')
@@ -108,7 +112,7 @@ func ParseAddr(addr string) ([]byte, error) {
 	return out, nil
 }
 
-// FormatAddr 把 6 字节地址域（A0 低字节在前）格式化为 12 位十进制串。
+// FormatAddr formats 6-byte address field (A0 low-byte-first) to 12-digit decimal string.
 func FormatAddr(addr []byte) string {
 	var sb strings.Builder
 	for i := len(addr) - 1; i >= 0; i-- {
@@ -117,8 +121,8 @@ func FormatAddr(addr []byte) string {
 	return sb.String()
 }
 
-// ParseDI 解析数据标识串（"DI3-DI2-DI1-DI0" 标准书写序或连写 8 位十六进制，如
-// "02-01-01-00"/"02010100"）为线序字节 [DI0,DI1,DI2,DI3]（低字节在前）。
+// ParseDI parses data ID string ("DI3-DI2-DI1-DI0" standard writing order or continuous 8-digit hex, e.g.
+// "02-01-01-00"/"02010100") to wire-order bytes [DI0,DI1,DI2,DI3] (low-byte-first).
 func ParseDI(s string) ([diLen]byte, error) {
 	var di [diLen]byte
 	clean := strings.ReplaceAll(strings.TrimSpace(s), "-", "")
@@ -129,19 +133,19 @@ func ParseDI(s string) ([diLen]byte, error) {
 	if err != nil {
 		return di, fmt.Errorf("dlt645: invalid DI %q: %v", s, err)
 	}
-	// 书写序 DI3..DI0 -> 线序 DI0..DI3
+	// Writing order DI3..DI0 -> wire order DI0..DI3
 	for i := 0; i < diLen; i++ {
 		di[i] = hi[diLen-1-i]
 	}
 	return di, nil
 }
 
-// FormatDI 把线序 DI 格式化为标准书写串 "DI3-DI2-DI1-DI0"。
+// FormatDI formats wire-order DI to standard writing string "DI3-DI2-DI1-DI0".
 func FormatDI(di [diLen]byte) string {
 	return fmt.Sprintf("%02X-%02X-%02X-%02X", di[3], di[2], di[1], di[0])
 }
 
-// BuildReadFrame 构造读数据请求帧（控制码 0x11，数据域为 4 字节 DI）。
+// BuildReadFrame constructs read data request frame (control code 0x11, data field is 4-byte DI).
 func BuildReadFrame(addr string, di []byte) ([]byte, error) {
 	if len(di) != diLen {
 		return nil, fmt.Errorf("dlt645: DI length %d, expect 4", len(di))
@@ -153,7 +157,7 @@ func BuildReadFrame(addr string, di []byte) ([]byte, error) {
 	return buildFrame(addrBytes, ctrlRead, di), nil
 }
 
-// BuildWriteFrame 构造写数据请求帧（控制码 0x14，数据域为 DI + 待写数据）。
+// BuildWriteFrame constructs write data request frame (control code 0x14, data field is DI + data to write).
 func BuildWriteFrame(addr string, di, data []byte) ([]byte, error) {
 	if len(di) != diLen {
 		return nil, fmt.Errorf("dlt645: DI length %d, expect 4", len(di))
@@ -168,7 +172,7 @@ func BuildWriteFrame(addr string, di, data []byte) ([]byte, error) {
 	return buildFrame(addrBytes, ctrlWrite, payload), nil
 }
 
-// buildFrame 组装完整帧：数据域逐字节 +0x33，末尾追加 CS 与 0x16。
+// buildFrame assembles complete frame: data field each byte +0x33, appends CS and 0x16.
 func buildFrame(addrBytes []byte, ctrl byte, payload []byte) []byte {
 	frame := make([]byte, 0, minFrameLen+len(payload))
 	frame = append(frame, frameStart)
@@ -181,8 +185,8 @@ func buildFrame(addrBytes []byte, ctrl byte, payload []byte) []byte {
 	return frame
 }
 
-// parseFrame 解析完整帧，返回控制码、地址域、数据域（已逐字节 -0x33 还原）。
-// 校验帧结构（长度/起始符/结束符）与 CS。
+// parseFrame parses complete frame, returns control code, address field, data field (each byte -0x33 restored).
+// Verifies frame structure (length/start/end) and CS.
 func parseFrame(frame []byte) (ctrl byte, addr, payload []byte, err error) {
 	if len(frame) < minFrameLen {
 		return 0, nil, nil, fmt.Errorf("dlt645: frame too short (%d bytes)", len(frame))
@@ -211,8 +215,8 @@ func parseFrame(frame []byte) (ctrl byte, addr, payload []byte, err error) {
 	return frame[8], frame[1:7], payload, nil
 }
 
-// ParseResponse 解析从站应答帧，返回 DI 与应答数据（已减 0x33）。
-// 非从站应答帧、异常应答（控制码 D6=1，数据域为 ERR 错误码）均返回 error。
+// ParseResponse parses slave response frame, returns DI and response data (already -0x33).
+// Non-slave response frames and error responses (control code D6=1, data field is ERR error code) return error.
 func ParseResponse(frame []byte) (di, data []byte, err error) {
 	ctrl, _, payload, err := parseFrame(frame)
 	if err != nil {

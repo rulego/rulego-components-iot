@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-// Package modbus_server 提供 Modbus TCP 从站端点：监听 TCP 端口接受主站连接，
-// 主站写 Coil/Holding Register 时触发消息流入规则链处理。
+// Package modbus_server provides Modbus TCP slave endpoint: listens TCP port to accept master connections,
+// triggers message flow into rule chain when master writes Coil/Holding Register.
 package modbus_server
 
 import (
@@ -39,17 +39,17 @@ import (
 const Type = types.EndpointTypePrefix + "modbusServer"
 const ModbusWriteMsgType = "MODBUS_WRITE"
 
-// 注册端点
+// Register endpoint
 func init() {
 	_ = endpoint.Registry.Register(&Endpoint{})
 }
 
-// Endpoint 别名
+// Endpoint alias
 type Endpoint = ModbusServerEndpoint
 
 var _ endpointApi.Endpoint = (*Endpoint)(nil)
 
-// RequestMessage 写触发消息
+// RequestMessage write trigger message
 type RequestMessage struct {
 	headers textproto.MIMEHeader
 	body    []byte
@@ -79,7 +79,7 @@ func (r *RequestMessage) SetBody(b []byte)    { r.body = b }
 func (r *RequestMessage) SetError(err error)  {}
 func (r *RequestMessage) GetError() error     { return nil }
 
-// ResponseMessage 占位（从站端点不主动响应）
+// ResponseMessage placeholder (slave endpoint does not actively respond)
 type ResponseMessage struct {
 	headers textproto.MIMEHeader
 	body    []byte
@@ -108,21 +108,21 @@ func (r *ResponseMessage) SetBody(b []byte)    { r.body = b }
 func (r *ResponseMessage) SetError(err error)  {}
 func (r *ResponseMessage) GetError() error     { return nil }
 
-// Config Modbus 从站端点配置
+// Config Modbus slave endpoint configuration
 type Config struct {
-	// 监听地址，格式 tcp://host:port，如 tcp://:502
+	// Listen URL, format tcp://host:port, e.g. tcp://:502
 	Server string `json:"server" label:"Server" desc:"listen URL, e.g. tcp://:502" required:"true" ref:"primary"`
-	// 从站地址(Unit ID)，0 表示接受所有
+	// Slave unit ID, 0 means accept all
 	UnitId int `json:"unitId" label:"Unit ID" desc:"slave unit ID, 0 = accept all"`
-	// 最大并发客户端连接数，默认 10
+	// Max concurrent client connections, default 10
 	MaxClients uint `json:"maxClients" label:"Max Clients" desc:"max concurrent client connections, default 10"`
-	// Coil 区大小（位），默认 2000
+	// Coil area size (bits), default 2000
 	Coils uint `json:"coils" label:"Coils" desc:"coil register count, default 2000"`
-	// 寄存器区大小（字），默认 2000
+	// Register area size (words), default 2000
 	Registers uint `json:"registers" label:"Registers" desc:"register count, default 2000"`
 }
 
-// ModbusServerEndpoint Modbus TCP 从站端点
+// ModbusServerEndpoint Modbus TCP slave endpoint
 type ModbusServerEndpoint struct {
 	impl.BaseEndpoint
 	base.GracefulShutdown
@@ -135,10 +135,10 @@ type ModbusServerEndpoint struct {
 	cancel     context.CancelFunc
 }
 
-// Type 组件类型
+// Type component type
 func (x *ModbusServerEndpoint) Type() string { return Type }
 
-// New 创建组件实例
+// New creates component instance
 func (x *ModbusServerEndpoint) New() types.Node {
 	return &ModbusServerEndpoint{
 		Config: Config{
@@ -150,7 +150,7 @@ func (x *ModbusServerEndpoint) New() types.Node {
 	}
 }
 
-// Init 初始化
+// Init initializes
 func (x *ModbusServerEndpoint) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
@@ -175,22 +175,22 @@ func (x *ModbusServerEndpoint) Init(ruleConfig types.Config, configuration types
 	return err
 }
 
-// Destroy 销毁
+// Destroy destroys
 func (x *ModbusServerEndpoint) Destroy() {
 	x.GracefulShutdown.GracefulStop(func() {
 		x.Close()
 	})
 }
 
-// Desc 组件描述
+// Desc component description
 func (x *ModbusServerEndpoint) Desc() string {
 	return "Modbus TCP slave endpoint. Accepts master connections; writes trigger rule chain messages"
 }
 
-// Category 组件分类
+// Category component category
 func (x *ModbusServerEndpoint) Category() string { return "endpoint" }
 
-// Def 组件定义
+// Def component definition
 func (x *ModbusServerEndpoint) Def() types.ComponentForm {
 	return types.ComponentForm{
 		Desc:       x.Desc(),
@@ -198,10 +198,10 @@ func (x *ModbusServerEndpoint) Def() types.ComponentForm {
 	}
 }
 
-// Id 返回端点 ID
+// Id returns endpoint ID
 func (x *ModbusServerEndpoint) Id() string { return x.Config.Server }
 
-// Close 停止服务器
+// Close stops server
 func (x *ModbusServerEndpoint) Close() error {
 	if x.server != nil {
 		_ = x.server.Stop()
@@ -212,7 +212,7 @@ func (x *ModbusServerEndpoint) Close() error {
 	return nil
 }
 
-// AddRouter 添加路由（单路由）
+// AddRouter adds router (single router)
 func (x *ModbusServerEndpoint) AddRouter(router endpointApi.Router, params ...interface{}) (string, error) {
 	if router == nil {
 		return "", errors.New("router cannot be nil")
@@ -228,13 +228,13 @@ func (x *ModbusServerEndpoint) AddRouter(router endpointApi.Router, params ...in
 	return router.GetId(), nil
 }
 
-// RemoveRouter 移除路由
+// RemoveRouter removes router
 func (x *ModbusServerEndpoint) RemoveRouter(routerId string, params ...interface{}) error {
 	x.Router = nil
 	return nil
 }
 
-// Start 启动 Modbus TCP 从站
+// Start starts Modbus TCP slave
 func (x *ModbusServerEndpoint) Start() error {
 	var err error
 	x.server, err = modbus.NewServer(&modbus.ServerConfiguration{
@@ -248,7 +248,7 @@ func (x *ModbusServerEndpoint) Start() error {
 	return x.server.Start()
 }
 
-// SetRegisters 外部写入寄存器值（规则链处理后回写，供主站读取）
+// SetRegisters externally writes register values (after rule chain processing, for master to read)
 func (x *ModbusServerEndpoint) SetRegisters(addr uint16, values []uint16) {
 	x.handler.lock.Lock()
 	defer x.handler.lock.Unlock()
@@ -260,7 +260,7 @@ func (x *ModbusServerEndpoint) SetRegisters(addr uint16, values []uint16) {
 	}
 }
 
-// SetCoils 外部写入 Coil 值
+// SetCoils externally writes Coil values
 func (x *ModbusServerEndpoint) SetCoils(addr uint16, values []bool) {
 	x.handler.lock.Lock()
 	defer x.handler.lock.Unlock()
@@ -272,14 +272,14 @@ func (x *ModbusServerEndpoint) SetCoils(addr uint16, values []bool) {
 	}
 }
 
-// Printf 日志
+// Printf logs
 func (x *ModbusServerEndpoint) Printf(format string, v ...interface{}) {
 	if x.RuleConfig.Logger != nil {
 		x.RuleConfig.Logger.Printf(format, v...)
 	}
 }
 
-// --- registerHandler 实现 modbus.RequestHandler ---
+// --- registerHandler implements modbus.RequestHandler ---
 
 type registerHandler struct {
 	endpoint *ModbusServerEndpoint
@@ -306,6 +306,9 @@ func (h *registerHandler) HandleCoils(req *modbus.CoilsRequest) ([]bool, error) 
 	}
 	if int(req.Addr)+int(req.Quantity) > len(h.coils) {
 		return nil, modbus.ErrIllegalDataAddress
+	}
+	if req.IsWrite && len(req.Args) < int(req.Quantity) {
+		return nil, modbus.ErrIllegalDataValue
 	}
 	h.lock.Lock()
 	defer h.lock.Unlock()
@@ -345,6 +348,9 @@ func (h *registerHandler) HandleHoldingRegisters(req *modbus.HoldingRegistersReq
 	if int(req.Addr)+int(req.Quantity) > len(h.hr) {
 		return nil, modbus.ErrIllegalDataAddress
 	}
+	if req.IsWrite && len(req.Args) < int(req.Quantity) {
+		return nil, modbus.ErrIllegalDataValue
+	}
 	h.lock.Lock()
 	defer h.lock.Unlock()
 	res := make([]uint16, req.Quantity)
@@ -376,7 +382,7 @@ func (h *registerHandler) HandleInputRegisters(req *modbus.InputRegistersRequest
 	return res, nil
 }
 
-// onWrite 写触发：构造消息注入规则链
+// onWrite write trigger: construct message and inject into rule chain
 func (x *ModbusServerEndpoint) onWrite(regType, clientAddr string, unitId uint8, addr, quantity uint16, values []interface{}) {
 	x.GracefulShutdown.IncrementActiveOperations()
 	defer x.GracefulShutdown.DecrementActiveOperations()
@@ -408,7 +414,7 @@ func (x *ModbusServerEndpoint) onWrite(regType, clientAddr string, unitId uint8,
 	x.DoProcess(x.ctx, x.Router, exchange)
 }
 
-// modiconAddr 把 PDU 地址按寄存器区段换算成 Modicon 友好地址（5 位字符串）。
+// modiconAddr converts PDU address to Modicon-friendly address (5-digit string) by register section.
 func modiconAddr(regType string, addr uint16) string {
 	base := 1
 	switch regType {
