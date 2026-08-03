@@ -765,6 +765,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 				ctx.TellFailure(msg, err)
 				return
 			}
+			msg.SetDataType(types.JSON)
 			msg.SetData(str.ToString(bytes))
 		}
 		ctx.TellSuccess(msg)
