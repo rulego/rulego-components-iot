@@ -114,6 +114,55 @@ func TestMapDataFlatMapArray(t *testing.T) {
 	assert.Equal(t, "agg", points[1].Measurement)
 }
 
+// TestMapDataFlatMapTimestampReserved flat map 的数字 timestamp 是保留键：提取为时间戳、不进 fields
+func TestMapDataFlatMapTimestampReserved(t *testing.T) {
+	m := AcquisitionMapping{Measurement: "agg"}
+	data := `{"avg_temp":25.3,"timestamp":1000000000}`
+	out, ok := m.MapData(data, nil)
+	assert.True(t, ok)
+
+	var points []SeriesPoint
+	assert.Nil(t, json.Unmarshal([]byte(out), &points))
+	assert.Equal(t, 1, len(points))
+	assert.Equal(t, int64(1000000000), points[0].Timestamp, "数字 timestamp 应作为时间戳")
+	assert.Equal(t, 25.3, points[0].Fields["avg_temp"])
+	_, hasTs := points[0].Fields["timestamp"]
+	assert.False(t, hasTs, "timestamp 提取后不应进 fields")
+}
+
+// TestMapDataFlatMapNonNumericTimestamp 非数字 timestamp 维持当字段、时间戳取写入时刻
+func TestMapDataFlatMapNonNumericTimestamp(t *testing.T) {
+	m := AcquisitionMapping{Measurement: "agg"}
+	data := `{"avg_temp":25.3,"timestamp":"2026-08-04T12:00:00Z"}`
+	out, ok := m.MapData(data, nil)
+	assert.True(t, ok)
+
+	var points []SeriesPoint
+	assert.Nil(t, json.Unmarshal([]byte(out), &points))
+	assert.Equal(t, 1, len(points))
+	assert.Equal(t, "2026-08-04T12:00:00Z", points[0].Fields["timestamp"], "非数字 timestamp 维持当字段")
+	assert.True(t, points[0].Timestamp > 0, "无数字 timestamp 时取写入时刻")
+}
+
+// TestMapDataFlatMapArrayAggregationResult 聚合结果形态（window_id + 自动注入 timestamp）落盘
+func TestMapDataFlatMapArrayAggregationResult(t *testing.T) {
+	m := AcquisitionMapping{Measurement: "dev_minute"}
+	data := `[{"avg_voltage":225,"avg_current":5.5,"window_id":"0_1000000000","timestamp":1000000000}]`
+	out, ok := m.MapData(data, nil)
+	assert.True(t, ok)
+
+	var points []SeriesPoint
+	assert.Nil(t, json.Unmarshal([]byte(out), &points))
+	assert.Equal(t, 1, len(points))
+	assert.Equal(t, int64(1000000000), points[0].Timestamp, "用聚合结果的窗口时间戳")
+	assert.Equal(t, float64(225), points[0].Fields["avg_voltage"])
+	assert.Equal(t, 5.5, points[0].Fields["avg_current"])
+	_, hasTs := points[0].Fields["timestamp"]
+	assert.False(t, hasTs, "timestamp 提取后不进 fields")
+	_, hasWindowID := points[0].Fields["window_id"]
+	assert.False(t, hasWindowID, "window_id 是内部去重标识，不应落盘")
+}
+
 // TestMapDataSeriesPointPassthrough does not double-map when already SeriesPoint shape
 func TestMapDataSeriesPointPassthrough(t *testing.T) {
 	m := AcquisitionMapping{Measurement: "dev"}

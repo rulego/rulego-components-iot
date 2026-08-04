@@ -89,14 +89,25 @@ func (m AcquisitionMapping) MapData(data string, env map[string]interface{}) (st
 	points := make([]SeriesPoint, 0, len(rows))
 	for _, row := range rows {
 		fields := m.resolveMapFields(row)
+		// timestamp is a reserved key: a numeric value becomes the SeriesPoint timestamp (ns) and is excluded from fields.
+		ts, hasTs := extractTimestampNs(row)
+		if hasTs {
+			delete(fields, reservedTimestampKey)
+		}
+		// window_id is streamsql's internal window dedup id, not a business field; drop it from storage.
+		delete(fields, reservedWindowIDKey)
 		if len(fields) == 0 {
 			continue
+		}
+		timestamp := time.Now().UnixNano()
+		if hasTs {
+			timestamp = ts
 		}
 		points = append(points, SeriesPoint{
 			Measurement: iot_points.RenderTemplate(m.Measurement, env),
 			Tags:        m.renderTags(env),
 			Fields:      fields,
-			Timestamp:   time.Now().UnixNano(),
+			Timestamp:   timestamp,
 		})
 	}
 	if len(points) == 0 {
@@ -203,6 +214,30 @@ func (m AcquisitionMapping) resolveFields(byName map[string]iot_points.Data) map
 		}
 	}
 	return fields
+}
+
+// Reserved keys in flat-map input: they are metadata, not business fields to store.
+const (
+	reservedTimestampKey = "timestamp" // numeric value -> SeriesPoint timestamp (ns)
+	reservedWindowIDKey  = "window_id" // streamsql window dedup id, dropped before storage
+)
+
+// extractTimestampNs extracts a numeric nanosecond timestamp from the reserved timestamp key.
+// Returns (0, false) when absent or non-numeric; the caller falls back to the write time.
+func extractTimestampNs(row map[string]interface{}) (int64, bool) {
+	v, ok := row[reservedTimestampKey]
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case float64:
+		return int64(n), true
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	}
+	return 0, false
 }
 
 // resolveMapFields builds field set from flat map: when Fields configured, filters/rename by key->source; otherwise entire map as fields.
