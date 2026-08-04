@@ -79,6 +79,10 @@ type mockPLC struct {
 	bits  map[byte][]byte // Bit area code -> bit storage (1 byte per bit)
 	// failNext next request returns non-zero end code
 	failNext bool
+	// rejectMultiple 0x0104 commands rejected with "undefined command" end code
+	rejectMultiple bool
+	// requests total handled command frames
+	requests int
 }
 
 func newMockPLC() *mockPLC {
@@ -125,6 +129,11 @@ func (m *mockPLC) handle(frame []byte) []byte {
 		m.failNext = false
 		resp[12] = 0x21 // Non-zero end code
 		return resp
+	}
+	m.requests++
+
+	if cmd == cmdMultipleMemoryAreaRead {
+		return m.handleMultiple(frame, resp)
 	}
 
 	area := frame[12]
@@ -178,6 +187,46 @@ func (m *mockPLC) handle(frame []byte) []byte {
 		}
 	default:
 		resp[12] = 0x22
+	}
+	return resp
+}
+
+// handleMultiple processes 0x0104 multiple memory area read: items are 4 bytes each {area(1) address(2) bit(1)};
+// response data is per item {area echo(1) + data(word 2 bytes / bit 1 byte)}.
+func (m *mockPLC) handleMultiple(frame, resp []byte) []byte {
+	if m.rejectMultiple {
+		resp[12] = 0x04 // end code 0x0401 undefined command
+		resp[13] = 0x01
+		return resp
+	}
+	items := frame[12:]
+	if len(items)%4 != 0 {
+		resp[12] = 0x20 // end code 0x2001 command format error
+		resp[13] = 0x01
+		return resp
+	}
+	for off := 0; off < len(items); off += 4 {
+		area := items[off]
+		addr := int(binary.BigEndian.Uint16(items[off+1 : off+3]))
+		bitOff := int(items[off+3])
+		resp = append(resp, area)
+		if store := m.words[area]; store != nil {
+			start := addr * 2
+			if start+2 > len(store) {
+				return resp[:14]
+			}
+			resp = append(resp, store[start:start+2]...)
+		} else if store := m.bits[area]; store != nil {
+			start := addr + bitOff
+			if start >= len(store) {
+				return resp[:14]
+			}
+			resp = append(resp, store[start]&0x01)
+		} else {
+			resp = resp[:14]
+			resp[12] = 0x22 // unsupported memory area
+			return resp
+		}
 	}
 	return resp
 }
@@ -363,6 +412,99 @@ func TestEndCodeError(t *testing.T) {
 	plc.mu.Unlock()
 
 	_, err = client.ReadWords(MemoryAreaDMWord, 0, 1)
+	assert.NotNil(t, err)
+}
+
+// TestReadMultipleRoundTrip 0x0104 multiple memory area read: mixed word/bit items in one frame
+func TestReadMultipleRoundTrip(t *testing.T) {
+	plc, addr, cleanup := startUDPMock(t)
+	defer cleanup()
+	host, port := parseHostPort(t, addr)
+
+	client, err := NewClient(
+		NewAddress("0.0.0.0", 0, 0, 10, 0),
+		NewAddress(host, port, 0, 20, 0),
+		WithTimeout(3*time.Second),
+	)
+	assert.Nil(t, err)
+	defer client.Close()
+
+	assert.Nil(t, client.WriteWords(MemoryAreaDMWord, 100, []uint16{0x1234, 0x5678}))
+	assert.Nil(t, client.WriteWords(MemoryAreaCIOWord, 50, []uint16{0xABCD}))
+	assert.Nil(t, client.WriteBits(MemoryAreaCIOBit, 50, 3, []bool{true}))
+
+	plc.mu.Lock()
+	before := plc.requests
+	plc.mu.Unlock()
+
+	out, err := client.ReadMultiple([]MultipleItem{
+		{Area: MemoryAreaDMWord, Address: 100},
+		{Area: MemoryAreaDMWord, Address: 101},
+		{Area: MemoryAreaCIOWord, Address: 50},
+		{Area: MemoryAreaCIOBit, Address: 50, Bit: 3},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 4, len(out))
+	assert.Equal(t, []byte{0x12, 0x34}, out[0])
+	assert.Equal(t, []byte{0x56, 0x78}, out[1])
+	assert.Equal(t, []byte{0xAB, 0xCD}, out[2])
+	assert.Equal(t, []byte{0x01}, out[3]) // bit item: 1 byte
+
+	// All 4 items in one frame
+	plc.mu.Lock()
+	assert.Equal(t, 1, plc.requests-before)
+	plc.mu.Unlock()
+
+	// Empty item list is a no-op
+	out, err = client.ReadMultiple(nil)
+	assert.Nil(t, err)
+	assert.Equal(t, 0, len(out))
+}
+
+// TestReadMultipleReject PLC rejecting 0x0104 surfaces as EndCodeError
+func TestReadMultipleReject(t *testing.T) {
+	plc, addr, cleanup := startUDPMock(t)
+	defer cleanup()
+	host, port := parseHostPort(t, addr)
+
+	client, err := NewClient(
+		NewAddress("0.0.0.0", 0, 0, 10, 0),
+		NewAddress(host, port, 0, 20, 0),
+		WithTimeout(3*time.Second),
+	)
+	assert.Nil(t, err)
+	defer client.Close()
+
+	plc.mu.Lock()
+	plc.rejectMultiple = true
+	plc.mu.Unlock()
+
+	_, err = client.ReadMultiple([]MultipleItem{{Area: MemoryAreaDMWord, Address: 0}})
+	assert.NotNil(t, err)
+	ec, ok := err.(EndCodeError)
+	assert.True(t, ok, "error should be EndCodeError")
+	assert.Equal(t, uint16(0x0401), uint16(ec))
+}
+
+// TestReadMultipleTooManyItems item count over W342 Ethernet limit rejected before I/O
+func TestReadMultipleTooManyItems(t *testing.T) {
+	_, addr, cleanup := startUDPMock(t)
+	defer cleanup()
+	host, port := parseHostPort(t, addr)
+
+	client, err := NewClient(
+		NewAddress("0.0.0.0", 0, 0, 10, 0),
+		NewAddress(host, port, 0, 20, 0),
+		WithTimeout(3*time.Second),
+	)
+	assert.Nil(t, err)
+	defer client.Close()
+
+	items := make([]MultipleItem, MaxMultipleReadItems+1)
+	for i := range items {
+		items[i] = MultipleItem{Area: MemoryAreaDMWord, Address: uint16(i)}
+	}
+	_, err = client.ReadMultiple(items)
 	assert.NotNil(t, err)
 }
 

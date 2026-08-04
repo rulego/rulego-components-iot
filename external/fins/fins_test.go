@@ -73,20 +73,31 @@ func TestParseAddr(t *testing.T) {
 		{"AR3", finsclient.MemoryAreaARWord, 3, 0, false},
 	}
 	for _, c := range cases {
-		area, address, bitOffset, isBit, err := parseAddr(c.addr)
+		area, address, bitOffset, isBit, strLen, err := parseAddr(c.addr)
 		assert.Nil(t, err, c.addr)
 		assert.Equal(t, c.area, area, c.addr)
 		assert.Equal(t, c.address, address, c.addr)
 		assert.Equal(t, c.bitOffset, bitOffset, c.addr)
 		assert.Equal(t, c.isBit, isBit, c.addr)
+		assert.Equal(t, 0, strLen, c.addr)
 	}
+}
+
+// TestParseAddrString STRING byte length suffix (:N) resolves to word area + strLen.
+func TestParseAddrString(t *testing.T) {
+	area, address, _, isBit, strLen, err := parseAddr("D100:20")
+	assert.Nil(t, err)
+	assert.Equal(t, finsclient.MemoryAreaDMWord, area)
+	assert.Equal(t, uint16(100), address)
+	assert.False(t, isBit)
+	assert.Equal(t, 20, strLen)
 }
 
 // TestParseAddrError invalid addresses.
 func TestParseAddrError(t *testing.T) {
-	bad := []string{"", "X100", "D", "D1.2.3", "D1.16", "D65536"}
+	bad := []string{"", "X100", "D", "D1.2.3", "D65536"}
 	for _, addr := range bad {
-		_, _, _, _, err := parseAddr(addr)
+		_, _, _, _, _, err := parseAddr(addr)
 		assert.NotNil(t, err, addr)
 	}
 }
@@ -158,6 +169,12 @@ type mockPLC struct {
 	mu    sync.Mutex
 	words map[byte][]byte
 	bits  map[byte][]byte
+	// rejectMultiple 0x0104 commands rejected with "undefined command" end code
+	rejectMultiple bool
+	// truncateMultiple drops the last item's data so the 0x0104 response is short (non-end-code error)
+	truncateMultiple bool
+	// requests total handled command frames
+	requests int
 }
 
 func newMockPLC() *mockPLC {
@@ -181,7 +198,9 @@ func newMockPLC() *mockPLC {
 
 // handle processes one FINS command frame, returns complete response frame
 func (m *mockPLC) handle(frame []byte) []byte {
-	if len(frame) < 18 {
+	// 12 = FINS header (10) + command code (2); 0x0104 single-item frames are 16 bytes.
+	// 0x0101/0x0102 frames are 18 bytes and access frame[12:18] in their own branch below.
+	if len(frame) < 12 {
 		return nil
 	}
 	resp := make([]byte, 14)
@@ -196,13 +215,20 @@ func (m *mockPLC) handle(frame []byte) []byte {
 	resp[13] = 0         // SRES
 
 	cmd := binary.BigEndian.Uint16(frame[10:12])
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requests++
+
+	if cmd == 0x0104 {
+		return m.handleMultiple(frame, resp)
+	}
+
 	area := frame[12]
 	addr := int(binary.BigEndian.Uint16(frame[13:15]))
 	bitOff := int(frame[15])
 	count := int(binary.BigEndian.Uint16(frame[16:18]))
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	isBit := m.bits[area] != nil
 	store := m.words[area]
 	if isBit {
@@ -248,6 +274,50 @@ func (m *mockPLC) handle(frame []byte) []byte {
 		}
 	default:
 		resp[12] = 0x22
+	}
+	return resp
+}
+
+// handleMultiple processes 0x0104 multiple memory area read: items are 4 bytes each {area(1) address(2) bit(1)};
+// response data is per item {area echo(1) + data(word 2 bytes / bit 1 byte)}.
+func (m *mockPLC) handleMultiple(frame, resp []byte) []byte {
+	if m.rejectMultiple {
+		resp[12] = 0x04 // end code 0x0401 undefined command
+		resp[13] = 0x01
+		return resp
+	}
+	items := frame[12:]
+	if len(items)%4 != 0 {
+		resp[12] = 0x20 // end code 0x2001 command format error
+		resp[13] = 0x01
+		return resp
+	}
+	for off := 0; off < len(items); off += 4 {
+		area := items[off]
+		addr := int(binary.BigEndian.Uint16(items[off+1 : off+3]))
+		bitOff := int(items[off+3])
+		resp = append(resp, area)
+		if store := m.words[area]; store != nil {
+			start := addr * 2
+			if start+2 > len(store) {
+				resp[12] = 0x23
+				return resp
+			}
+			resp = append(resp, store[start:start+2]...)
+		} else if store := m.bits[area]; store != nil {
+			start := addr + bitOff
+			if start >= len(store) {
+				resp[12] = 0x23
+				return resp
+			}
+			resp = append(resp, store[start]&0x01)
+		} else {
+			resp[12] = 0x22
+			return resp
+		}
+	}
+	if m.truncateMultiple && len(resp) > 16 {
+		resp = resp[:len(resp)-2] // drop last word item's data -> short response (non-end-code error)
 	}
 	return resp
 }
@@ -501,4 +571,245 @@ func TestFinsWriteNode(t *testing.T) {
 	assert.Equal(t, 2, len(data))
 	assert.Equal(t, uint16(8888), data[0].Value)
 	assert.Equal(t, true, data[1].Value)
+}
+
+// TestApplyEndian byte/word reorder transforms (ABCD no-op, CDAB/BADC/DCBA), all involutions.
+func TestApplyEndian(t *testing.T) {
+	orig := []uint16{0x1234, 0x5678}
+	assert.Equal(t, orig, applyEndian(orig, "ABCD"))
+	assert.Equal(t, orig, applyEndian(orig, "")) // empty = ABCD
+
+	// CDAB = word swap
+	assert.Equal(t, []uint16{0x5678, 0x1234}, applyEndian(orig, "CDAB"))
+	// BADC = intra-word byte swap
+	assert.Equal(t, []uint16{0x3412, 0x7856}, applyEndian(orig, "BADC"))
+	// DCBA = both
+	assert.Equal(t, []uint16{0x7856, 0x3412}, applyEndian(orig, "DCBA"))
+
+	// Involution: applying twice restores the original
+	for _, e := range []string{"CDAB", "BADC", "DCBA"} {
+		assert.Equal(t, orig, applyEndian(applyEndian(orig, e), e), e)
+	}
+	// Four words: DCBA reverses byte order of the whole sequence
+	assert.Equal(t, []uint16{0xf0de, 0xbc9a, 0x7856, 0x3412},
+		applyEndian([]uint16{0x1234, 0x5678, 0x9abc, 0xdef0}, "DCBA"))
+}
+
+// TestStringWords STRING encode/decode: even length, odd length zero-pad, NUL trimming, truncation.
+func TestStringWords(t *testing.T) {
+	// Even length: 6 bytes = 3 words, value shorter padded with NUL
+	w := encodeStringWords("AB", 6)
+	assert.Equal(t, []uint16{0x4142, 0x0000, 0x0000}, w)
+	assert.Equal(t, "AB", decodeString(wordsToBytes(w)))
+
+	// Odd length: 5 bytes = ceil to 3 words (6 bytes), trailing byte padded zero
+	w = encodeStringWords("ABCDE", 5)
+	assert.Equal(t, []uint16{0x4142, 0x4344, 0x4500}, w)
+	assert.Equal(t, "ABCDE", decodeString(wordsToBytes(w)[:5]))
+
+	// Value longer than strLen: truncated
+	w = encodeStringWords("ABCDEFGH", 4)
+	assert.Equal(t, []uint16{0x4142, 0x4344}, w)
+	assert.Equal(t, "ABCD", decodeString(wordsToBytes(w)[:4]))
+
+	// NUL terminator trimming
+	assert.Equal(t, "OK", decodeString([]byte("OK\x00")))
+}
+
+// TestFinsStringRoundTrip STRING write+read round-trip via simulator (even and odd lengths).
+func TestFinsStringRoundTrip(t *testing.T) {
+	_, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	client := newTestClient(t, addr)
+	defer client.Close()
+	d := newDriver(client)
+
+	cases := []struct {
+		name  string
+		addr  string
+		value string
+	}{
+		{"s4", "D100:4", "ABCD"},
+		{"s6", "D200:6", "Hello"},
+		{"s11", "D300:11", "12345678901"}, // odd length
+	}
+	for _, c := range cases {
+		assert.Nil(t, d.WritePoints([]iot_points.Point{
+			{Name: c.name, Addr: c.addr, Type: "STRING", Value: c.value},
+		}), c.name)
+	}
+	data, err := d.ReadPoints([]iot_points.Point{
+		{Name: "s4", Addr: "D100:4", Type: "STRING"},
+		{Name: "s6", Addr: "D200:6", Type: "STRING"},
+		{Name: "s11", Addr: "D300:11", Type: "STRING"},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, "ABCD", data[0].Value)
+	assert.Equal(t, "Hello", data[1].Value)
+	assert.Equal(t, "12345678901", data[2].Value)
+}
+
+// TestFinsEndianRead reads multi-word points seeded with known raw bytes, asserting each endian transform.
+// Raw bytes at D100-D101: 78 56 34 12 -> words [0x7856, 0x3412]
+func TestFinsEndianRead(t *testing.T) {
+	_, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	seed := newTestClient(t, addr)
+	defer seed.Close()
+	assert.Nil(t, seed.WriteWords(finsclient.MemoryAreaDMWord, 100, []uint16{0x7856, 0x3412}))
+
+	d := newDriver(seed)
+	data, err := d.ReadPoints([]iot_points.Point{
+		{Name: "abcd", Addr: "D100", Type: "UINT32", Endian: "ABCD"},
+		{Name: "cdab", Addr: "D100", Type: "UINT32", Endian: "CDAB"},
+		{Name: "badc", Addr: "D100", Type: "UINT32", Endian: "BADC"},
+		{Name: "dcba", Addr: "D100", Type: "UINT32", Endian: "DCBA"},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, uint32(0x78563412), data[0].Value)
+	assert.Equal(t, uint32(0x34127856), data[1].Value)
+	assert.Equal(t, uint32(0x56781234), data[2].Value)
+	assert.Equal(t, uint32(0x12345678), data[3].Value)
+}
+
+// TestFinsEndianWrite endian write round-trip: write then read back with same endian.
+func TestFinsEndianWrite(t *testing.T) {
+	_, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	client := newTestClient(t, addr)
+	defer client.Close()
+	d := newDriver(client)
+
+	for _, e := range []string{"ABCD", "CDAB", "BADC", "DCBA"} {
+		assert.Nil(t, d.WritePoints([]iot_points.Point{
+			{Name: "v", Addr: "D200", Type: "INT32", Value: "-1000", Endian: e},
+		}), e)
+		data, err := d.ReadPoints([]iot_points.Point{
+			{Name: "v", Addr: "D200", Type: "INT32", Endian: e},
+		})
+		assert.Nil(t, err, e)
+		assert.Equal(t, int32(-1000), data[0].Value, e)
+	}
+}
+
+// TestFinsBatchRead multiple points across areas read in a single 0x0104 frame.
+func TestFinsBatchRead(t *testing.T) {
+	plc, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	client := newTestClient(t, addr)
+	defer client.Close()
+	d := newDriver(client)
+
+	assert.Nil(t, d.WritePoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16", Value: "1234"},
+		{Name: "i32", Addr: "D200", Type: "INT32", Value: "100000"},
+		{Name: "cio", Addr: "CIO50", Type: "UINT16", Value: "777"},
+		{Name: "bit", Addr: "D0.5", Type: "BOOL", Value: "true"},
+		{Name: "str", Addr: "D300:5", Type: "STRING", Value: "hello"},
+	}))
+
+	plc.mu.Lock()
+	before := plc.requests
+	plc.mu.Unlock()
+
+	data, err := d.ReadPoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16"},
+		{Name: "i32", Addr: "D200", Type: "INT32"},
+		{Name: "cio", Addr: "CIO50", Type: "UINT16"},
+		{Name: "bit", Addr: "D0.5", Type: "BOOL"},
+		{Name: "str", Addr: "D300:5", Type: "STRING"},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 5, len(data))
+	assert.Equal(t, uint16(1234), data[0].Value)
+	assert.Equal(t, int32(100000), data[1].Value)
+	assert.Equal(t, uint16(777), data[2].Value)
+	assert.Equal(t, true, data[3].Value)
+	assert.Equal(t, "hello", data[4].Value)
+
+	// One 0x0104 frame for all 5 points (u16=1 + i32=2 + cio=1 + bit=1 + str=3 = 8 items)
+	plc.mu.Lock()
+	assert.Equal(t, 1, plc.requests-before)
+	plc.mu.Unlock()
+}
+
+// TestFinsBatchFallback PLC rejects 0x0104; points still read correctly via per-point 0x0101 fallback.
+func TestFinsBatchFallback(t *testing.T) {
+	plc, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	client := newTestClient(t, addr)
+	defer client.Close()
+	d := newDriver(client)
+
+	assert.Nil(t, d.WritePoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16", Value: "1234"},
+		{Name: "i32", Addr: "D200", Type: "INT32", Value: "100000"},
+	}))
+
+	plc.mu.Lock()
+	plc.rejectMultiple = true
+	before := plc.requests
+	plc.mu.Unlock()
+
+	data, err := d.ReadPoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16"},
+		{Name: "i32", Addr: "D200", Type: "INT32"},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, uint16(1234), data[0].Value)
+	assert.Equal(t, int32(100000), data[1].Value)
+
+	// 1 rejected batch + 2 per-point reads = 3 frames
+	plc.mu.Lock()
+	assert.Equal(t, 3, plc.requests-before)
+	plc.mu.Unlock()
+}
+
+// TestFinsBatchNoFallbackOnShortResponse a non-end-code error (truncated 0x0104 response) must NOT fall back to
+// per-point reads: all points are marked failed from the single batch attempt (no N-fold timeout amplification).
+func TestFinsBatchNoFallbackOnShortResponse(t *testing.T) {
+	plc, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	client := newTestClient(t, addr)
+	defer client.Close()
+	d := newDriver(client)
+
+	assert.Nil(t, d.WritePoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16", Value: "1234"},
+		{Name: "i32", Addr: "D200", Type: "INT32", Value: "100000"},
+	}))
+
+	plc.mu.Lock()
+	plc.truncateMultiple = true
+	before := plc.requests
+	plc.mu.Unlock()
+
+	_, err := d.ReadPoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16"},
+		{Name: "i32", Addr: "D200", Type: "INT32"},
+	})
+	// All points failed in one batch -> ReadPoints returns error; no per-point 0x0101 fallback
+	assert.NotNil(t, err)
+
+	plc.mu.Lock()
+	assert.Equal(t, 1, plc.requests-before) // single 0x0104 attempt, no per-point 0x0101
+	plc.mu.Unlock()
+}
+
+// TestFinsSingleWordEndianIgnored single-word points ignore Endian (contract: multi-register types only).
+func TestFinsSingleWordEndianIgnored(t *testing.T) {
+	_, addr, cleanup := startUDPSimulator(t)
+	defer cleanup()
+	client := newTestClient(t, addr)
+	defer client.Close()
+	d := newDriver(client)
+
+	assert.Nil(t, d.WritePoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16", Value: "4660"}, // 0x1234
+	}))
+	data, err := d.ReadPoints([]iot_points.Point{
+		{Name: "u16", Addr: "D100", Type: "UINT16", Endian: "BADC"}, // single word: endian ignored
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, uint16(0x1234), data[0].Value)
 }

@@ -55,8 +55,9 @@ const (
 
 // Command and frame constants
 const (
-	cmdMemoryAreaRead  uint16 = 0x0101
-	cmdMemoryAreaWrite uint16 = 0x0102
+	cmdMemoryAreaRead         uint16 = 0x0101
+	cmdMemoryAreaWrite        uint16 = 0x0102
+	cmdMultipleMemoryAreaRead uint16 = 0x0104
 
 	// defaultPort FINS default port (both UDP and TCP are 9600)
 	defaultPort = 9600
@@ -239,6 +240,77 @@ func (c *Client) WriteBits(area byte, address uint16, bitOffset byte, bits []boo
 	return err
 }
 
+// MaxMultipleReadItems maximum items per multiple memory area read command (W342: 167 for Ethernet)
+const MaxMultipleReadItems = 167
+
+// EndCodeError PLC rejected the command; carries the FINS end code so callers can detect unsupported commands.
+type EndCodeError uint16
+
+func (e EndCodeError) Error() string {
+	return fmt.Sprintf("fins command rejected, end code 0x%04X", uint16(e))
+}
+
+// MultipleItem one element of a multiple memory area read: one word (word area code) or one bit (bit area code + bit offset).
+type MultipleItem struct {
+	Area    byte
+	Address uint16
+	Bit     byte
+}
+
+// ReadMultiple executes a multiple memory area read (command 0x0104), one word or bit per item.
+// Returns per-item data in request order: 2 big-endian bytes for word items, 1 byte (0/1) for bit items.
+func (c *Client) ReadMultiple(items []MultipleItem) ([][]byte, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	if len(items) > MaxMultipleReadItems {
+		return nil, fmt.Errorf("fins multiple read: %d items exceed max %d", len(items), MaxMultipleReadItems)
+	}
+	payload := make([]byte, 2+4*len(items))
+	binary.BigEndian.PutUint16(payload[0:2], cmdMultipleMemoryAreaRead)
+	for i, it := range items {
+		off := 2 + 4*i
+		payload[off] = it.Area
+		binary.BigEndian.PutUint16(payload[off+1:off+3], it.Address)
+		payload[off+3] = it.Bit
+	}
+	data, err := c.exchange(payload)
+	if err != nil {
+		return nil, err
+	}
+	// Response data: N x {area code(1) + data(word area 2 bytes / bit area 1 byte)} (W342 Element Data Configurations)
+	out := make([][]byte, len(items))
+	off := 0
+	for i, it := range items {
+		if off >= len(data) {
+			return nil, fmt.Errorf("fins multiple read: short response, missing item %d", i)
+		}
+		if data[off] != it.Area {
+			return nil, fmt.Errorf("fins multiple read: item %d area code mismatch 0x%02X != 0x%02X", i, data[off], it.Area)
+		}
+		off++
+		size := 2
+		if isBitAreaCode(it.Area) {
+			size = 1
+		}
+		if off+size > len(data) {
+			return nil, fmt.Errorf("fins multiple read: short data for item %d", i)
+		}
+		out[i] = data[off : off+size]
+		off += size
+	}
+	return out, nil
+}
+
+// isBitAreaCode reports whether the area code is a bit access code (1 data byte per item in 0x0104 responses).
+func isBitAreaCode(code byte) bool {
+	switch code {
+	case MemoryAreaDMBit, MemoryAreaCIOBit, MemoryAreaWRBit, MemoryAreaHRBit, MemoryAreaARBit:
+		return true
+	}
+	return false
+}
+
 // buildMemAreaPayload constructs memory area read/write command payload: MRC SRC + area code(1) + word address(2) + bit offset(1) + count(2) [+ data]
 func buildMemAreaPayload(cmd uint16, area byte, address uint16, bitOffset byte, count uint16, data []byte) []byte {
 	payload := make([]byte, 8, 8+len(data))
@@ -305,7 +377,7 @@ func (c *Client) exchange(payload []byte) ([]byte, error) {
 		}
 		endCode := binary.BigEndian.Uint16(frame[12:14])
 		if endCode != 0 {
-			return nil, fmt.Errorf("fins command rejected, end code 0x%04X", endCode)
+			return nil, EndCodeError(endCode)
 		}
 		return frame[14:], nil
 	}
