@@ -99,9 +99,12 @@ func (h *Holder) NewClient() (*gologix.Client, error) {
 		}
 		client.Controller.Path = p
 	}
-	if t := h.Config.GetTimeout(); t > 0 {
-		client.SocketTimeout = time.Duration(t) * time.Second
+	// Request/socket timeout: <=0 uses the project default (consistent with s7_client and siblings).
+	timeout := h.Config.GetTimeout()
+	if timeout <= 0 {
+		timeout = iot_points.DefaultTimeoutSec
 	}
+	client.SocketTimeout = time.Duration(timeout) * time.Second
 	if err := client.Connect(); err != nil {
 		return nil, err
 	}
@@ -144,14 +147,21 @@ func ReadPoints(client *gologix.Client, points []Point, logger types.Logger) ([]
 	return results, nil
 }
 
-// readTag reads single tag by type into corresponding type pointer
+// readTag reads single tag by type into corresponding type pointer.
+// Note: gologix decodes the returned value using the controller's actual CIP type, so the Go
+// pointer type here mainly guides the IOI request and the final type assertion. SINT (CIP 0xC2)
+// is a signed 8-bit integer, so it is read into int8 (not byte) to match the decoded value.
 func readTag(client *gologix.Client, tag, typ string) (interface{}, error) {
 	switch strings.ToUpper(strings.TrimSpace(typ)) {
 	case "BOOL":
 		var v bool
 		err := client.Read(tag, &v)
 		return v, err
-	case "BYTE", "SINT", "USINT":
+	case "SINT":
+		var v int8
+		err := client.Read(tag, &v)
+		return v, err
+	case "BYTE", "USINT":
 		var v byte
 		err := client.Read(tag, &v)
 		return v, err
@@ -179,11 +189,11 @@ func readTag(client *gologix.Client, tag, typ string) (interface{}, error) {
 		var v uint64
 		err := client.Read(tag, &v)
 		return v, err
-	case "REAL", "FLOAT":
+	case "REAL", "FLOAT", "FLOAT32":
 		var v float32
 		err := client.Read(tag, &v)
 		return v, err
-	case "LREAL", "DOUBLE":
+	case "LREAL", "DOUBLE", "FLOAT64":
 		var v float64
 		err := client.Read(tag, &v)
 		return v, err
@@ -212,13 +222,18 @@ func WritePoints(client *gologix.Client, points []Point) error {
 	return nil
 }
 
-// encodeValue parses value string by type into Go value (for Write)
+// encodeValue parses value string by type into Go value (for Write).
+// Go types must match what gologix serializes for the CIP type: SINT is signed int8, BYTE/USINT
+// are uint8 (byte). gologix derives the CIP type from the Go type (GoVarToCIPType).
 func encodeValue(value, typ string) (interface{}, error) {
 	v := strings.TrimSpace(value)
 	switch strings.ToUpper(strings.TrimSpace(typ)) {
 	case "BOOL":
 		return parseBoolValue(v)
-	case "BYTE", "SINT", "USINT":
+	case "SINT":
+		n, err := strconv.ParseInt(v, 0, 8)
+		return int8(n), err
+	case "BYTE", "USINT":
 		n, err := strconv.ParseUint(v, 0, 8)
 		return byte(n), err
 	case "INT", "INT16":
@@ -239,10 +254,10 @@ func encodeValue(value, typ string) (interface{}, error) {
 	case "ULINT", "UINT64":
 		n, err := strconv.ParseUint(v, 0, 64)
 		return uint64(n), err
-	case "REAL", "FLOAT":
+	case "REAL", "FLOAT", "FLOAT32":
 		n, err := strconv.ParseFloat(v, 32)
 		return float32(n), err
-	case "LREAL", "DOUBLE":
+	case "LREAL", "DOUBLE", "FLOAT64":
 		n, err := strconv.ParseFloat(v, 64)
 		return n, err
 	case "STRING":

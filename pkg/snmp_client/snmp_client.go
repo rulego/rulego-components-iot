@@ -237,6 +237,9 @@ func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]D
 
 // readGet precisely reads single OID
 func readGet(client *gosnmp.GoSNMP, p Point) (Data, error) {
+	if strings.TrimSpace(p.OID) == "" {
+		return Data{Name: p.Name, Address: p.OID, Quality: "bad", Timestamp: time.Now()}, errors.New("empty OID")
+	}
 	resp, err := client.Get([]string{p.OID})
 	if err != nil {
 		return Data{Name: p.Name, Address: p.OID, Timestamp: time.Now()}, err
@@ -247,8 +250,12 @@ func readGet(client *gosnmp.GoSNMP, p Point) (Data, error) {
 	return pduToData(p.Name, resp.Variables[0]), nil
 }
 
-// readWalk traverses OID subtree
+// readWalk traverses OID subtree. Returns ErrNoWalkResults when the root does not exist or yields
+// no leaves, so the caller can mark the point bad instead of silently dropping it.
 func readWalk(client *gosnmp.GoSNMP, p Point) ([]Data, error) {
+	if strings.TrimSpace(p.OID) == "" {
+		return nil, errors.New("empty OID")
+	}
 	out := make([]Data, 0)
 	err := client.Walk(p.OID, func(d gosnmp.SnmpPDU) error {
 		out = append(out, pduToData(p.Name, d))
@@ -257,19 +264,43 @@ func readWalk(client *gosnmp.GoSNMP, p Point) ([]Data, error) {
 	if err != nil {
 		return out, err
 	}
+	if len(out) == 0 {
+		return out, ErrNoWalkResults
+	}
 	return out, nil
 }
 
-// pduToData converts gosnmp PDU to unified Data
+// ErrNoWalkResults indicates a Walk completed without error but yielded no OIDs (root not found).
+var ErrNoWalkResults = errors.New("walk returned no results")
+
+// pduToData converts gosnmp PDU to unified Data.
+// OctetString/Opaque arrive as []byte (gosnmp decodes them that way); convert to string so JSON
+// serialization does not base64-encode them. NoSuchObject/NoSuchInstance/EndOfMibView (returned
+// for non-existent OIDs) and nil values are marked quality=bad, not reported as good-with-null.
 func pduToData(name string, pdu gosnmp.SnmpPDU) Data {
-	return Data{
+	d := Data{
 		Name:      name,
 		Address:   pdu.Name,
-		Value:     pdu.Value,
 		Type:      pduTypeString(pdu.Type),
-		Quality:   "good",
 		Timestamp: time.Now(),
 	}
+	switch pdu.Type {
+	case gosnmp.NoSuchObject, gosnmp.NoSuchInstance, gosnmp.EndOfMibView:
+		d.Quality = "bad"
+		return d
+	}
+	switch val := pdu.Value.(type) {
+	case []byte:
+		// OctetString / Opaque / BitString decode to []byte; expose as string for JSON output.
+		d.Value = string(val)
+		d.Quality = "good"
+	case nil:
+		d.Quality = "bad"
+	default:
+		d.Value = val
+		d.Quality = "good"
+	}
+	return d
 }
 
 // pduTypeString PDU type constant -> readable string
@@ -293,6 +324,12 @@ func pduTypeString(t gosnmp.Asn1BER) string {
 		return "Counter64"
 	case gosnmp.Null:
 		return "Null"
+	case gosnmp.NoSuchObject:
+		return "NoSuchObject"
+	case gosnmp.NoSuchInstance:
+		return "NoSuchInstance"
+	case gosnmp.EndOfMibView:
+		return "EndOfMibView"
 	}
 	return fmt.Sprintf("Asn1BER(%d)", int(t))
 }
@@ -308,14 +345,27 @@ func WritePoints(client *gosnmp.GoSNMP, points []Point) error {
 			return fmt.Errorf("encode %s error: %w", p.OID, err)
 		}
 		pdus := []gosnmp.SnmpPDU{{Name: p.OID, Type: asnType, Value: val}}
-		if _, err := client.Set(pdus); err != nil {
+		resp, err := client.Set(pdus)
+		if err != nil {
 			return fmt.Errorf("set %s error: %w", p.OID, err)
+		}
+		// gosnmp returns a nil error even when the agent refuses the write with a non-NoError
+		// status (notWritable, wrongValue, inconsistentName, ...). Inspect the response so a
+		// rejected Set is not silently reported as success.
+		if resp == nil || resp.Error != gosnmp.NoError {
+			status := "<nil response>"
+			if resp != nil {
+				status = resp.Error.String()
+			}
+			return fmt.Errorf("set %s failed: %s", p.OID, status)
 		}
 	}
 	return nil
 }
 
-// encodeValue parses value string by type into Go value + Asn1BER (for Set)
+// encodeValue parses value string by type into Go value + Asn1BER (for Set).
+// Go value types must match what gosnmp's marshalVarbind accepts for each ASN.1 type:
+// Counter32/Gauge32/TimeTicks require uint32, Counter64 requires uint64 (a Go int/int64 is rejected).
 func encodeValue(value, typ string) (interface{}, gosnmp.Asn1BER, error) {
 	v := strings.TrimSpace(value)
 	switch strings.ToLower(strings.TrimSpace(typ)) {
@@ -329,16 +379,16 @@ func encodeValue(value, typ string) (interface{}, gosnmp.Asn1BER, error) {
 	case "ipaddress", "ip":
 		return v, gosnmp.IPAddress, nil
 	case "counter32":
-		n, err := parseInt(v)
+		n, err := parseUint32(v)
 		return n, gosnmp.Counter32, err
 	case "gauge32", "uint32":
-		n, err := parseInt(v)
+		n, err := parseUint32(v)
 		return n, gosnmp.Gauge32, err
 	case "timeticks":
-		n, err := parseInt(v)
+		n, err := parseUint32(v)
 		return n, gosnmp.TimeTicks, err
 	case "counter64":
-		n, err := parseInt64(v)
+		n, err := parseUint64(v)
 		return n, gosnmp.Counter64, err
 	}
 	return nil, 0, fmt.Errorf("unsupported snmp type: %q", typ)
@@ -350,8 +400,14 @@ func parseInt(s string) (int, error) {
 	return n, err
 }
 
-func parseInt64(s string) (int64, error) {
-	var n int64
+func parseUint32(s string) (uint32, error) {
+	var n uint32
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
+}
+
+func parseUint64(s string) (uint64, error) {
+	var n uint64
 	_, err := fmt.Sscanf(s, "%d", &n)
 	return n, err
 }

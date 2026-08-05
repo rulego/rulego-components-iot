@@ -46,43 +46,41 @@ type Data struct {
 	DataType    string      `json:"dataType"`
 }
 
-// ParseValue parses data FloatValue
+// ParseValue parses data FloatValue. On unsupported/nil values it returns (d, err) rather than
+// (nil, err) so callers can still use the receiver. Array values leave FloatValue at 0 (the unified
+// ToPointsData path preserves arrays via ScaleValue, which passes non-numeric values through).
 func (d *Data) ParseValue() (*Data, error) {
-	var err error
-	if d != nil && d.Value != nil {
-		switch d.Value.(type) {
-		case int:
-			d.FloatValue = float64(d.Value.(int))
-		case int16:
-			d.FloatValue = float64(d.Value.(int16))
-		case int32:
-			d.FloatValue = float64(d.Value.(int32))
-		case int64:
-			d.FloatValue = float64(d.Value.(int64))
-		case uint16:
-			d.FloatValue = float64(d.Value.(uint16))
-		case uint32:
-			d.FloatValue = float64(d.Value.(uint32))
-		case float32:
-			d.FloatValue = float64(d.Value.(float32))
-		case float64:
-			d.FloatValue = d.Value.(float64)
-		case byte:
-			d.FloatValue = float64(d.Value.(byte))
-		case bool:
-			if d.Value.(bool) {
-				d.FloatValue = 1
-			} else {
-				d.FloatValue = 0
-			}
-		default:
-			return nil, errors.New(fmt.Sprintf("Type conversion is not supported : %v", d))
-		}
-	} else {
-		err = errors.New("Data value is nil")
+	if d == nil || d.Value == nil {
+		return d, errors.New("Data value is nil")
 	}
-	if err != nil {
-		return d, err
+	switch v := d.Value.(type) {
+	case int:
+		d.FloatValue = float64(v)
+	case int16:
+		d.FloatValue = float64(v)
+	case int32:
+		d.FloatValue = float64(v)
+	case int64:
+		d.FloatValue = float64(v)
+	case uint16:
+		d.FloatValue = float64(v)
+	case uint32:
+		d.FloatValue = float64(v)
+	case float32:
+		d.FloatValue = float64(v)
+	case float64:
+		d.FloatValue = v
+	case byte:
+		d.FloatValue = float64(v)
+	case bool:
+		if v {
+			d.FloatValue = 1
+		} else {
+			d.FloatValue = 0
+		}
+	default:
+		// Arrays and other complex types: leave FloatValue as-is (0) and report unsupported.
+		return d, fmt.Errorf("Type conversion is not supported : %v", d.Value)
 	}
 	return d, nil
 }
@@ -380,28 +378,30 @@ func (x *OpcUaClientHolder) printEndpointOptions(endpoints []*ua.EndpointDescrip
 	}
 }
 
-// Read reads point data
+// Read reads point data. data[i]/resp.Results[i] stay index-aligned with nodeIds[i] so that
+// ToPointsData can map results back to the input points by position.
+//
+// Failure handling:
+//   - A NodeID that fails to parse aborts the batch (returns the error). This preserves the
+//     1:1 positional alignment that ToPointsData relies on; callers validate NodeIDs up-front.
+//   - A DisplayName fetch failure (RPC error, or a non-compliant server returning an unexpected
+//     variant that gopcua would otherwise panic on) is non-fatal: DisplayName is left empty and
+//     the read continues. ToPointsData falls back to the configured Name/Addr.
 func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, *ua.ReadResponse, error) {
 	ctx := context.Background()
-	allIds := make([]*ua.ReadValueID, 0)
-	data := make([]Data, 0)
+	allIds := make([]*ua.ReadValueID, 0, len(nodeIds))
+	data := make([]Data, 0, len(nodeIds))
 
 	for _, nodeId := range nodeIds {
 		id, err := ua.ParseNodeID(nodeId)
 		if err != nil {
 			if logger != nil {
-				logger.Warnf("parse node id error %v ", err)
+				logger.Warnf("parse node id %q error: %v", nodeId, err)
 			}
 			return nil, nil, err
-		} else {
-			allIds = append(allIds, &ua.ReadValueID{NodeID: id})
 		}
-		n := client.Node(id)
-		lt, err := n.DisplayName(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		data = append(data, Data{NodeId: id.String(), DisplayName: lt.Text})
+		allIds = append(allIds, &ua.ReadValueID{NodeID: id})
+		data = append(data, Data{NodeId: id.String(), DisplayName: safeDisplayName(client, id, ctx)})
 	}
 
 	req := &ua.ReadRequest{
@@ -409,31 +409,51 @@ func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, 
 		NodesToRead:        allIds,
 		TimestampsToReturn: ua.TimestampsToReturnBoth,
 	}
-	var resp *ua.ReadResponse
 	resp, err := client.Read(ctx, req)
 	if err != nil {
 		if logger != nil {
 			logger.Warnf("point read error: %v", err)
 		}
 		return nil, nil, err
-	} else {
-		for i, result := range resp.Results {
-			if result != nil && result.Status == ua.StatusOK {
-				d := Data{
-					DisplayName: data[i].DisplayName,
-					NodeId:      data[i].NodeId,
-					RecordTime:  result.ServerTimestamp,
-					SourceTime:  result.SourceTimestamp,
-					Value:       result.Value.Value(),
-					Quality:     uint32(result.Status),
-					Timestamp:   time.Now(),
-				}
-				_, _ = d.ParseValue()
-				data[i] = d
+	}
+	for i, result := range resp.Results {
+		// gopcua keeps resp.Results 1:1 with NodesToRead (hence with data), but guard against a
+		// malformed server returning extra results to avoid an out-of-range panic on data[i].
+		if i >= len(data) {
+			break
+		}
+		if result != nil && result.Status == ua.StatusOK {
+			d := Data{
+				DisplayName: data[i].DisplayName,
+				NodeId:      data[i].NodeId,
+				RecordTime:  result.ServerTimestamp,
+				SourceTime:  result.SourceTimestamp,
+				Value:       result.Value.Value(),
+				Quality:     uint32(result.Status),
+				Timestamp:   time.Now(),
 			}
+			_, _ = d.ParseValue()
+			data[i] = d
 		}
 	}
 	return data, resp, nil
+}
+
+// safeDisplayName returns the node's DisplayName text, or "" if the attribute cannot be read or
+// the server returns an unexpected variant type. gopcua's DisplayName performs an unchecked type
+// assertion (v.Value().(*ua.LocalizedText)) that panics on a nil/unexpected value, so recover
+// here to keep a single bad node from crashing the acquisition process.
+func safeDisplayName(client *opcua.Client, id *ua.NodeID, ctx context.Context) (text string) {
+	defer func() {
+		if r := recover(); r != nil {
+			text = ""
+		}
+	}()
+	lt, err := client.Node(id).DisplayName(ctx)
+	if err != nil || lt == nil {
+		return ""
+	}
+	return lt.Text
 }
 
 // ToPointsData converts Read results to unified iot_points.Data list. Shared by read node and acquisition endpoint.
@@ -458,7 +478,12 @@ func ToPointsData(points []iot_points.Point, data []Data, resp *ua.ReadResponse)
 		switch {
 		case result != nil && result.Status == ua.StatusOK:
 			dd.Value = iot_points.ScaleValue(result.Value.Value(), p)
-			if t := result.ServerTimestamp; !t.IsZero() {
+			// Prefer SourceTimestamp (when the value was actually generated); many embedded/edge
+			// servers populate only SourceTimestamp and leave ServerTimestamp zero, so fall back to
+			// ServerTimestamp. If both are zero, Timestamp stays 0; downstream tsdbWrite treats 0 as "current time".
+			if t := result.SourceTimestamp; !t.IsZero() {
+				dd.Timestamp = t.UnixNano()
+			} else if t := result.ServerTimestamp; !t.IsZero() {
 				dd.Timestamp = t.UnixNano()
 			}
 		case result != nil:

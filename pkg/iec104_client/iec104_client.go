@@ -75,6 +75,7 @@ type entry struct {
 	value interface{}
 	typ   string
 	ts    time.Time
+	qds   asdu.QualityDescriptor
 }
 
 // Client IEC 104 master client. Implements ASDUCall callback itself, continuously caches slave-sent data.
@@ -215,7 +216,16 @@ func (c *Client) collect(points []Point, giAt time.Time) ([]Data, error) {
 	for _, p := range points {
 		d := Data{Name: p.Name, Address: p.Ioa, Timestamp: time.Now()}
 		if e, ok := c.cache[p.Ioa]; ok && !e.ts.Before(giAt) {
-			d.Value, d.Type, d.Quality, d.Timestamp = e.value, e.typ, "good", e.ts
+			d.Value, d.Type, d.Timestamp = e.value, e.typ, e.ts
+			// Map the slave's quality descriptor to good/bad. A value flagged Invalid (acquired
+			// incorrectly) or NotTopical (stale/last-update-failed) is reported as bad so downstream
+			// can drop or alert on it; Overflow/Substituted/Blocked alone still carry usable data.
+			if e.qds&(asdu.QDSInvalid|asdu.QDSNotTopical) != 0 {
+				d.Quality = "bad"
+				fail++
+			} else {
+				d.Quality = "good"
+			}
 		} else {
 			d.Quality = "bad"
 			fail++
@@ -273,44 +283,46 @@ func (c *Client) store(a *asdu.ASDU) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	put := func(ioa uint, value interface{}, ts time.Time) {
+	put := func(ioa uint, value interface{}, ts time.Time, qds asdu.QualityDescriptor) {
 		if ts.IsZero() {
 			ts = now
 		}
-		c.cache[ioa] = &entry{value: value, typ: typ, ts: ts}
+		c.cache[ioa] = &entry{value: value, typ: typ, ts: ts, qds: qds}
 	}
 	switch iec104client.GetDataType(a.Type) {
 	case iec104client.SinglePoint:
 		for _, p := range a.GetSinglePoint() {
-			put(uint(p.Ioa), p.Value, p.Time)
+			put(uint(p.Ioa), p.Value, p.Time, p.Qds)
 		}
 	case iec104client.DoublePoint:
 		for _, p := range a.GetDoublePoint() {
-			put(uint(p.Ioa), int(p.Value), p.Time)
+			put(uint(p.Ioa), int(p.Value), p.Time, p.Qds)
 		}
 	case iec104client.StepPosition:
 		for _, p := range a.GetStepPosition() {
-			put(uint(p.Ioa), p.Value.Val, p.Time)
+			put(uint(p.Ioa), p.Value.Val, p.Time, p.Qds)
 		}
 	case iec104client.BitString32:
 		for _, p := range a.GetBitString32() {
-			put(uint(p.Ioa), p.Value, p.Time)
+			put(uint(p.Ioa), p.Value, p.Time, p.Qds)
 		}
 	case iec104client.MeasuredValueNormal:
 		for _, p := range a.GetMeasuredValueNormal() {
-			put(uint(p.Ioa), p.Value.Float64(), p.Time)
+			put(uint(p.Ioa), p.Value.Float64(), p.Time, p.Qds)
 		}
 	case iec104client.MeasuredValueScaled:
 		for _, p := range a.GetMeasuredValueScaled() {
-			put(uint(p.Ioa), int(p.Value), p.Time)
+			put(uint(p.Ioa), int(p.Value), p.Time, p.Qds)
 		}
 	case iec104client.MeasuredValueFloat:
 		for _, p := range a.GetMeasuredValueFloat() {
-			put(uint(p.Ioa), float64(p.Value), p.Time)
+			put(uint(p.Ioa), float64(p.Value), p.Time, p.Qds)
 		}
 	case iec104client.IntegratedTotals:
 		for _, p := range a.GetIntegratedTotals() {
-			put(uint(p.Ioa), int64(p.Value.CounterReading), p.Time)
+			// BinaryCounterReadingInfo has no Qds field (integrated totals carry a sequence number
+			// instead of a quality descriptor per IEC 60870-5), so treat as good quality.
+			put(uint(p.Ioa), int64(p.Value.CounterReading), p.Time, 0)
 		}
 	}
 }

@@ -120,7 +120,9 @@ func TestPduTypeString(t *testing.T) {
 	assert.Equal(t, "Asn1BER(0)", pduTypeString(gosnmp.EndOfContents))
 }
 
-// TestEncodeValue type strings -> Go values + Asn1BER (for Set)
+// TestEncodeValue type strings -> Go values + Asn1BER (for Set).
+// Counter32/Gauge32/TimeTicks must produce uint32 and Counter64 uint64, because gosnmp's
+// marshalVarbind rejects Go int/int64 for those ASN.1 types.
 func TestEncodeValue(t *testing.T) {
 	// Integer
 	v, typ, err := encodeValue("42", "integer")
@@ -140,11 +142,29 @@ func TestEncodeValue(t *testing.T) {
 	assert.Equal(t, gosnmp.ObjectIdentifier, typ)
 	assert.Equal(t, "1.3.6.1", v)
 
-	// Counter32
+	// Counter32 -> uint32 (gosnmp marshal requires uint32/uint for Counter32)
 	v, typ, err = encodeValue("100", "counter32")
 	assert.Nil(t, err)
 	assert.Equal(t, gosnmp.Counter32, typ)
-	assert.Equal(t, 100, v)
+	assert.Equal(t, uint32(100), v)
+
+	// Gauge32 -> uint32
+	v, typ, err = encodeValue("200", "gauge32")
+	assert.Nil(t, err)
+	assert.Equal(t, gosnmp.Gauge32, typ)
+	assert.Equal(t, uint32(200), v)
+
+	// TimeTicks -> uint32
+	v, typ, err = encodeValue("300", "timeticks")
+	assert.Nil(t, err)
+	assert.Equal(t, gosnmp.TimeTicks, typ)
+	assert.Equal(t, uint32(300), v)
+
+	// Counter64 -> uint64 (gosnmp marshalUint64 requires uint64)
+	v, typ, err = encodeValue("5000000000", "counter64")
+	assert.Nil(t, err)
+	assert.Equal(t, gosnmp.Counter64, typ)
+	assert.Equal(t, uint64(5000000000), v)
 
 	// Unsupported type
 	_, _, err = encodeValue("x", "unknown")
@@ -155,11 +175,36 @@ func TestEncodeValue(t *testing.T) {
 
 // TestPduToData PDU -> unified Data
 func TestPduToData(t *testing.T) {
-	pdu := gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.1.5.0", Value: "router1", Type: gosnmp.OctetString}
+	// OctetString arrives from gosnmp as []byte; output must be string (not base64 in JSON).
+	pdu := gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.1.5.0", Value: []byte("router1"), Type: gosnmp.OctetString}
 	d := pduToData("sysName", pdu)
 	assert.Equal(t, "sysName", d.Name)
 	assert.Equal(t, "1.3.6.1.2.1.1.5.0", d.Address)
 	assert.Equal(t, "router1", d.Value)
 	assert.Equal(t, "OctetString", d.Type)
 	assert.Equal(t, "good", d.Quality)
+
+	// Integer passes through unchanged
+	pdu = gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.2.2.1.10.1", Value: 12345, Type: gosnmp.Counter32}
+	d = pduToData("ifIn", pdu)
+	assert.Equal(t, 12345, d.Value)
+	assert.Equal(t, "good", d.Quality)
+
+	// NoSuchObject -> quality=bad, empty value (not good-with-null)
+	pdu = gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.1.5.0", Value: nil, Type: gosnmp.NoSuchObject}
+	d = pduToData("missing", pdu)
+	assert.Equal(t, "bad", d.Quality)
+	assert.Nil(t, d.Value)
+	assert.Equal(t, "NoSuchObject", d.Type)
+
+	// NoSuchInstance -> quality=bad
+	pdu = gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.1.5.0", Value: nil, Type: gosnmp.NoSuchInstance}
+	d = pduToData("missing", pdu)
+	assert.Equal(t, "bad", d.Quality)
+	assert.Equal(t, "NoSuchInstance", d.Type)
+
+	// nil value on a normal type -> quality=bad
+	pdu = gosnmp.SnmpPDU{Name: "1.3.6.1.2.1.1.5.0", Value: nil, Type: gosnmp.Integer}
+	d = pduToData("nulval", pdu)
+	assert.Equal(t, "bad", d.Quality)
 }

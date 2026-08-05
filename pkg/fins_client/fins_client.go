@@ -18,9 +18,9 @@
 // supporting both FINS/UDP and FINS/TCP transports. Pure standard library implementation,
 // synchronous request/response pairing, no background goroutine.
 //
-// Memory area codes follow W342 FINS Commands Reference (CS/CJ series) standard values,
-// where word code = bit code | 0x80:
-// CIO=0x30/0xB0, WR=0x31/0xB1, HR=0x32/0xB2, AR=0x33/0xB3, DM=0x02/0x03.
+// Memory area codes follow W342 FINS Commands Reference (CS/CJ/CP/NSJ series) standard values.
+// Relay areas (CIO/WR/HR/AR) use word code = bit code | 0x80 (0x3x bit / 0xBx word).
+// DM is word-only addressable: word=0x82, bit=0x02 (bit access reads the underlying word).
 
 package finsclient
 
@@ -37,12 +37,12 @@ import (
 )
 
 // Memory area codes (word/bit), commands 0x0101/0x0102, CS/CJ/CP/NSJ series.
-// Relay area word code = bit code | 0x80 (0x3x bit / 0xBx word), DM uses legacy reserved code (0x02/0x03).
-// Based on W342 command reference and PcVue/KEPware commercial driver code tables;
-// verify by reading H/A/CIO once before real device deployment.
+// Relay areas (CIO/WR/HR/AR): bit code 0x3x, word code 0xBx (= bit | 0x80).
+// DM (Data Memory): word=0x82, bit=0x02 (DM bit access returns the underlying word's bit).
+// Based on W342 FINS Commands Reference Manual.
 const (
-	MemoryAreaDMWord  byte = 0x02
-	MemoryAreaDMBit   byte = 0x03
+	MemoryAreaDMWord  byte = 0x82
+	MemoryAreaDMBit   byte = 0x02
 	MemoryAreaCIOBit  byte = 0x30
 	MemoryAreaWRBit   byte = 0x31
 	MemoryAreaHRBit   byte = 0x32
@@ -71,8 +71,11 @@ const (
 var finsTCPHeader = []byte("FINS")
 
 const (
-	// tcpCmdNodeAddress FINS/TCP node address negotiation command
-	tcpCmdNodeAddress uint32 = 0x00000000
+	// tcpCmdNodeAddressSend FINS/TCP node address negotiation: client -> server (Node Address Data Send).
+	tcpCmdNodeAddressSend uint32 = 0x00000000
+	// tcpCmdNodeAddressReturn FINS/TCP node address negotiation: server -> client (Node Address Data Return).
+	// Real Omron Ethernet units reply with this command code, not the client's 0x00000000.
+	tcpCmdNodeAddressReturn uint32 = 0x00000001
 	// tcpCmdSendFrame FINS/TCP frame send command
 	tcpCmdSendFrame uint32 = 0x00000002
 	// tcpHeaderSize FINS/TCP frame header length
@@ -281,22 +284,27 @@ func (c *Client) ReadMultiple(items []MultipleItem) ([][]byte, error) {
 	// Response data: N x {area code(1) + data(word area 2 bytes / bit area 1 byte)} (W342 Element Data Configurations)
 	out := make([][]byte, len(items))
 	off := 0
-	for i, it := range items {
+	for i := range items {
 		if off >= len(data) {
 			return nil, fmt.Errorf("fins multiple read: short response, missing item %d", i)
 		}
-		if data[off] != it.Area {
-			return nil, fmt.Errorf("fins multiple read: item %d area code mismatch 0x%02X != 0x%02X", i, data[off], it.Area)
-		}
+		// The echoed area code leads each item. Some PLCs normalize the echoed code (e.g. return
+		// the word code for a DM item), so size each item from the echoed code rather than the
+		// requested code, and skip the leading byte without asserting an exact match.
+		echoed := data[off]
 		off++
 		size := 2
-		if isBitAreaCode(it.Area) {
+		if isBitAreaCode(echoed) {
 			size = 1
 		}
 		if off+size > len(data) {
 			return nil, fmt.Errorf("fins multiple read: short data for item %d", i)
 		}
-		out[i] = data[off : off+size]
+		// Copy into an independent slice: for UDP, the read buffer is reused across requests, so
+		// returning sub-slices that alias it would corrupt on the next read.
+		item := make([]byte, size)
+		copy(item, data[off:off+size])
+		out[i] = item
 		off += size
 	}
 	return out, nil
@@ -418,14 +426,23 @@ func wrapTCPFrame(command uint32, payload []byte) []byte {
 	return append(frame, payload...)
 }
 
-// tcpHandshake FINS/TCP node address negotiation: sends local address, peer responds with its address + assigned local address.
-// Negotiation result written to dst.Node (DA1) and src.Node (SA1).
+// tcpHandshake FINS/TCP node address negotiation: client sends its node address, the server
+// replies (Node Address Data Return, command 0x00000001) carrying both the assigned client
+// (source) node and the server (destination) node.
+//
+// Response payload layout (W342 / Omron FINS/TCP spec): two 4-byte node-address fields, each
+// big-endian with the node number in the low byte:
+//
+//	payload[0:4] = client (source, SA1) node address; node number = payload[3]
+//	payload[4:8] = server (destination, DA1) node address; node number = payload[7]
+//
+// Negotiation result written to src.Node (SA1) and dst.Node (DA1).
 func (c *Client) tcpHandshake() error {
 	clientAddr := []byte{c.src.Network, 0, 0, c.src.Node}
 	if err := c.conn.SetWriteDeadline(time.Now().Add(c.timeout)); err != nil {
 		return err
 	}
-	if _, err := c.conn.Write(wrapTCPFrame(tcpCmdNodeAddress, clientAddr)); err != nil {
+	if _, err := c.conn.Write(wrapTCPFrame(tcpCmdNodeAddressSend, clientAddr)); err != nil {
 		return fmt.Errorf("fins tcp handshake write: %w", err)
 	}
 	if err := c.conn.SetReadDeadline(time.Now().Add(c.timeout)); err != nil {
@@ -439,7 +456,9 @@ func (c *Client) tcpHandshake() error {
 		return errors.New("fins tcp handshake: invalid header magic")
 	}
 	cmd := binary.BigEndian.Uint32(header[8:12])
-	if cmd != tcpCmdNodeAddress {
+	// The server replies with Node Address Data Return (0x00000001). Some implementations echo
+	// the client command code (0x00000000), so accept either to stay interoperable.
+	if cmd != tcpCmdNodeAddressReturn && cmd != tcpCmdNodeAddressSend {
 		return fmt.Errorf("fins tcp handshake: unexpected command 0x%08X", cmd)
 	}
 	length := binary.BigEndian.Uint32(header[4:8])
@@ -450,11 +469,12 @@ func (c *Client) tcpHandshake() error {
 	if _, err := io.ReadFull(c.conn, payload); err != nil {
 		return fmt.Errorf("fins tcp handshake read payload: %w", err)
 	}
+	// payload[0:4] = client (source) node; payload[4:8] = server (destination) node.
 	if len(payload) >= 4 {
-		c.dst.Node = payload[3] // Peer node number
+		c.src.Node = payload[3] // Client (source/SA1) node number assigned/confirmed by server
 	}
-	if len(payload) >= 8 && payload[7] != 0 {
-		c.src.Node = payload[7] // Local node number assigned by peer
+	if len(payload) >= 8 {
+		c.dst.Node = payload[7] // Server (destination/DA1) node number
 	}
 	return nil
 }

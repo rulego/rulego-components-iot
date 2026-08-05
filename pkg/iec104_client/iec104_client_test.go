@@ -182,3 +182,72 @@ func TestNewClientConnectFail(t *testing.T) {
 	_, err := DefaultHolder(testConfig{server: "127.0.0.1:19999", timeout: 2}).NewClient()
 	assert.NotNil(t, err)
 }
+
+// invalidQdsHandler sends a single point with QDSInvalid to verify the quality->bad mapping.
+type invalidQdsHandler struct{}
+
+func (m *invalidQdsHandler) OnInterrogation(conn asdu.Connect, _ *asdu.ASDU, qoi asdu.QualifierOfInterrogation) error {
+	coaData := asdu.CauseOfTransmission{Cause: asdu.InterrogatedByStation}
+	// Valid point IOA=100
+	_ = asdu.Single(conn, false, coaData, testCA, asdu.SinglePointInfo{Ioa: 100, Value: true, Qds: asdu.QDSGood})
+	// Invalid-quality point IOA=101 (slave flags value as incorrectly acquired)
+	_ = asdu.Single(conn, false, coaData, testCA, asdu.SinglePointInfo{Ioa: 101, Value: true, Qds: asdu.QDSInvalid})
+	sendInterrogationTerm(conn, qoi)
+	return nil
+}
+
+func (m *invalidQdsHandler) OnCounterInterrogation(asdu.Connect, *asdu.ASDU, asdu.QualifierCountCall) error {
+	return nil
+}
+func (m *invalidQdsHandler) OnRead(asdu.Connect, *asdu.ASDU, asdu.InfoObjAddr) error { return nil }
+func (m *invalidQdsHandler) OnClockSync(asdu.Connect, *asdu.ASDU, time.Time) error   { return nil }
+func (m *invalidQdsHandler) OnResetProcess(asdu.Connect, *asdu.ASDU, asdu.QualifierOfResetProcessCmd) error {
+	return nil
+}
+func (m *invalidQdsHandler) OnDelayAcquisition(asdu.Connect, *asdu.ASDU, uint16) error { return nil }
+func (m *invalidQdsHandler) OnTestCommand(asdu.Connect, *asdu.ASDU) error              { return nil }
+func (m *invalidQdsHandler) OnASDU(asdu.Connect, *asdu.ASDU) error                     { return nil }
+
+// TestReadPointsQDSInvalid: a value flagged QDSInvalid by the slave must be reported as
+// quality=bad (not good), so downstream can drop or alert on it.
+func TestReadPointsQDSInvalid(t *testing.T) {
+	port := freePort(t)
+	settings := iec104server.NewSettings()
+	settings.Host = "127.0.0.1"
+	settings.Port = port
+	settings.LogCfg = &iec104server.LogCfg{Enable: false}
+	srv := iec104server.New(settings, &invalidQdsHandler{})
+	srv.Start()
+	defer srv.Stop()
+	time.Sleep(200 * time.Millisecond)
+
+	client, err := DefaultHolder(testConfig{server: fmt.Sprintf("127.0.0.1:%d", port), timeout: 5}).NewClient()
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	points := []Point{
+		{Name: "Good", Ioa: 100},
+		{Name: "Invalid", Ioa: 101},
+	}
+	data, err := client.ReadPoints(points)
+	assert.Nil(t, err)
+	byName := make(map[string]Data, len(data))
+	for _, d := range data {
+		byName[d.Name] = d
+	}
+	assert.Equal(t, "good", byName["Good"].Quality)
+	assert.Equal(t, "bad", byName["Invalid"].Quality, "QDSInvalid point should be quality=bad")
+}
+
+// freePort reserves and releases a TCP port for the mock server.
+func freePort(t *testing.T) int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port
+}

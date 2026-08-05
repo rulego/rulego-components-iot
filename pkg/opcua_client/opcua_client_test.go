@@ -75,3 +75,39 @@ func TestToPointsData(t *testing.T) {
 	out3 := ToPointsData(scaled, data, resp)
 	assert.Equal(t, 48.0, out3[0].Value)
 }
+
+// TestToPointsDataSourceTimestampFallback: when ServerTimestamp is zero but SourceTimestamp is
+// set (common for embedded/edge servers), the unified Data.Timestamp must still be populated.
+func TestToPointsDataSourceTimestampFallback(t *testing.T) {
+	points := []iot_points.Point{{Name: "Temp", Addr: "ns=2;s=A"}}
+	data := []Data{{NodeId: "ns=2;s=A"}}
+	srcTs := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+	v, _ := ua.NewVariant(10.0)
+	// Only SourceTimestamp set; ServerTimestamp left zero.
+	resp := &ua.ReadResponse{
+		Results: []*ua.DataValue{
+			{Status: ua.StatusOK, Value: v, SourceTimestamp: srcTs},
+		},
+	}
+	out := ToPointsData(points, data, resp)
+	assert.Equal(t, 1, len(out))
+	assert.Equal(t, srcTs.UnixNano(), out[0].Timestamp)
+}
+
+// TestParseValueUnsupportedReturnsReceiver: an unsupported value type must return the receiver
+// (not nil) plus an error, so callers using the returned *Data do not nil-deref.
+func TestParseValueUnsupportedReturnsReceiver(t *testing.T) {
+	d := &Data{Value: []int{1, 2, 3}}
+	got, err := d.ParseValue()
+	assert.NotNil(t, got, "ParseValue must return the receiver, not nil, on unsupported type")
+	assert.Equal(t, d, got)
+	assert.NotNil(t, err)
+}
+
+// TestParseValueNilValueReturnsReceiver: a nil value must return the receiver plus an error.
+func TestParseValueNilValueReturnsReceiver(t *testing.T) {
+	d := &Data{Value: nil}
+	got, err := d.ParseValue()
+	assert.NotNil(t, got)
+	assert.NotNil(t, err)
+}

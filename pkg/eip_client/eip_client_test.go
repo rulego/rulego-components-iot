@@ -64,6 +64,20 @@ func TestEncodeValueAlias(t *testing.T) {
 	// DOUBLE same as LREAL
 	v, _ = encodeValue("1.5", "DOUBLE")
 	assert.Equal(t, float64(1.5), v)
+	// Unified FLOAT32 alias maps to REAL (float32)
+	v, _ = encodeValue("1.5", "FLOAT32")
+	assert.Equal(t, float32(1.5), v)
+	// Unified FLOAT64 alias maps to LREAL (float64)
+	v, _ = encodeValue("1.5", "FLOAT64")
+	assert.Equal(t, float64(1.5), v)
+	// SINT is signed int8 (CIP SINT = 8-bit signed), not byte
+	v, _ = encodeValue("-1", "SINT")
+	assert.Equal(t, int8(-1), v)
+	// BYTE/USINT stay unsigned
+	v, _ = encodeValue("255", "BYTE")
+	assert.Equal(t, byte(255), v)
+	v, _ = encodeValue("255", "USINT")
+	assert.Equal(t, byte(255), v)
 }
 
 // TestEncodeValueErrors invalid input

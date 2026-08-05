@@ -268,8 +268,10 @@ func startTCPMock(t *testing.T) (*mockPLC, string, func()) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				// Node address handshake: respond with server address + assign client node number 17
-				handshake := wrapTCPFrame(tcpCmdNodeAddress, []byte{0, 0, 0, 21, 0, 0, 0, 17})
+				// Node address handshake: server replies with Node Address Data Return (0x00000001),
+				// carrying client (source) node in payload[3] and server (destination) node in payload[7].
+				// Here we confirm the client's node 10 and report the server's node 20.
+				handshake := wrapTCPFrame(tcpCmdNodeAddressReturn, []byte{0, 0, 0, 10, 0, 0, 0, 20})
 				if _, err := c.Write(handshake); err != nil {
 					return
 				}
@@ -383,9 +385,9 @@ func TestTCPHandshakeAndIO(t *testing.T) {
 	assert.Nil(t, err)
 	defer client.Close()
 
-	// After handshake node numbers negotiated (mock assigned server 21/client 17)
-	assert.Equal(t, byte(21), client.dst.Node)
-	assert.Equal(t, byte(17), client.src.Node)
+	// After handshake node numbers negotiated: payload[3]=client(src)=10, payload[7]=server(dst)=20
+	assert.Equal(t, byte(10), client.src.Node)
+	assert.Equal(t, byte(20), client.dst.Node)
 
 	assert.Nil(t, client.WriteWords(MemoryAreaCIOWord, 0, []uint16{0x77}))
 	words, err := client.ReadWords(MemoryAreaCIOWord, 0, 1)
