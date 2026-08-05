@@ -30,7 +30,7 @@ func init() {
 
 // WriteConfig universal acquisition write configuration.
 type WriteConfig struct {
-	Driver string `json:"driver" label:"Driver" desc:"acquisition driver: modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104" required:"true"`
+	Driver string `json:"driver" label:"Driver" desc:"acquisition driver: modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104, bacnet" required:"true"`
 }
 
 // WriteNode universal acquisition write node, delegates to specific protocol write node by driver.
@@ -68,6 +68,8 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 		return x.initDelegate(ruleConfig, configuration, "x/dlt645Write")
 	case "iec104":
 		return x.initDelegate(ruleConfig, configuration, "x/iec104Write")
+	case "bacnet":
+		return x.initDelegate(ruleConfig, configuration, "x/bacnetWrite")
 	default:
 		return fmt.Errorf("unsupported iot write driver: %s", x.Config.Driver)
 	}
@@ -98,5 +100,5 @@ func (x *WriteNode) Destroy() {
 }
 
 func (x *WriteNode) Desc() string {
-	return "Universal acquisition write node. Supports modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104."
+	return "Universal acquisition write node. Supports modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104, bacnet."
 }

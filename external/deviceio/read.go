@@ -32,7 +32,7 @@ func init() {
 
 // Config defines the universal acquisition read configuration.
 type Config struct {
-	Driver string `json:"driver" label:"Driver" desc:"acquisition driver: modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104" required:"true"`
+	Driver string `json:"driver" label:"Driver" desc:"acquisition driver: modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104, bacnet" required:"true"`
 }
 
 // Node delegates reads to a concrete acquisition read node selected by driver.
@@ -68,6 +68,8 @@ func (x *Node) Init(ruleConfig types.Config, configuration types.Configuration) 
 		return x.initDelegate(ruleConfig, configuration, "x/dlt645Read")
 	case "iec104":
 		return x.initDelegate(ruleConfig, configuration, "x/iec104Read")
+	case "bacnet":
+		return x.initDelegate(ruleConfig, configuration, "x/bacnetRead")
 	default:
 		return fmt.Errorf("unsupported iot read driver: %s", x.Config.Driver)
 	}
@@ -98,5 +100,5 @@ func (x *Node) Destroy() {
 }
 
 func (x *Node) Desc() string {
-	return "Universal acquisition read node. Supports modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104."
+	return "Universal acquisition read node. Supports modbus, s7, eip, snmp, opcua, mc, fins, dlt645, iec104, bacnet."
 }

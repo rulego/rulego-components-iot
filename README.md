@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml/badge.svg)](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml)
 
-IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write), time-series storage, and soft-PLC logic control across 9 industrial protocols and 5 TSDB backends.
+IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write), time-series storage, and soft-PLC logic control across 10 industrial protocols and 5 TSDB backends.
 
 [Doc](https://rulego.cc/en/pages/iot-overview/)
 
@@ -19,6 +19,7 @@ IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unifi
 | FINS (Omron) | ✅ | ✅ | — | DM100, CIO10.0, D100:20 |
 | DL/T 645 | ✅ | ✅ | — | DI: 00-01-00-00 |
 | IEC 60870-5-104 | ✅ | ✅ | — | IOA: 100, 16385 |
+| BACnet/IP | ✅ | ✅ | — | analog-input:0, ai:1, device:100:object-name |
 | HJ 212 | — | — | ✅ (TCP) | 环保数采协议 |
 
 ## TSDB Backends

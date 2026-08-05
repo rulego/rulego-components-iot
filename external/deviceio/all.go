@@ -18,6 +18,7 @@
 package deviceio
 
 import (
+	_ "github.com/rulego/rulego-components-iot/external/bacnet"
 	_ "github.com/rulego/rulego-components-iot/external/dlt645"
 	_ "github.com/rulego/rulego-components-iot/external/eip"
 	_ "github.com/rulego/rulego-components-iot/external/fins"

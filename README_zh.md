@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml/badge.svg)](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml)
 
-[RuleGo](https://github.com/rulego/rulego) 的 IoT 协议组件库 — 统一采集（读/写）、时序落盘与软 PLC 式逻辑控制，覆盖 9 种工业协议和 5 种时序数据库。
+[RuleGo](https://github.com/rulego/rulego) 的 IoT 协议组件库 — 统一采集（读/写）、时序落盘与软 PLC 式逻辑控制，覆盖 10 种工业协议和 5 种时序数据库。
 
 [文档](https://rulego.cc/pages/iot-overview/)
 
@@ -19,6 +19,7 @@
 | FINS (欧姆龙) | ✅ | ✅ | — | DM100, CIO10.0, D100:20 |
 | DL/T 645 | ✅ | ✅ | — | DI: 00-01-00-00 |
 | IEC 60870-5-104 | ✅ | ✅ | — | IOA: 100, 16385 |
+| BACnet/IP | ✅ | ✅ | — | analog-input:0, ai:1, device:100:object-name |
 | HJ 212 | — | — | ✅ (TCP) | 环保数采协议 |
 
 ## 时序数据库
