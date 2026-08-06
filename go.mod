@@ -17,7 +17,7 @@ require (
 	github.com/prometheus/prometheus v0.305.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
-	github.com/rulego/rulego v0.37.1-0.20260806084530-f1e71cd989e3
+	github.com/rulego/rulego v0.37.1-0.20260806102237-d3aa2f14bec2
 	github.com/simonvetter/modbus v1.6.4
 	github.com/spf13/cast v1.6.0
 	github.com/stretchr/testify v1.11.1
