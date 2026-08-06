@@ -19,7 +19,9 @@ jobs:
       opcua-simulator:
         image: mcr.microsoft.com/iotedge/opc-plc:latest
         ports:
-          - 53530:50000  # 映射到测试期望的端口
+          # 宿主端口必须避开 Linux 动态端口区间 32768-60999，
+          # 否则拉镜像的出站连接可能占用该端口导致 bind: address already in use（原 53530 在区间内）
+          - 4840:50000
           - 8080:8080    # Web 服务端口
         options: >-
           --health-cmd "timeout 10 bash -c '</dev/tcp/localhost/50000' || exit 1"
@@ -158,8 +160,8 @@ jobs:
         
         # 等待 OPC UA 模拟器启动
         if [ "$SKIP_OPCUA_TESTS" != "true" ]; then
-          echo "等待 OPC UA 模拟器启动 (端口 53530)..."
-          timeout 120 sh -c 'until nc -z localhost 53530; do echo "等待中..."; sleep 3; done'
+          echo "等待 OPC UA 模拟器启动 (端口 4840)..."
+          timeout 120 sh -c 'until nc -z localhost 4840; do echo "等待中..."; sleep 3; done'
           echo "OPC UA 模拟器已就绪!"
           
           # 验证 OPC UA 服务器响应
@@ -183,8 +185,8 @@ jobs:
         INTEGRATION_TESTS: true
         
         # OPC UA 配置
-        OPCUA_ENDPOINT: opc.tcp://localhost:53530
-        OPCUA_SERVER_URL: opc.tcp://localhost:53530/OPCUA/SimulationServer
+        OPCUA_ENDPOINT: opc.tcp://localhost:4840
+        OPCUA_SERVER_URL: opc.tcp://localhost:4840/OPCUA/SimulationServer
         
         # Modbus 配置
         MODBUS_SERVER_HOST: localhost
