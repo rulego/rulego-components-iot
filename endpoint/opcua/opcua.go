@@ -397,6 +397,7 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 	client, err := x.SharedNode.GetSafely()
 	if err != nil {
 		x.Printf("get shared client error %v ", err)
+		x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
 		return err
 	}
 
@@ -408,6 +409,10 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 	data, resp, err := opcuaClient.Read(client, nodeIds, x.RuleConfig.Logger)
 	if err != nil {
 		x.Printf("read nodes error %v ", err)
+		x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
+		if newClient, cerr := x.initClient(); cerr == nil {
+			x.SharedNode.Refresh(newClient)
+		}
 		return err
 	}
 	points := opcuaClient.ToPointsData(pts, data, resp)

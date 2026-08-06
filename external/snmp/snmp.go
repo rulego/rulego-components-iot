@@ -97,7 +97,7 @@ var snmpOpLocks iot_points.OpLocks
 
 // snmpReconnecter connection rebuild capability interface.
 type snmpReconnecter interface {
-	reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error)
+	reconnect(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -188,8 +188,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = err
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
+			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
 			oldClient := client
-			newClient, rerr := x.reconnect(oldClient)
+			newClient, rerr := x.reconnect(oldClient, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -202,12 +203,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error) {
+func (x *ReadNode) reconnect(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -223,7 +224,7 @@ func (x *ReadNode) reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error) {
 		return current, nil
 	}
 	_ = closeClient(old)
-	time.Sleep(iot_points.ReconnectDelay)
+	time.Sleep(iot_points.BackoffFor(attempt))
 	newClient, err := snmpclient.DefaultHolder(x.Config).NewClient()
 	if err != nil {
 		return nil, err
@@ -333,8 +334,9 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
 			oldClient := client
-			newClient, rerr := x.reconnect(oldClient)
+			newClient, rerr := x.reconnect(oldClient, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -347,12 +349,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error) {
+func (x *WriteNode) reconnect(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -368,7 +370,7 @@ func (x *WriteNode) reconnect(old *gosnmp.GoSNMP) (*gosnmp.GoSNMP, error) {
 		return current, nil
 	}
 	_ = closeClient(old)
-	time.Sleep(iot_points.ReconnectDelay)
+	time.Sleep(iot_points.BackoffFor(attempt))
 	newClient, err := snmpclient.DefaultHolder(x.Config).NewClient()
 	if err != nil {
 		return nil, err

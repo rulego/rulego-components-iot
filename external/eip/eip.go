@@ -77,7 +77,7 @@ var eipOpLocks iot_points.OpLocks
 
 // eipReconnecter connection rebuild capability interface.
 type eipReconnecter interface {
-	reconnect(old *gologix.Client) (*gologix.Client, error)
+	reconnect(old *gologix.Client, attempt int) (*gologix.Client, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -168,8 +168,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = err
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
+			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
 			oldClient := client
-			newClient, rerr := x.reconnect(oldClient)
+			newClient, rerr := x.reconnect(oldClient, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -182,12 +183,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gologix.Client) (*gologix.Client, error) {
+func (x *ReadNode) reconnect(old *gologix.Client, attempt int) (*gologix.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(eipReconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -204,7 +205,7 @@ func (x *ReadNode) reconnect(old *gologix.Client) (*gologix.Client, error) {
 	}
 	if old != nil {
 		_ = old.Disconnect()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newClient, err := eipclient.DefaultHolder(x.Config).NewClient()
 	if err != nil {
@@ -316,8 +317,9 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
 			oldClient := client
-			newClient, rerr := x.reconnect(oldClient)
+			newClient, rerr := x.reconnect(oldClient, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -330,12 +332,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gologix.Client) (*gologix.Client, error) {
+func (x *WriteNode) reconnect(old *gologix.Client, attempt int) (*gologix.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(eipReconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -352,7 +354,7 @@ func (x *WriteNode) reconnect(old *gologix.Client) (*gologix.Client, error) {
 	}
 	if old != nil {
 		_ = old.Disconnect()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newClient, err := eipclient.DefaultHolder(x.Config).NewClient()
 	if err != nil {

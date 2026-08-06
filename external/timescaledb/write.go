@@ -17,7 +17,11 @@
 package timescaledb
 
 import (
+	"context"
 	"database/sql"
+	"strconv"
+	"strings"
+	"time"
 
 	_ "github.com/lib/pq"
 
@@ -31,6 +35,29 @@ import (
 
 func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
+}
+
+// initPingTimeout bounds the connection validation during init.
+var initPingTimeout = 10 * time.Second
+
+// withConnectTimeout appends pq connect_timeout to the DSN when absent.
+// lib/pq has no context cancel during TCP dial, so the dial timeout must be set via DSN.
+func withConnectTimeout(dsn string, timeout time.Duration) string {
+	if strings.Contains(dsn, "connect_timeout") {
+		return dsn
+	}
+	secs := int(timeout.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		return dsn + sep + "connect_timeout=" + strconv.Itoa(secs)
+	}
+	return dsn + " connect_timeout=" + strconv.Itoa(secs)
 }
 
 // WriteConfig TimescaleDB write connection configuration.
@@ -67,12 +94,14 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 	}
 	x.dbTemplate, _ = el.NewTemplate(x.Config.DB)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.DSN, ruleConfig.NodeClientInitNow, func() (*sql.DB, error) {
-		db, err := sql.Open("postgres", x.Config.DSN)
+		db, err := sql.Open("postgres", withConnectTimeout(x.Config.DSN, initPingTimeout))
 		if err != nil {
 			return nil, err
 		}
 		// Test the connection
-		if err := db.Ping(); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), initPingTimeout)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
 			_ = db.Close()
 			return nil, err
 		}

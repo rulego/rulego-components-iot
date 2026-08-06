@@ -19,6 +19,7 @@ package tdengine
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	_ "github.com/taosdata/driver-go/v3/taosRestful"
 
@@ -33,6 +34,9 @@ import (
 func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
+
+// initQueryTimeout bounds the validation query during connection init.
+var initQueryTimeout = 10 * time.Second
 
 // WriteConfig TDengine write connection configuration.
 type WriteConfig struct {
@@ -73,7 +77,9 @@ func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configurat
 			return nil, err
 		}
 		// Execute real query to verify connection availability
-		rows, err := db.QueryContext(context.Background(), "SELECT SERVER_VERSION()")
+		ctx, cancel := context.WithTimeout(context.Background(), initQueryTimeout)
+		defer cancel()
+		rows, err := db.QueryContext(ctx, "SELECT SERVER_VERSION()")
 		if err != nil {
 			_ = db.Close()
 			return nil, err

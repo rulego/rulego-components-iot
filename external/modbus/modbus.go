@@ -125,7 +125,7 @@ type RtuConfig struct {
 }
 
 // reconnectFunc callback function to re-establish connection
-type reconnectFunc func(oldClient *modbus.ModbusClient) (*modbus.ModbusClient, error)
+type reconnectFunc func(oldClient *modbus.ModbusClient, attempt int) (*modbus.ModbusClient, error)
 
 // RetryableModbusClient Modbus client with retry logic
 type RetryableModbusClient struct {
@@ -133,6 +133,7 @@ type RetryableModbusClient struct {
 	maxRetries  int
 	logger      types.Logger
 	reconnectFn reconnectFunc
+	onStatus    func(types.NodeStatus, string)
 	// Save runtime config (underlying lib has no getter, need to restore after reconnect)
 	mu            sync.RWMutex
 	currentUnitId uint8
@@ -141,7 +142,7 @@ type RetryableModbusClient struct {
 }
 
 // NewRetryableModbusClient creates a new Modbus client with retry logic
-func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logger types.Logger, reconnectFn reconnectFunc, unitId uint8, endianness modbus.Endianness, wordOrder modbus.WordOrder) *RetryableModbusClient {
+func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logger types.Logger, reconnectFn reconnectFunc, unitId uint8, endianness modbus.Endianness, wordOrder modbus.WordOrder, onStatus func(types.NodeStatus, string)) *RetryableModbusClient {
 	return &RetryableModbusClient{
 		client:        client,
 		maxRetries:    maxRetries,
@@ -150,6 +151,7 @@ func NewRetryableModbusClient(client *modbus.ModbusClient, maxRetries int, logge
 		currentUnitId: unitId,
 		endianness:    endianness,
 		wordOrder:     wordOrder,
+		onStatus:      onStatus,
 	}
 }
 
@@ -182,11 +184,14 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 			}
 
 			r.warnf("Modbus %s error: %s, retry count: %d, trying to reconnect...", operation, err, retry)
+			if r.onStatus != nil {
+				r.onStatus(types.StatusReconnecting, err.Error())
+			}
 
 			// Rebuild connection via SharedNode mechanism
 			if r.reconnectFn != nil {
 				oldClient := r.client
-				newClient, reconnectErr := r.reconnectFn(oldClient)
+				newClient, reconnectErr := r.reconnectFn(oldClient, retry)
 				if reconnectErr != nil {
 					r.warnf("Failed to reconnect: %s", reconnectErr)
 					return &ModbusConnErr{Err: reconnectErr}
@@ -680,14 +685,14 @@ func readModbusValues[T bool | uint16 | uint32 | uint64 | float32 | float64 | by
 }
 
 // reconnect safely rebuilds connection through SharedNode mechanism.
-func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusClient, error) {
+func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient, attempt int) (*modbus.ModbusClient, error) {
 	// ref:// borrower: connection owned by source node, borrower does not rebuild.
 	if x.SharedNode.IsFromPool() {
 		// NodePool mode: delegate to source node in pool
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if sourceNode, ok := nodeCtx.GetNode().(*ModbusNode); ok {
-					return sourceNode.reconnect(oldClient)
+					return sourceNode.reconnect(oldClient, attempt)
 				}
 			}
 		}
@@ -713,7 +718,7 @@ func (x *ModbusNode) reconnect(oldClient *modbus.ModbusClient) (*modbus.ModbusCl
 	if oldClient != nil {
 		_ = oldClient.Close()
 		modbusOpLocks.Delete(oldClient) // Clean up old connection operation lock
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 
 	// Build new connection, Refresh updates holder
@@ -745,6 +750,7 @@ func (x *ModbusNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		x.getCurrentUnitId(),
 		modbus.Endianness(x.Config.EncodingConfig.Endianness),
 		modbus.WordOrder(x.Config.EncodingConfig.WordOrder),
+		x.SharedNode.SetStatus,
 	)
 
 	params, err = x.getParams(ctx, msg)

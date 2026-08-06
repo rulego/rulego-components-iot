@@ -79,7 +79,7 @@ var bacnetOpLocks iot_points.OpLocks
 
 // bacnetReconnecter connection rebuild capability interface.
 type bacnetReconnecter interface {
-	reconnect(old *bacnetclient.Client) (*bacnetclient.Client, error)
+	reconnect(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -154,8 +154,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = rerr
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
 			oldClient := client
-			newC, rerr2 := x.reconnect(oldClient)
+			newC, rerr2 := x.reconnect(oldClient, retry)
 			if rerr2 != nil {
 				ctx.TellFailure(msg, rerr2)
 				return
@@ -167,12 +168,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-func (x *ReadNode) reconnect(old *bacnetclient.Client) (*bacnetclient.Client, error) {
+func (x *ReadNode) reconnect(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(bacnetReconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -188,7 +189,7 @@ func (x *ReadNode) reconnect(old *bacnetclient.Client) (*bacnetclient.Client, er
 		return current, nil
 	}
 	_ = closeClient(old)
-	time.Sleep(iot_points.ReconnectDelay)
+	time.Sleep(iot_points.BackoffFor(attempt))
 	newC, err := newClient(x.Config)
 	if err != nil {
 		return nil, err
@@ -281,8 +282,9 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = werr
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
 			oldClient := client
-			newC, rerr := x.reconnect(oldClient)
+			newC, rerr := x.reconnect(oldClient, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -294,12 +296,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	ctx.TellFailure(msg, lastErr)
 }
 
-func (x *WriteNode) reconnect(old *bacnetclient.Client) (*bacnetclient.Client, error) {
+func (x *WriteNode) reconnect(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(bacnetReconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -315,7 +317,7 @@ func (x *WriteNode) reconnect(old *bacnetclient.Client) (*bacnetclient.Client, e
 		return current, nil
 	}
 	_ = closeClient(old)
-	time.Sleep(iot_points.ReconnectDelay)
+	time.Sleep(iot_points.BackoffFor(attempt))
 	newC, err := newClient(x.Config)
 	if err != nil {
 		return nil, err

@@ -77,7 +77,7 @@ var s7OpLocks iot_points.OpLocks
 
 // s7Reconnecter connection rebuild capability interface.
 type s7Reconnecter interface {
-	reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler, error)
+	reconnect(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -170,8 +170,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = err
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
+			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
 			oldHandler := handler
-			newHandler, rerr := x.reconnect(oldHandler)
+			newHandler, rerr := x.reconnect(oldHandler, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -184,12 +185,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler, error) {
+func (x *ReadNode) reconnect(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -206,7 +207,7 @@ func (x *ReadNode) reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newHandler, err := s7client.DefaultHolder(x.Config).NewHandler()
 	if err != nil {
@@ -319,8 +320,9 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
 			oldHandler := handler
-			newHandler, rerr := x.reconnect(oldHandler)
+			newHandler, rerr := x.reconnect(oldHandler, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -333,12 +335,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandler, error) {
+func (x *WriteNode) reconnect(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -355,7 +357,7 @@ func (x *WriteNode) reconnect(old *gos7.TCPClientHandler) (*gos7.TCPClientHandle
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newHandler, err := s7client.DefaultHolder(x.Config).NewHandler()
 	if err != nil {

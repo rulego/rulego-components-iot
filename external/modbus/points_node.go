@@ -41,7 +41,7 @@ func init() {
 
 // modbusPointsReconnecter connection rebuild capability interface.
 type modbusPointsReconnecter interface {
-	reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, error)
+	reconnect(old *modbus.ModbusClient, attempt int) (*modbus.ModbusClient, error)
 }
 
 // PointsConfiguration point-based modbus node configuration (read/write shared).
@@ -91,6 +91,7 @@ func (x *modbusConn) newRetryableClient(client *modbus.ModbusClient) *RetryableM
 		x.getCurrentUnitId(),
 		modbus.Endianness(x.Config.EncodingConfig.Endianness),
 		modbus.WordOrder(x.Config.EncodingConfig.WordOrder),
+		x.SharedNode.SetStatus,
 	)
 }
 
@@ -128,12 +129,12 @@ func (x *modbusConn) initClient() (*modbus.ModbusClient, error) {
 }
 
 // reconnect safely rebuilds connection. ref:// borrower delegates to source node or returns error; local owner rebuilds then Refresh updates holder.
-func (x *modbusConn) reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, error) {
+func (x *modbusConn) reconnect(old *modbus.ModbusClient, attempt int) (*modbus.ModbusClient, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(modbusPointsReconnecter); ok { // Cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -151,7 +152,7 @@ func (x *modbusConn) reconnect(old *modbus.ModbusClient) (*modbus.ModbusClient, 
 	if old != nil {
 		_ = old.Close()
 		modbusOpLocks.Delete(old) // Clean up old connection operation lock entry
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newClient, err := x.initClient()
 	if err != nil {

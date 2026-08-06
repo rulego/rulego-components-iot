@@ -141,7 +141,7 @@ func newTestDriver(t *testing.T, handler *testHandler, port string) *driver {
 	assert.Nil(t, client.Open())
 	t.Cleanup(func() { _ = client.Close() })
 
-	retryable := NewRetryableModbusClient(client, 0, nil, nil, 1, modbus.BIG_ENDIAN, modbus.HIGH_WORD_FIRST)
+	retryable := NewRetryableModbusClient(client, 0, nil, nil, 1, modbus.BIG_ENDIAN, modbus.HIGH_WORD_FIRST, nil)
 	return newDriver(retryable)
 }
 

@@ -32,6 +32,20 @@ const (
 	DefaultTimeoutSec = 5
 )
 
+// BackoffFor returns the reconnect backoff for the given (0-based) attempt.
+func BackoffFor(attempt int) time.Duration {
+	switch attempt {
+	case 0:
+		return 200 * time.Millisecond
+	case 1:
+		return 500 * time.Millisecond
+	case 2:
+		return time.Second
+	default:
+		return 2 * time.Second
+	}
+}
+
 // Common data type enumeration (protocol-independent). Each driver maps to protocol native types.
 const (
 	TypeBool    = "BOOL"

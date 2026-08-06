@@ -63,6 +63,7 @@ type ConfigProp interface {
 // Holder IEC 104 client configuration holder
 type Holder struct {
 	Config ConfigProp
+	OnLink func(active bool)
 }
 
 // DefaultHolder default configuration
@@ -84,6 +85,7 @@ type Client struct {
 	common  uint16
 	timeout time.Duration
 	active  atomic.Bool // Link active (after STARTDT confirmed)
+	onLink  func(bool)  // optional link-state callback forwarded from cs104
 
 	mu       sync.RWMutex
 	cache    map[uint]*entry // IOA -> latest value
@@ -123,9 +125,10 @@ func (h *Holder) NewClient() (*Client, error) {
 	settings.Cfg104.ConnectTimeout0 = c.timeout
 	settings.LogCfg = &iec104client.LogCfg{Enable: false}
 
+	c.onLink = h.OnLink
 	c.c = iec104client.New(settings, c)
-	c.c.SetServerActiveHandler(func(*iec104client.Client) { c.active.Store(true) })
-	c.c.SetConnectionLostHandler(func(*iec104client.Client) { c.active.Store(false) })
+	c.c.SetServerActiveHandler(func(*iec104client.Client) { c.active.Store(true); if c.onLink != nil { c.onLink(true) } })
+	c.c.SetConnectionLostHandler(func(*iec104client.Client) { c.active.Store(false); if c.onLink != nil { c.onLink(false) } })
 
 	if err := c.c.Connect(); err != nil {
 		return nil, err

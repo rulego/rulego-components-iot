@@ -159,7 +159,8 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
-			newClient, rerr := x.reconnect(client)
+			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
+			newClient, rerr := x.reconnect(client, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -191,12 +192,12 @@ func (x *WriteNode) initClient() (*opcua.Client, error) {
 }
 
 // reconnect safely rebuilds connection.
-func (x *WriteNode) reconnect(old *opcua.Client) (*opcua.Client, error) {
+func (x *WriteNode) reconnect(old *opcua.Client, attempt int) (*opcua.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // Cross-type: Read↔Write both can delegate
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -213,7 +214,7 @@ func (x *WriteNode) reconnect(old *opcua.Client) (*opcua.Client, error) {
 	}
 	if old != nil {
 		_ = old.Close(context.Background())
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newClient, err := x.initClient()
 	if err != nil {

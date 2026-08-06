@@ -46,6 +46,24 @@ func init() {
 	_ = rulego.Registry.Register(&WriteNode{})
 }
 
+// iec104StatusSetter forwards cs104 link state to a SharedNode.
+type iec104StatusSetter interface {
+	SetStatus(types.NodeStatus, string)
+}
+
+// newIEC104Client builds a client and wires cs104 link callbacks to the SharedNode status.
+func newIEC104Client(cfg iec104client.ConfigProp, setter iec104StatusSetter) (*iec104client.Client, error) {
+	h := iec104client.DefaultHolder(cfg)
+	h.OnLink = func(active bool) {
+		if active {
+			setter.SetStatus(types.StatusConnected, "")
+		} else {
+			setter.SetStatus(types.StatusReconnecting, "")
+		}
+	}
+	return h.NewClient()
+}
+
 // Configuration connection configuration
 type Configuration struct {
 	// Substation address, format host:port, IEC 104 default port 2404
@@ -69,7 +87,7 @@ func (c Configuration) GetTimeout() int { return c.Timeout }
 
 // iec104Reconnecter reconnection capability interface.
 type iec104Reconnecter interface {
-	reconnect(old *iec104client.Client) (*iec104client.Client, error)
+	reconnect(old *iec104client.Client, attempt int) (*iec104client.Client, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -110,7 +128,7 @@ func (x *ReadNode) New() types.Node {
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*iec104client.Client, error) {
-		return iec104client.DefaultHolder(x.Config).NewClient()
+		return newIEC104Client(x.Config, &x.SharedNode)
 	}, func(client *iec104client.Client) error {
 		if client != nil {
 			return client.Close()
@@ -156,8 +174,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = rerr
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
 			oldClient := client
-			newClient, cerr := x.reconnect(oldClient)
+			newClient, cerr := x.reconnect(oldClient, retry)
 			if cerr != nil {
 				ctx.TellFailure(msg, cerr)
 				return
@@ -169,12 +188,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *iec104client.Client) (*iec104client.Client, error) {
+func (x *ReadNode) reconnect(old *iec104client.Client, attempt int) (*iec104client.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(iec104Reconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -191,9 +210,9 @@ func (x *ReadNode) reconnect(old *iec104client.Client) (*iec104client.Client, er
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
-	newClient, err := iec104client.DefaultHolder(x.Config).NewClient()
+	newClient, err := newIEC104Client(x.Config, &x.SharedNode)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +272,7 @@ func (x *WriteNode) New() types.Node {
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*iec104client.Client, error) {
-		return iec104client.DefaultHolder(x.Config).NewClient()
+		return newIEC104Client(x.Config, &x.SharedNode)
 	}, func(client *iec104client.Client) error {
 		if client != nil {
 			return client.Close()
@@ -291,8 +310,9 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = werr
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, werr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, werr.Error())
 			oldClient := client
-			newClient, cerr := x.reconnect(oldClient)
+			newClient, cerr := x.reconnect(oldClient, retry)
 			if cerr != nil {
 				ctx.TellFailure(msg, cerr)
 				return
@@ -304,12 +324,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *iec104client.Client) (*iec104client.Client, error) {
+func (x *WriteNode) reconnect(old *iec104client.Client, attempt int) (*iec104client.Client, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(iec104Reconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -326,9 +346,9 @@ func (x *WriteNode) reconnect(old *iec104client.Client) (*iec104client.Client, e
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
-	newClient, err := iec104client.DefaultHolder(x.Config).NewClient()
+	newClient, err := newIEC104Client(x.Config, &x.SharedNode)
 	if err != nil {
 		return nil, err
 	}

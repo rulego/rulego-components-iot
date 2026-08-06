@@ -62,7 +62,7 @@ var dlt645OpLocks iot_points.OpLocks
 
 // dlt645Reconnecter reconnection capability interface.
 type dlt645Reconnecter interface {
-	reconnect(old net.Conn) (net.Conn, error)
+	reconnect(old net.Conn, attempt int) (net.Conn, error)
 }
 
 // ReadNode batch reads DLT645 power meter points, results (unified Data list) written to msg.Data, routed via Success link.
@@ -150,8 +150,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = err
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
+			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
 			oldConn := conn
-			newConn, rerr := x.reconnect(oldConn)
+			newConn, rerr := x.reconnect(oldConn, retry)
 			if rerr != nil {
 				ctx.TellFailure(msg, rerr)
 				return
@@ -173,12 +174,12 @@ func (x *ReadNode) timeout() time.Duration {
 }
 
 // reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old net.Conn) (net.Conn, error) {
+func (x *ReadNode) reconnect(old net.Conn, attempt int) (net.Conn, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(dlt645Reconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -195,7 +196,7 @@ func (x *ReadNode) reconnect(old net.Conn) (net.Conn, error) {
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	newConn, err := dialTCP(x.Config.Server, x.Config.Timeout)
 	if err != nil {

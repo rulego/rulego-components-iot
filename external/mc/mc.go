@@ -84,7 +84,7 @@ func newClient(config Configuration) (*gomcprotocol.Client3E, error) {
 
 // mcReconnecter reconnection capability interface.
 type mcReconnecter interface {
-	reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E, error)
+	reconnect(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -175,8 +175,9 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = rerr
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
 			oldClient := client
-			newClient, cerr := x.reconnect(oldClient)
+			newClient, cerr := x.reconnect(oldClient, retry)
 			if cerr != nil {
 				ctx.TellFailure(msg, cerr)
 				return
@@ -189,12 +190,12 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E, error) {
+func (x *ReadNode) reconnect(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(mcReconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -211,7 +212,7 @@ func (x *ReadNode) reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	client, err := newClient(x.Config)
 	if err != nil {
@@ -321,8 +322,9 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		lastErr = werr
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, werr)
+			x.SharedNode.SetStatus(types.StatusReconnecting, werr.Error())
 			oldClient := client
-			newClient, cerr := x.reconnect(oldClient)
+			newClient, cerr := x.reconnect(oldClient, retry)
 			if cerr != nil {
 				ctx.TellFailure(msg, cerr)
 				return
@@ -335,12 +337,12 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 }
 
 // reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3E, error) {
+func (x *WriteNode) reconnect(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error) {
 	if x.SharedNode.IsFromPool() {
 		if x.RuleConfig.NodePool != nil {
 			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
 				if source, ok := nodeCtx.GetNode().(mcReconnecter); ok {
-					return source.reconnect(old)
+					return source.reconnect(old, attempt)
 				}
 			}
 		}
@@ -357,7 +359,7 @@ func (x *WriteNode) reconnect(old *gomcprotocol.Client3E) (*gomcprotocol.Client3
 	}
 	if old != nil {
 		_ = old.Close()
-		time.Sleep(iot_points.ReconnectDelay)
+		time.Sleep(iot_points.BackoffFor(attempt))
 	}
 	client, err := newClient(x.Config)
 	if err != nil {
