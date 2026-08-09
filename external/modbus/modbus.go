@@ -40,7 +40,7 @@ const (
 	DefaultServer                       = "tcp://127.0.0.1:502"
 	DefaultSpeed      uint              = 19200
 	DefaultDataBits   uint              = 8
-	DefaultParity     uint              = modbus.PARITY_NONE
+	DefaultParity     Parity            = ParityNone
 	DefaultStopBits   uint              = 2
 	DefaultTimeout    time.Duration     = time.Second * 5
 	DefaultEndianness modbus.Endianness = modbus.BIG_ENDIAN
@@ -118,8 +118,9 @@ type RtuConfig struct {
 	Speed uint `json:"speed" label:"Speed" desc:"Serial link speed in bps"`
 	// DataBits sets the number of bits per serial character (rtu only)
 	DataBits uint `json:"dataBits" label:"Data Bits" desc:"Bits per serial character: 5, 6, 7, 8"`
-	// Parity sets the serial link parity mode (rtu only)
-	Parity uint `json:"parity" label:"Parity" desc:"Parity mode: 0=None, 1=Even, 2=Odd"`
+	// Parity sets the serial link parity mode (rtu only).
+	// Wire form is the letter (N/O/E) as in "8E1"; 0/1/2 still parsed for compatibility.
+	Parity Parity `json:"parity" label:"Parity" desc:"Parity mode: N=None, E=Even, O=Odd (0/1/2 also accepted)"`
 	// StopBits sets the number of serial stop bits (rtu only)
 	StopBits uint `json:"stopBits" label:"Stop Bits" desc:"Stop bits: 1, 2"`
 }
@@ -1091,7 +1092,7 @@ func (x *ModbusNode) initClient() (*modbus.ModbusClient, error) {
 		DataBits: x.Config.RtuConfig.DataBits,
 		StopBits: x.Config.RtuConfig.StopBits,
 		Timeout:  time.Duration(x.Config.TcpConfig.Timeout) * time.Second,
-		Parity:   x.Config.RtuConfig.Parity,
+		Parity:   uint(x.Config.RtuConfig.Parity),
 	}
 	x.debugf("Initializing Modbus connection to %s with timeout=%ds, unitId=%d",
 		x.Config.Server, x.Config.TcpConfig.Timeout, x.Config.UnitId)

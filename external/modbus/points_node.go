@@ -103,7 +103,7 @@ func (x *modbusConn) initClient() (*modbus.ModbusClient, error) {
 		DataBits: x.Config.RtuConfig.DataBits,
 		StopBits: x.Config.RtuConfig.StopBits,
 		Timeout:  time.Duration(x.Config.TcpConfig.Timeout) * time.Second,
-		Parity:   x.Config.RtuConfig.Parity,
+		Parity:   uint(x.Config.RtuConfig.Parity),
 	}
 	if strings.HasPrefix(x.Config.Server, "tcp+tls://") {
 		clientKeyPair, err := tls.LoadX509KeyPair(x.Config.TcpConfig.CertFile, x.Config.TcpConfig.CertKeyFile)
