@@ -173,77 +173,16 @@ func ReadPoints(handler *gos7.TCPClientHandler, points []Point, logger types.Log
 		return nil, errors.New("s7 handler is nil")
 	}
 	client := gos7.NewClient(handler)
-	results := make([]Data, 0, len(points))
-	failCount := 0
-	var lastErr error
-	for _, p := range points {
-		d := Data{
-			Name:      p.Name,
-			Address:   formatAddr(p),
-			Type:      strings.ToUpper(strings.TrimSpace(p.Type)),
-			Timestamp: time.Now(),
-		}
-		val, err := readPoint(client, p)
-		if err != nil {
-			d.Quality = "bad"
-			failCount++
-			lastErr = err
-			if logger != nil {
-				logger.Errorf("[S7] read %s error: %v", d.Address, err)
-			}
-		} else {
-			d.Quality = "good"
-			d.Value = val
-		}
-		results = append(results, d)
-	}
+	// Contiguous points in the same area/DB are merged into range reads (see batch.go).
+	// handler.PDULength is the value negotiated at connect time; 0 before that, and
+	// usablePayload falls back to a conservative default in that case.
+	results := make([]Data, len(points))
+	failCount, lastErr := readBlocks(client, points, results, handler.PDULength, logger)
 	// All points failed: suspected connection-level error, return error
 	if len(points) > 0 && failCount == len(points) {
 		return results, fmt.Errorf("all %d points failed (possible connection error): %w", failCount, lastErr)
 	}
 	return results, nil
-}
-
-// readPoint reads a single point
-func readPoint(client gos7.Client, p Point) (interface{}, error) {
-	area, err := parseArea(p.Area)
-	if err != nil {
-		return nil, err
-	}
-	t := strings.ToUpper(strings.TrimSpace(p.Type))
-	ts := sizeOfType(t)
-	if ts == 0 {
-		return nil, fmt.Errorf("unsupported s7 type: %q", p.Type)
-	}
-	count := p.Count
-	if count <= 0 {
-		count = 1
-	}
-	sizeBytes := ts
-	if t == "STRING" {
-		sizeBytes = stringMaxLen(p) + 2
-	} else {
-		sizeBytes = ts * count
-	}
-	buf := make([]byte, sizeBytes)
-
-	switch area {
-	case areaDB:
-		err = client.AGReadDB(p.DbNumber, p.Address, sizeBytes, buf)
-	case areaM:
-		err = client.AGReadMB(p.Address, sizeBytes, buf)
-	case areaI:
-		err = client.AGReadEB(p.Address, sizeBytes, buf)
-	case areaQ:
-		err = client.AGReadAB(p.Address, sizeBytes, buf)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if count > 1 && t != "BOOL" && t != "STRING" {
-		return decodeArray(buf, t, count)
-	}
-	return decodeScalar(buf, t, p.BitOffset)
 }
 
 // decodeScalar parses a single value (big-endian, S7 default byte order)
