@@ -198,35 +198,44 @@ func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]D
 	if client == nil {
 		return nil, errors.New("snmp client is nil")
 	}
-	results := make([]Data, 0, len(points))
+	// Per-point slots keep output ordered by point index even though get points are
+	// read out of order in batches, and walk points expand to several Data each.
+	perPoint := make([][]Data, len(points))
 	failCount := 0
 	var lastErr error
-	for _, p := range points {
-		op := strings.ToLower(strings.TrimSpace(p.Op))
-		if op == "walk" {
+
+	// Walk points stay one request each: a subtree traversal cannot be packed with others.
+	// Get points are collected and batched below.
+	var getIdx []int
+	for i, p := range points {
+		if strings.ToLower(strings.TrimSpace(p.Op)) == "walk" {
 			ds, err := readWalk(client, p)
 			if err != nil {
-				results = append(results, Data{Name: p.Name, Address: p.OID, Quality: "bad", Type: "walk", Timestamp: time.Now()})
+				perPoint[i] = []Data{{Name: p.Name, Address: p.OID, Quality: "bad", Type: "walk", Timestamp: time.Now()}}
 				failCount++
 				lastErr = err
 				if logger != nil {
 					logger.Errorf("[SNMP] walk %s error: %v", p.OID, err)
 				}
 			} else {
-				results = append(results, ds...)
+				perPoint[i] = ds
 			}
-		} else {
-			d, err := readGet(client, p)
-			if err != nil {
-				d.Quality = "bad"
-				failCount++
-				lastErr = err
-				if logger != nil {
-					logger.Errorf("[SNMP] get %s error: %v", p.OID, err)
-				}
-			}
-			results = append(results, d)
+			continue
 		}
+		getIdx = append(getIdx, i)
+	}
+
+	if len(getIdx) > 0 {
+		n, err := readGetBatch(client, getIdx, points, perPoint, logger)
+		failCount += n
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	results := make([]Data, 0, len(points))
+	for _, ds := range perPoint {
+		results = append(results, ds...)
 	}
 	// All points failed: suspected connection-level error, return error
 	if len(points) > 0 && failCount == len(points) {
@@ -236,7 +245,7 @@ func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]D
 }
 
 // readGet precisely reads single OID
-func readGet(client *gosnmp.GoSNMP, p Point) (Data, error) {
+func readGet(client snmpGetter, p Point) (Data, error) {
 	if strings.TrimSpace(p.OID) == "" {
 		return Data{Name: p.Name, Address: p.OID, Quality: "bad", Timestamp: time.Now()}, errors.New("empty OID")
 	}
