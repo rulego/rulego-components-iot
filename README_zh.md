@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml/badge.svg)](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml)
 
-[RuleGo](https://github.com/rulego/rulego) 的 IoT 协议组件库 — 统一采集（读/写）、时序落盘与软 PLC 式逻辑控制，覆盖 10 种工业协议和 5 种时序数据库。
+[RuleGo](https://github.com/rulego/rulego) 的 IoT 协议组件库 — 统一采集（读/写）、时序落盘与软 PLC 式逻辑控制，覆盖 10 种工业协议和 5 种时序数据库。**兼容 10+ 种工业 IoT 协议、一套统一格式通用**：所有协议共用同一套点位配置结构与采集输出格式，切换协议只需修改 `driver` 字段。
 
 [文档](https://rulego.cc/pages/iot-overview/)
 
@@ -95,7 +95,7 @@ import (
 
 | 优势 | 说明 |
 |------|------|
-| **下游协议无关** | 9 种协议输出完全相同的 `[{name, value, timestamp, error}]` 格式——下游转换/过滤/落盘节点无需关心数据来自哪个协议 |
+| **下游协议无关** | 10 种协议输出完全相同的 `[{name, value, timestamp, error}]` 格式——下游转换/过滤/落盘节点无需关心数据来自哪个协议 |
 | **一套拓扑换任意后端** | 只改 `driver` 字段即可切换协议或 TSDB，规则链连线不变 |
 | **逐点容错** | 单点失败标 `error` 继续采集，一个坏点不拖垮整批 |
 | **模板驱动** | 所有点位字段支持 `${msg.xx}` / `${metadata.xx}`，动态采集/写入无需改拓扑 |

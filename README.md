@@ -2,7 +2,7 @@
 
 [![Test](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml/badge.svg)](https://github.com/rulego/rulego-components-iot/actions/workflows/test.yml)
 
-IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write), time-series storage, and soft-PLC logic control across 10 industrial protocols and 5 TSDB backends.
+IoT protocol components for [RuleGo](https://github.com/rulego/rulego) — unified acquisition (read/write), time-series storage, and soft-PLC logic control across 10 industrial protocols and 5 TSDB backends. **Compatible with 10+ industrial IoT protocols under one unified data format**: all protocols share the same point configuration structure and acquisition output format; switching protocols only requires changing the `driver` field.
 
 [Doc](https://rulego.cc/en/pages/iot-overview/)
 
@@ -95,7 +95,7 @@ With `measurement` set on `x/tsdbWrite`, the acquisition array flows in directly
 
 | Advantage | Description |
 |-----------|-------------|
-| **Protocol-agnostic downstream** | All 9 protocols output identical `[{name, value, timestamp, error}]` — downstream nodes (transform/filter/TSDB) never care which protocol produced the data |
+| **Protocol-agnostic downstream** | All 10 protocols output identical `[{name, value, timestamp, error}]` — downstream nodes (transform/filter/TSDB) never care which protocol produced the data |
 | **One topology, any backend** | Change `driver` field to swap protocol or TSDB — rule chain wiring stays the same |
 | **Point-level fault tolerance** | Single point failure marks `error` and continues; one bad point doesn't abort the batch |
 | **Template-driven** | Every point field supports `${msg.xx}` / `${metadata.xx}` — dynamic acquisition/writing without topology changes |
