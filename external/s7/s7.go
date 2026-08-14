@@ -24,11 +24,8 @@
 package s7
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
-	"time"
 
 	"github.com/robinson/gos7"
 	"github.com/rulego/rulego"
@@ -75,9 +72,11 @@ func (c Configuration) GetTimeout() int { return c.Timeout }
 // s7OpLocks associates operation locks by underlying handler, serializes concurrent read/write on shared handler.
 var s7OpLocks iot_points.OpLocks
 
-// s7Reconnecter connection rebuild capability interface.
-type s7Reconnecter interface {
-	reconnect(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error)
+func closeClient(handler *gos7.TCPClientHandler) error {
+	if handler != nil {
+		return handler.Close()
+	}
+	return nil
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -118,109 +117,34 @@ func (x *ReadNode) New() types.Node {
 // Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gos7.TCPClientHandler, error) {
-		return s7client.DefaultHolder(x.Config).NewHandler()
-	}, func(handler *gos7.TCPClientHandler) error {
-		if handler != nil {
-			return handler.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg processes message. Auto reconnect retry maxRetries times on connection-level failure (all points failed).
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	handler, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no s7 points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, err := func() ([]iot_points.Data, error) {
-			opLock := s7OpLocks.Lock(handler)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(handler, x.RuleConfig.Logger).ReadPoints(rendered)
-		}()
-		if err == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = err
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
-			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
-			oldHandler := handler
-			newHandler, rerr := x.reconnect(oldHandler, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			s7OpLocks.Delete(oldHandler) // clean up old connection operation lock
-			handler = newHandler
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(client *gos7.TCPClientHandler) ([]iot_points.Data, error) {
+		return newDriver(client, x.RuleConfig.Logger).ReadPoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("s7 ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "s7", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newHandler, err := s7client.DefaultHolder(x.Config).NewHandler()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newHandler)
-	return newHandler, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[S7] "+format, v...)
-	}
+func (x *ReadNode) newClient() (*gos7.TCPClientHandler, error) {
+	return s7client.DefaultHolder(x.Config).NewHandler()
 }
 
 // Destroy cleans up resources
@@ -274,103 +198,34 @@ func (x *WriteNode) New() types.Node {
 // Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gos7.TCPClientHandler, error) {
-		return s7client.DefaultHolder(x.Config).NewHandler()
-	}, func(handler *gos7.TCPClientHandler) error {
-		if handler != nil {
-			return handler.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg processes message. Auto reconnect retry maxRetries times on write failure.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	handler, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no s7 points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		werr := func() error {
-			opLock := s7OpLocks.Lock(handler)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(handler, x.RuleConfig.Logger).WritePoints(rendered)
-		}()
-		if werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		} else {
-			lastErr = werr
-		}
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
-			oldHandler := handler
-			newHandler, rerr := x.reconnect(oldHandler, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			s7OpLocks.Delete(oldHandler) // clean up old connection operation lock
-			handler = newHandler
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *gos7.TCPClientHandler) error {
+		return newDriver(client, x.RuleConfig.Logger).WritePoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *gos7.TCPClientHandler, attempt int) (*gos7.TCPClientHandler, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(s7Reconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("s7 ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "s7", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newHandler, err := s7client.DefaultHolder(x.Config).NewHandler()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newHandler)
-	return newHandler, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[S7] "+format, v...)
-	}
+func (x *WriteNode) newClient() (*gos7.TCPClientHandler, error) {
+	return s7client.DefaultHolder(x.Config).NewHandler()
 }
 
 // Destroy cleans up resources
@@ -386,4 +241,36 @@ func (x *WriteNode) Destroy() {
 // Desc component description
 func (x *WriteNode) Desc() string {
 	return "S7 client for writing PLC points. Routes to Success/Failure"
+}
+
+func (x *ReadNode) runOpts() iot_points.RunOpts[*gos7.TCPClientHandler] {
+	return iot_points.RunOpts[*gos7.TCPClientHandler]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &s7OpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[S7]",
+		RetryOnTimeout: true,
+	}
+}
+
+func (x *WriteNode) runOpts() iot_points.RunOpts[*gos7.TCPClientHandler] {
+	return iot_points.RunOpts[*gos7.TCPClientHandler]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &s7OpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[S7]",
+		RetryOnTimeout: true,
+	}
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }

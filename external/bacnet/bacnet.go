@@ -25,9 +25,7 @@
 package bacnet
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -77,11 +75,6 @@ func newClient(c Configuration) (*bacnetclient.Client, error) {
 // bacnetOpLocks serializes concurrent read/write on a shared client connection.
 var bacnetOpLocks iot_points.OpLocks
 
-// bacnetReconnecter connection rebuild capability interface.
-type bacnetReconnecter interface {
-	reconnect(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error)
-}
-
 // ------------------------------------------------------------------------------------------------
 // ReadNode BACnet read node
 // ------------------------------------------------------------------------------------------------
@@ -109,104 +102,33 @@ func (x *ReadNode) New() types.Node {
 
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*bacnetclient.Client, error) {
-		return newClient(x.Config)
-	}, closeClient)
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no bacnet points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, rerr := func() ([]iot_points.Data, error) {
-			opLock := bacnetOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client, x.RuleConfig.Logger, x.Config.Priority).ReadPoints(rendered)
-		}()
-		if rerr == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = rerr
-		// BACnet/IP is UDP: reconnecting cannot fix a silent device.
-		if iot_points.IsTimeoutErr(rerr) {
-			ctx.TellFailure(msg, rerr)
-			return
-		}
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
-			oldClient := client
-			newC, rerr2 := x.reconnect(oldClient, retry)
-			if rerr2 != nil {
-				ctx.TellFailure(msg, rerr2)
-				return
-			}
-			bacnetOpLocks.Delete(oldClient)
-			client = newC
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(client *bacnetclient.Client) ([]iot_points.Data, error) {
+		return newDriver(client, x.RuleConfig.Logger, x.Config.Priority).ReadPoints(rendered)
+	}, x.runOpts())
 }
 
-func (x *ReadNode) reconnect(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(bacnetReconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("bacnet ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "bacnet", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	_ = closeClient(old)
-	time.Sleep(iot_points.BackoffFor(attempt))
-	newC, err := newClient(x.Config)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newC)
-	return newC, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[BACnet] "+format, v...)
-	}
+func (x *ReadNode) newClient() (*bacnetclient.Client, error) {
+	return newClient(x.Config)
 }
 
 func (x *ReadNode) Destroy() {
@@ -249,97 +171,33 @@ func (x *WriteNode) New() types.Node {
 
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*bacnetclient.Client, error) {
-		return newClient(x.Config)
-	}, closeClient)
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no bacnet points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		werr := func() error {
-			opLock := bacnetOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client, x.RuleConfig.Logger, x.Config.Priority).WritePoints(rendered)
-		}()
-		if werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = werr
-		// BACnet/IP is UDP: reconnecting cannot fix a silent device.
-		if iot_points.IsTimeoutErr(werr) {
-			ctx.TellFailure(msg, werr)
-			return
-		}
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
-			oldClient := client
-			newC, rerr := x.reconnect(oldClient, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			bacnetOpLocks.Delete(oldClient)
-			client = newC
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *bacnetclient.Client) error {
+		return newDriver(client, x.RuleConfig.Logger, x.Config.Priority).WritePoints(rendered)
+	}, x.runOpts())
 }
 
-func (x *WriteNode) reconnect(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *bacnetclient.Client, attempt int) (*bacnetclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(bacnetReconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("bacnet ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "bacnet", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	_ = closeClient(old)
-	time.Sleep(iot_points.BackoffFor(attempt))
-	newC, err := newClient(x.Config)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newC)
-	return newC, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[BACnet] "+format, v...)
-	}
+func (x *WriteNode) newClient() (*bacnetclient.Client, error) {
+	return newClient(x.Config)
 }
 
 func (x *WriteNode) Destroy() {
@@ -353,4 +211,38 @@ func (x *WriteNode) Destroy() {
 
 func (x *WriteNode) Desc() string {
 	return "BACnet/IP client for writing object properties. Routes to Success/Failure"
+}
+
+func (x *ReadNode) runOpts() iot_points.RunOpts[*bacnetclient.Client] {
+	return iot_points.RunOpts[*bacnetclient.Client]{
+		Shared:    &x.SharedNode,
+		Reconnect: x.ReconnectNode,
+		OpLocks:   &bacnetOpLocks,
+		Logger:    x.RuleConfig.Logger,
+		Prefix:    "[BACnet]",
+		// UDP: reconnecting cannot fix a silent device.
+		RetryOnTimeout: false,
+	}
+}
+
+func (x *WriteNode) runOpts() iot_points.RunOpts[*bacnetclient.Client] {
+	return iot_points.RunOpts[*bacnetclient.Client]{
+		Shared:    &x.SharedNode,
+		Reconnect: x.ReconnectNode,
+		OpLocks:   &bacnetOpLocks,
+		Logger:    x.RuleConfig.Logger,
+		Prefix:    "[BACnet]",
+		// UDP: reconnecting cannot fix a silent device.
+		RetryOnTimeout: false,
+	}
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }

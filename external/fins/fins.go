@@ -24,7 +24,6 @@
 package fins
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -94,9 +93,11 @@ func (c Configuration) initClient() (*finsclient.Client, error) {
 // finsOpLocks operation locks per underlying client, serializes concurrent read/write with shared client.
 var finsOpLocks iot_points.OpLocks
 
-// finsReconnecter reconnection capability interface.
-type finsReconnecter interface {
-	reconnect(old *finsclient.Client, attempt int) (*finsclient.Client, error)
+func closeClient(client *finsclient.Client) error {
+	if client != nil {
+		client.Close()
+	}
+	return nil
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -136,109 +137,34 @@ func (x *ReadNode) New() types.Node {
 // Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*finsclient.Client, error) {
-		return x.Config.initClient()
-	}, func(client *finsclient.Client) error {
-		if client != nil {
-			client.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Connection-level failure (all points failed) auto-reconnects with maxRetries.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no fins points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, err := func() ([]iot_points.Data, error) {
-			opLock := finsOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client).ReadPoints(rendered)
-		}()
-		if err == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = err
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
-			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
-			oldClient := client
-			newClient, rerr := x.reconnect(oldClient, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			finsOpLocks.Delete(oldClient) // Clean up old connection operation lock
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(client *finsclient.Client) ([]iot_points.Data, error) {
+		return newDriver(client).ReadPoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *finsclient.Client, attempt int) (*finsclient.Client, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old *finsclient.Client, attempt int) (*finsclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(finsReconnecter); ok { // cross-type: Read↔Write delegation
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("fins ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "fins", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newClient, err := x.Config.initClient()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[FINS] "+format, v...)
-	}
+func (x *ReadNode) newClient() (*finsclient.Client, error) {
+	return x.Config.initClient()
 }
 
 // Destroy cleans up resources
@@ -291,102 +217,34 @@ func (x *WriteNode) New() types.Node {
 // Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*finsclient.Client, error) {
-		return x.Config.initClient()
-	}, func(client *finsclient.Client) error {
-		if client != nil {
-			client.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Write failure auto-reconnects with maxRetries.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no fins points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		werr := func() error {
-			opLock := finsOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client).WritePoints(rendered)
-		}()
-		if werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = werr
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
-			oldClient := client
-			newClient, rerr := x.reconnect(oldClient, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			finsOpLocks.Delete(oldClient) // Clean up old connection operation lock
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *finsclient.Client) error {
+		return newDriver(client).WritePoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *finsclient.Client, attempt int) (*finsclient.Client, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *finsclient.Client, attempt int) (*finsclient.Client, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(finsReconnecter); ok { // cross-type: Read↔Write delegation
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("fins ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "fins", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newClient, err := x.Config.initClient()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[FINS] "+format, v...)
-	}
+func (x *WriteNode) newClient() (*finsclient.Client, error) {
+	return x.Config.initClient()
 }
 
 // Destroy cleans up resources
@@ -402,4 +260,36 @@ func (x *WriteNode) Destroy() {
 // Desc component description
 func (x *WriteNode) Desc() string {
 	return "Omron FINS client for writing PLC points. Routes to Success/Failure"
+}
+
+func (x *ReadNode) runOpts() iot_points.RunOpts[*finsclient.Client] {
+	return iot_points.RunOpts[*finsclient.Client]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &finsOpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[FINS]",
+		RetryOnTimeout: true,
+	}
+}
+
+func (x *WriteNode) runOpts() iot_points.RunOpts[*finsclient.Client] {
+	return iot_points.RunOpts[*finsclient.Client]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &finsOpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[FINS]",
+		RetryOnTimeout: true,
+	}
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }

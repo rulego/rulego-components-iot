@@ -486,7 +486,7 @@ func testOpcuaWriteMultipleValuesDSL(t *testing.T) {
 		writeResult := msg.Metadata.GetValue("writeResult")
 		if writeResult == "success" {
 			assert.Equal(t, "WRITE_SUCCESS", msg.Type)
-					// Silently handle success to avoid goroutine leak
+			// Silently handle success to avoid goroutine leak
 		} else if writeResult == "failure" {
 			assert.Equal(t, "WRITE_FAILURE", msg.Type)
 			// Silently handle failure to avoid goroutine leak

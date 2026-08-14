@@ -25,14 +25,16 @@ import (
 
 	bacnetclient "github.com/rulego/rulego-components-iot/pkg/bacnet_client"
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
+	"github.com/rulego/rulego/api/types"
+	"github.com/rulego/rulego/test"
 )
 
 func TestParsePointAddr(t *testing.T) {
 	cases := []struct {
-		in                  string
-		objType             uint16
-		instance            uint32
-		property            uint32
+		in       string
+		objType  uint16
+		instance uint32
+		property uint32
 	}{
 		{"analog-input:0", 0, 0, bacnetclient.PropertyPresentValue},
 		{"ai:1:description", 0, 1, bacnetclient.PropertyDescription},
@@ -310,5 +312,69 @@ func TestDriverReadTimeoutSkipsFallback(t *testing.T) {
 	<-done
 	if n := atomic.LoadInt32(&got); n != 1 {
 		t.Errorf("got %d requests, want 1 (RPM only, no per-point fallback)", n)
+	}
+}
+
+// TestNodeStatusReporting: 读成功后上报 Connected;对静默设备失败后处于 Reconnecting。
+func TestNodeStatusReporting(t *testing.T) {
+	srv, err := bacnetclient.NewMockServer()
+	if err != nil {
+		t.Fatalf("mock: %v", err)
+	}
+	defer srv.Close()
+	srv.SetRead(bacnetclient.ObjectTypeAnalogInput, 0, bacnetclient.PropertyPresentValue, bacnetclient.AppTagReal, float64(21.5))
+
+	node := &ReadNode{Config: Configuration{
+		Server:  srv.Addr(),
+		Timeout: 1,
+		Points:  []iot_points.Point{{Name: "t", Addr: "analog-input:0"}},
+	}}
+	if err := node.SharedNode.InitWithClose(types.NewConfig(), node.Type(), node.Config.Server, false, node.newClient, closeClient); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	done := make(chan struct{}, 1)
+	test.NodeOnMsg(t, node, []test.Msg{{Data: `{}`}}, func(msg types.RuleMsg, relationType string, err error) {
+		if relationType != types.Success {
+			t.Errorf("want Success, got %s err=%v", relationType, err)
+		}
+		done <- struct{}{}
+	})
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for callback")
+	}
+	if s := node.SharedNode.ConnectionStatus(); s.Status != types.StatusConnected {
+		t.Errorf("after successful read, status = %v, want Connected", s.Status)
+	}
+
+	// Point to a silent port, re-Init, verify that after failure it is Reconnecting
+	silent, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer silent.Close()
+	node2 := &ReadNode{Config: Configuration{
+		Server:  silent.LocalAddr().String(),
+		Timeout: 1,
+		Points:  []iot_points.Point{{Name: "t", Addr: "analog-input:0"}},
+	}}
+	if err := node2.SharedNode.InitWithClose(types.NewConfig(), node2.Type(), node2.Config.Server, false, node2.newClient, closeClient); err != nil {
+		t.Fatalf("init2: %v", err)
+	}
+	done2 := make(chan struct{}, 1)
+	test.NodeOnMsg(t, node2, []test.Msg{{Data: `{}`}}, func(msg types.RuleMsg, relationType string, err error) {
+		if relationType != types.Failure {
+			t.Errorf("want Failure, got %s", relationType)
+		}
+		done2 <- struct{}{}
+	})
+	select {
+	case <-done2:
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout waiting for failure callback")
+	}
+	if s := node2.SharedNode.ConnectionStatus(); s.Status != types.StatusReconnecting {
+		t.Errorf("after failed read, status = %v, want Reconnecting", s.Status)
 	}
 }

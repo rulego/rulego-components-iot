@@ -171,6 +171,9 @@ func (r *RetryableModbusClient) executeWithRetry(operation string, fn func() err
 		err = fn()
 		opLock.Unlock()
 		if err == nil {
+			if r.onStatus != nil {
+				r.onStatus(types.StatusConnected, "")
+			}
 			return nil
 		}
 

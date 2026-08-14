@@ -17,9 +17,7 @@
 package opcua
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -122,53 +120,41 @@ func (x *WriteNode) Type() string {
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	x.RuleConfig = ruleConfig
-	_ = x.SharedNode.InitWithClose(x.RuleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*opcua.Client, error) {
-		return x.initClient()
-	}, func(client *opcua.Client) error {
-		return client.Close(context.Background())
-	})
+	_ = x.SharedNode.InitWithClose(x.RuleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.initClient, closeClient)
 	// Enable same-chain connection pool: local connections registered to chain directory by node ID
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg processes messages. Points dual entry (msg.Data takes priority, compatible with legacy write Data/legacy read nodeIds/new points); auto reconnect retry on write failure.
+// OnMsg processes messages. Points dual entry (msg.Data takes priority); retry/reconnect handled by the shared runner.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := resolvePoints(x.Config.Points, msg, errors.New("no opcua points: configure points or pass points via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *opcua.Client) error {
+		return newDriver(client, x.RuleConfig.Logger).WritePoints(rendered)
+	}, x.runOpts())
+}
+
+func (x *WriteNode) runOpts() iot_points.RunOpts[*opcua.Client] {
+	return iot_points.RunOpts[*opcua.Client]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[OPCUA]",
+		RetryOnTimeout: true,
 	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		if werr := newDriver(client, x.RuleConfig.Logger).WritePoints(rendered); werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		} else {
-			lastErr = werr
-		}
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
-			newClient, rerr := x.reconnect(client, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			client = newClient
-		}
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *opcua.Client, attempt int) (*opcua.Client, error) {
+	if x.SharedNode.IsFromPool() {
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "opcua", old, attempt)
 	}
-	ctx.TellFailure(msg, lastErr)
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.initClient, closeClient)
 }
 
 // Destroy cleans up resources
@@ -189,45 +175,6 @@ func (x *WriteNode) Def() types.ComponentForm {
 func (x *WriteNode) initClient() (*opcua.Client, error) {
 	client, err := opcuaClient.DefaultHolder(x.Config, x.RuleConfig.Logger).NewOpcUaClient()
 	return client, err
-}
-
-// reconnect safely rebuilds connection.
-func (x *WriteNode) reconnect(old *opcua.Client, attempt int) (*opcua.Client, error) {
-	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(opcuaReconnecter); ok { // Cross-type: Read↔Write both can delegate
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("opcua ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
-	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close(context.Background())
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newClient, err := x.initClient()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
-}
-
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[OPCUA] "+format, v...)
-	}
 }
 
 // castValue attempts to convert []interface{} to a slice of a specific type so that ua.NewVariant can handle it correctly

@@ -26,11 +26,8 @@
 package iec104
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
-	"time"
 
 	"github.com/rulego/rulego"
 	iec104client "github.com/rulego/rulego-components-iot/pkg/iec104_client"
@@ -41,6 +38,18 @@ import (
 )
 
 // Register nodes
+// iec104OpLocks serializes concurrent interrogation on a shared client: concurrent
+// GI rounds clear each other's completion flags and stall to timeout.
+var iec104OpLocks iot_points.OpLocks
+
+// closeClient closes the IEC 104 client.
+func closeClient(client *iec104client.Client) error {
+	if client != nil {
+		return client.Close()
+	}
+	return nil
+}
+
 func init() {
 	_ = rulego.Registry.Register(&ReadNode{})
 	_ = rulego.Registry.Register(&WriteNode{})
@@ -85,11 +94,6 @@ func (c Configuration) GetCommonAddr() int { return c.CommonAddr }
 // GetTimeout implements iec104client.ConfigProp
 func (c Configuration) GetTimeout() int { return c.Timeout }
 
-// iec104Reconnecter reconnection capability interface.
-type iec104Reconnecter interface {
-	reconnect(old *iec104client.Client, attempt int) (*iec104client.Client, error)
-}
-
 // ------------------------------------------------------------------------------------------------
 // ReadNode IEC 104 read node
 // ------------------------------------------------------------------------------------------------
@@ -127,107 +131,56 @@ func (x *ReadNode) New() types.Node {
 // Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*iec104client.Client, error) {
-		return newIEC104Client(x.Config, &x.SharedNode)
-	}, func(client *iec104client.Client) error {
-		if client != nil {
-			return client.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool: local connections registered to chain directory by node ID, for chain-internal ref:// borrowing
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Connection-level failure auto-reconnects with maxRetries.
+// OnMsg handles messages. Retry/reconnect handled by the shared runner; reads are
+// serialized so concurrent GI rounds cannot clear each other's completion flags.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no iec104 points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, rerr := newDriver(client).ReadPoints(rendered)
-		if rerr == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = rerr
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
-			oldClient := client
-			newClient, cerr := x.reconnect(oldClient, retry)
-			if cerr != nil {
-				ctx.TellFailure(msg, cerr)
-				return
-			}
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(client *iec104client.Client) ([]iot_points.Data, error) {
+		return newDriver(client).ReadPoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *iec104client.Client, attempt int) (*iec104client.Client, error) {
+func (x *ReadNode) runOpts() iot_points.RunOpts[*iec104client.Client] {
+	return iot_points.RunOpts[*iec104client.Client]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &iec104OpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[IEC104]",
+		RetryOnTimeout: true,
+	}
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old *iec104client.Client, attempt int) (*iec104client.Client, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(iec104Reconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("iec104 ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "iec104", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newClient, err := newIEC104Client(x.Config, &x.SharedNode)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[IEC104] "+format, v...)
-	}
+func (x *ReadNode) newClient() (*iec104client.Client, error) {
+	return newIEC104Client(x.Config, &x.SharedNode)
 }
 
 // Destroy cleans up resources
 func (x *ReadNode) Destroy() {
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
+		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
+			iec104OpLocks.Delete(c)
+		}
+	}
 	_ = x.SharedNode.Close()
 }
 
@@ -271,103 +224,68 @@ func (x *WriteNode) New() types.Node {
 // Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*iec104client.Client, error) {
-		return newIEC104Client(x.Config, &x.SharedNode)
-	}, func(client *iec104client.Client) error {
-		if client != nil {
-			return client.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Parse point list from msg.Data, send control commands point by point. Write failure auto-reconnects.
+// OnMsg handles messages. Retry/reconnect handled by the shared runner.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no iec104 write points: pass [{\"addr\",\"type\",\"value\"}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		werr := newDriver(client).WritePoints(rendered)
-		if werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = werr
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, werr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, werr.Error())
-			oldClient := client
-			newClient, cerr := x.reconnect(oldClient, retry)
-			if cerr != nil {
-				ctx.TellFailure(msg, cerr)
-				return
-			}
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *iec104client.Client) error {
+		return newDriver(client).WritePoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *iec104client.Client, attempt int) (*iec104client.Client, error) {
+func (x *WriteNode) runOpts() iot_points.RunOpts[*iec104client.Client] {
+	return iot_points.RunOpts[*iec104client.Client]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &iec104OpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[IEC104]",
+		RetryOnTimeout: true,
+	}
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *iec104client.Client, attempt int) (*iec104client.Client, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(iec104Reconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("iec104 ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "iec104", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newClient, err := newIEC104Client(x.Config, &x.SharedNode)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[IEC104] "+format, v...)
-	}
+func (x *WriteNode) newClient() (*iec104client.Client, error) {
+	return newIEC104Client(x.Config, &x.SharedNode)
 }
 
 // Destroy cleans up resources
 func (x *WriteNode) Destroy() {
+	if !x.SharedNode.IsFromPool() { // only owner cleans up operation lock
+		if c, err := x.SharedNode.GetSafely(); err == nil && c != nil {
+			iec104OpLocks.Delete(c)
+		}
+	}
 	_ = x.SharedNode.Close()
 }
 
 // Desc component description
 func (x *WriteNode) Desc() string {
 	return "IEC 60870-5-104 master for control commands (single/double/setpoint). Routes to Success/Failure"
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }

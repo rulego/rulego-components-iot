@@ -25,11 +25,8 @@
 package snmp
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
-	"time"
 
 	"github.com/gosnmp/gosnmp"
 	"github.com/rulego/rulego"
@@ -95,11 +92,6 @@ func closeClient(client *gosnmp.GoSNMP) error {
 // snmpOpLocks associates operation locks by underlying client, serializes Get/Set/Walk on shared client.
 var snmpOpLocks iot_points.OpLocks
 
-// snmpReconnecter connection rebuild capability interface.
-type snmpReconnecter interface {
-	reconnect(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error)
-}
-
 // ------------------------------------------------------------------------------------------------
 // ReadNode SNMP read node
 // ------------------------------------------------------------------------------------------------
@@ -141,107 +133,45 @@ func (x *ReadNode) New() types.Node {
 // Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gosnmp.GoSNMP, error) {
-		return snmpclient.DefaultHolder(x.Config).NewClient()
-	}, closeClient)
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg processes message. Auto reconnect retry maxRetries times on connection-level failure (all OIDs failed).
+// OnMsg processes message. Retry/reconnect handled by the shared runner (UDP: timeouts fail fast).
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no snmp points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, err := func() ([]iot_points.Data, error) {
-			opLock := snmpOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client, x.RuleConfig.Logger).ReadPoints(rendered)
-		}()
-		if err == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = err
-		// UDP is connectionless: reconnecting cannot fix a silent agent.
-		if iot_points.IsTimeoutErr(err) {
-			ctx.TellFailure(msg, err)
-			return
-		}
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
-			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
-			oldClient := client
-			newClient, rerr := x.reconnect(oldClient, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			snmpOpLocks.Delete(oldClient)
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(client *gosnmp.GoSNMP) ([]iot_points.Data, error) {
+		return newDriver(client, x.RuleConfig.Logger).ReadPoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error) {
+func (x *ReadNode) runOpts() iot_points.RunOpts[*gosnmp.GoSNMP] {
+	return iot_points.RunOpts[*gosnmp.GoSNMP]{
+		Shared:    &x.SharedNode,
+		Reconnect: x.ReconnectNode,
+		OpLocks:   &snmpOpLocks,
+		Logger:    x.RuleConfig.Logger,
+		Prefix:    "[SNMP]",
+	}
+}
+
+func (x *ReadNode) newClient() (*gosnmp.GoSNMP, error) {
+	return snmpclient.DefaultHolder(x.Config).NewClient()
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("snmp ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "snmp", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	_ = closeClient(old)
-	time.Sleep(iot_points.BackoffFor(attempt))
-	newClient, err := snmpclient.DefaultHolder(x.Config).NewClient()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
-}
-
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[SNMP] "+format, v...)
-	}
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
 // Destroy cleans up resources
@@ -298,101 +228,45 @@ func (x *WriteNode) New() types.Node {
 // Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gosnmp.GoSNMP, error) {
-		return snmpclient.DefaultHolder(x.Config).NewClient()
-	}, closeClient)
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg processes message. Auto reconnect retry maxRetries times on write failure.
+// OnMsg processes message. Retry/reconnect handled by the shared runner.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no snmp points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		werr := func() error {
-			opLock := snmpOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client, x.RuleConfig.Logger).WritePoints(rendered)
-		}()
-		if werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		} else {
-			lastErr = werr
-		}
-		// UDP is connectionless: reconnecting cannot fix a silent agent.
-		if iot_points.IsTimeoutErr(werr) {
-			ctx.TellFailure(msg, werr)
-			return
-		}
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())
-			oldClient := client
-			newClient, rerr := x.reconnect(oldClient, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			snmpOpLocks.Delete(oldClient)
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *gosnmp.GoSNMP) error {
+		return newDriver(client, x.RuleConfig.Logger).WritePoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error) {
+func (x *WriteNode) runOpts() iot_points.RunOpts[*gosnmp.GoSNMP] {
+	return iot_points.RunOpts[*gosnmp.GoSNMP]{
+		Shared:    &x.SharedNode,
+		Reconnect: x.ReconnectNode,
+		OpLocks:   &snmpOpLocks,
+		Logger:    x.RuleConfig.Logger,
+		Prefix:    "[SNMP]",
+	}
+}
+
+func (x *WriteNode) newClient() (*gosnmp.GoSNMP, error) {
+	return snmpclient.DefaultHolder(x.Config).NewClient()
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *gosnmp.GoSNMP, attempt int) (*gosnmp.GoSNMP, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(snmpReconnecter); ok { // cross-type: Read↔Write both can delegate
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("snmp ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "snmp", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	_ = closeClient(old)
-	time.Sleep(iot_points.BackoffFor(attempt))
-	newClient, err := snmpclient.DefaultHolder(x.Config).NewClient()
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newClient)
-	return newClient, nil
-}
-
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[SNMP] "+format, v...)
-	}
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
 // Destroy cleans up resources
@@ -408,4 +282,14 @@ func (x *WriteNode) Destroy() {
 // Desc component description
 func (x *WriteNode) Desc() string {
 	return "SNMP client for writing OIDs (set). Routes to Success/Failure"
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }

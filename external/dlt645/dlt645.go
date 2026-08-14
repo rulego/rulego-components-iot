@@ -24,9 +24,7 @@
 package dlt645
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -60,9 +58,12 @@ type Configuration struct {
 // dlt645OpLocks operation locks per connection.
 var dlt645OpLocks iot_points.OpLocks
 
-// dlt645Reconnecter reconnection capability interface.
-type dlt645Reconnecter interface {
-	reconnect(old net.Conn, attempt int) (net.Conn, error)
+// closeClient closes the meter connection.
+func closeClient(conn net.Conn) error {
+	if conn != nil {
+		return conn.Close()
+	}
+	return nil
 }
 
 // ReadNode batch reads DLT645 power meter points, results (unified Data list) written to msg.Data, routed via Success link.
@@ -98,70 +99,46 @@ func (x *ReadNode) New() types.Node {
 // Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (net.Conn, error) {
-		return dialTCP(x.Config.Server, x.Config.Timeout)
-	}, func(conn net.Conn) error {
-		if conn != nil {
-			return conn.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable same-chain connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Connection-level failure (all points failed) auto-reconnects with maxRetries.
+// OnMsg handles messages. Retry/reconnect handled by the shared runner.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	conn, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no dlt645 points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(conn net.Conn) ([]iot_points.Data, error) {
+		return newDriver(conn, x.Config.Addr, x.timeout()).ReadPoints(rendered)
+	}, x.runOpts())
+}
+
+func (x *ReadNode) runOpts() iot_points.RunOpts[net.Conn] {
+	return iot_points.RunOpts[net.Conn]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &dlt645OpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[DLT645]",
+		RetryOnTimeout: true,
 	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, err := func() ([]iot_points.Data, error) {
-			opLock := dlt645OpLocks.Lock(conn)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(conn, x.Config.Addr, x.timeout()).ReadPoints(rendered)
-		}()
-		if err == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = err
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
-			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
-			oldConn := conn
-			newConn, rerr := x.reconnect(oldConn, retry)
-			if rerr != nil {
-				ctx.TellFailure(msg, rerr)
-				return
-			}
-			dlt645OpLocks.Delete(oldConn) // Clean up old connection operation lock
-			conn = newConn
-		}
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old net.Conn, attempt int) (net.Conn, error) {
+	if x.SharedNode.IsFromPool() {
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "dlt645", old, attempt)
 	}
-	ctx.TellFailure(msg, lastErr)
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
+}
+
+func (x *ReadNode) newClient() (net.Conn, error) {
+	return dialTCP(x.Config.Server, x.Config.Timeout)
 }
 
 // timeout request timeout, default 5 seconds
@@ -171,45 +148,6 @@ func (x *ReadNode) timeout() time.Duration {
 		t = iot_points.DefaultTimeoutSec
 	}
 	return time.Duration(t) * time.Second
-}
-
-// reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old net.Conn, attempt int) (net.Conn, error) {
-	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(dlt645Reconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("dlt645 ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
-	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	newConn, err := dialTCP(x.Config.Server, x.Config.Timeout)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(newConn)
-	return newConn, nil
-}
-
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[DLT645] "+format, v...)
-	}
 }
 
 // Destroy cleans up resources
@@ -254,40 +192,55 @@ func (x *WriteNode) New() types.Node {
 
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (net.Conn, error) {
-		return dialTCP(x.Config.Server, x.Config.Timeout)
-	}, func(conn net.Conn) error {
-		if conn != nil {
-			return conn.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
+// OnMsg handles messages. Retry/reconnect handled by the shared runner (write also
+// serializes on the connection op lock so reads and writes cannot interleave frames).
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	conn, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no dlt645 write points: pass [{\"addr\",\"type\",\"value\"}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(conn net.Conn) error {
+		return newDriver(conn, x.Config.Addr, x.timeout()).WritePoints(rendered)
+	}, x.runOpts())
+}
+
+func (x *WriteNode) runOpts() iot_points.RunOpts[net.Conn] {
+	return iot_points.RunOpts[net.Conn]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &dlt645OpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[DLT645]",
+		RetryOnTimeout: true,
 	}
-	d := newDriver(conn, x.Config.Addr, time.Duration(x.Config.Timeout)*time.Second)
-	if err := d.WritePoints(rendered); err != nil {
-		ctx.TellFailure(msg, err)
-		return
+}
+
+// timeout request timeout, default 5 seconds
+func (x *WriteNode) timeout() time.Duration {
+	t := x.Config.Timeout
+	if t <= 0 {
+		t = iot_points.DefaultTimeoutSec
 	}
-	ctx.TellSuccess(msg)
+	return time.Duration(t) * time.Second
+}
+
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old net.Conn, attempt int) (net.Conn, error) {
+	if x.SharedNode.IsFromPool() {
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "dlt645", old, attempt)
+	}
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
+}
+
+func (x *WriteNode) newClient() (net.Conn, error) {
+	return dialTCP(x.Config.Server, x.Config.Timeout)
 }
 
 func (x *WriteNode) Destroy() {
@@ -314,4 +267,14 @@ func dialTCP(server string, timeoutSec int) (net.Conn, error) {
 		t = iot_points.DefaultTimeoutSec
 	}
 	return net.DialTimeout("tcp", addr, time.Duration(t)*time.Second)
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }

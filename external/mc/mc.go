@@ -26,9 +26,7 @@
 package mc
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -63,6 +61,13 @@ type Configuration struct {
 // mcOpLocks operation locks per underlying client, serializes concurrent read/write with shared client.
 var mcOpLocks iot_points.OpLocks
 
+func closeClient(client *gomcprotocol.Client3E) error {
+	if client != nil {
+		return client.Close()
+	}
+	return nil
+}
+
 // newClient creates and connects 3E frame binary client.
 func newClient(config Configuration) (*gomcprotocol.Client3E, error) {
 	host, port, err := iot_points.ParseServer(config.Server, defaultPort)
@@ -80,11 +85,6 @@ func newClient(config Configuration) (*gomcprotocol.Client3E, error) {
 		return nil, err
 	}
 	return client, nil
-}
-
-// mcReconnecter reconnection capability interface.
-type mcReconnecter interface {
-	reconnect(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error)
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -123,109 +123,34 @@ func (x *ReadNode) New() types.Node {
 // Init initializes
 func (x *ReadNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gomcprotocol.Client3E, error) {
-		return newClient(x.Config)
-	}, func(client *gomcprotocol.Client3E) error {
-		if client != nil {
-			return client.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable chain-scoped connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Connection-level failure (all points failed) auto-reconnects with maxRetries.
 func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no mc points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		data, rerr := func() ([]iot_points.Data, error) {
-			opLock := mcOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client).ReadPoints(rendered)
-		}()
-		if rerr == nil {
-			b, mErr := json.Marshal(data)
-			if mErr != nil {
-				ctx.TellFailure(msg, mErr)
-				return
-			}
-			msg.SetDataType(types.JSON)
-			msg.SetData(string(b))
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = rerr
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
-			oldClient := client
-			newClient, cerr := x.reconnect(oldClient, retry)
-			if cerr != nil {
-				ctx.TellFailure(msg, cerr)
-				return
-			}
-			mcOpLocks.Delete(oldClient)
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunRead(ctx, msg, func(client *gomcprotocol.Client3E) ([]iot_points.Data, error) {
+		return newDriver(client).ReadPoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection.
-func (x *ReadNode) reconnect(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *ReadNode) ReconnectNode(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(mcReconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("mc ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "mc", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	client, err := newClient(x.Config)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(client)
-	return client, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *ReadNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[MC] "+format, v...)
-	}
+func (x *ReadNode) newClient() (*gomcprotocol.Client3E, error) {
+	return newClient(x.Config)
 }
 
 // Destroy cleans up resources
@@ -277,102 +202,34 @@ func (x *WriteNode) New() types.Node {
 // Init initializes
 func (x *WriteNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
-	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*gomcprotocol.Client3E, error) {
-		return newClient(x.Config)
-	}, func(client *gomcprotocol.Client3E) error {
-		if client != nil {
-			return client.Close()
-		}
-		return nil
-	})
+	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, x.newClient, closeClient)
 	// Enable chain-scoped connection pool
 	x.SharedNode.BindChain(configuration)
 	return err
 }
 
-// OnMsg handles messages. Write failure auto-reconnects with maxRetries.
 func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
-	client, err := x.SharedNode.GetSafely()
-	if err != nil {
-		ctx.TellFailure(msg, err)
-		return
-	}
 	pts, err := iot_points.ResolvePoints(x.Config.Points, msg, errors.New("no mc points: configure points or pass [{...}] via msg.Data"))
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
 	}
-	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
-	rendered := make([]iot_points.Point, len(pts))
-	for i := range pts {
-		rendered[i] = iot_points.RenderPoint(pts[i], env)
-	}
-	var lastErr error
-	for retry := 0; retry <= iot_points.DefaultMaxRetries; retry++ {
-		werr := func() error {
-			opLock := mcOpLocks.Lock(client)
-			opLock.Lock()
-			defer opLock.Unlock()
-			return newDriver(client).WritePoints(rendered)
-		}()
-		if werr == nil {
-			ctx.TellSuccess(msg)
-			return
-		}
-		lastErr = werr
-		if retry < iot_points.DefaultMaxRetries {
-			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, werr)
-			x.SharedNode.SetStatus(types.StatusReconnecting, werr.Error())
-			oldClient := client
-			newClient, cerr := x.reconnect(oldClient, retry)
-			if cerr != nil {
-				ctx.TellFailure(msg, cerr)
-				return
-			}
-			mcOpLocks.Delete(oldClient)
-			client = newClient
-		}
-	}
-	ctx.TellFailure(msg, lastErr)
+	rendered := renderPoints(ctx, msg, pts)
+	iot_points.RunWrite(ctx, msg, func(client *gomcprotocol.Client3E) error {
+		return newDriver(client).WritePoints(rendered)
+	}, x.runOpts())
 }
 
-// reconnect safely rebuilds connection (semantics same as ReadNode.reconnect)
-func (x *WriteNode) reconnect(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error) {
+// ReconnectNode lets ref:// borrowers delegate to the connection owner, or rebuilds the client.
+func (x *WriteNode) ReconnectNode(old *gomcprotocol.Client3E, attempt int) (*gomcprotocol.Client3E, error) {
 	if x.SharedNode.IsFromPool() {
-		if x.RuleConfig.NodePool != nil {
-			if nodeCtx, ok := x.RuleConfig.NodePool.Get(x.SharedNode.InstanceId); ok {
-				if source, ok := nodeCtx.GetNode().(mcReconnecter); ok {
-					return source.reconnect(old, attempt)
-				}
-			}
-		}
-		return nil, fmt.Errorf("mc ref://%s borrower does not own the connection", x.SharedNode.InstanceId)
+		return iot_points.BorrowerReconnect(x.RuleConfig.NodePool, x.SharedNode.InstanceId, "mc", old, attempt)
 	}
-	x.reconnectLocker.Lock()
-	defer x.reconnectLocker.Unlock()
-	current, err := x.SharedNode.GetSafely()
-	if err != nil {
-		return nil, err
-	}
-	if current != old {
-		return current, nil
-	}
-	if old != nil {
-		_ = old.Close()
-		time.Sleep(iot_points.BackoffFor(attempt))
-	}
-	client, err := newClient(x.Config)
-	if err != nil {
-		return nil, err
-	}
-	x.SharedNode.Refresh(client)
-	return client, nil
+	return iot_points.RebuildConn(&x.reconnectLocker, x.SharedNode.GetSafely, x.SharedNode.Refresh, old, attempt, x.newClient, closeClient)
 }
 
-func (x *WriteNode) warnf(format string, v ...interface{}) {
-	if x.RuleConfig.Logger != nil {
-		x.RuleConfig.Logger.Warnf("[MC] "+format, v...)
-	}
+func (x *WriteNode) newClient() (*gomcprotocol.Client3E, error) {
+	return newClient(x.Config)
 }
 
 // Destroy cleans up resources
@@ -388,4 +245,36 @@ func (x *WriteNode) Destroy() {
 // Desc component description
 func (x *WriteNode) Desc() string {
 	return "Mitsubishi MC protocol client for writing PLC points. Routes to Success/Failure"
+}
+
+func (x *ReadNode) runOpts() iot_points.RunOpts[*gomcprotocol.Client3E] {
+	return iot_points.RunOpts[*gomcprotocol.Client3E]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &mcOpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[MC]",
+		RetryOnTimeout: true,
+	}
+}
+
+func (x *WriteNode) runOpts() iot_points.RunOpts[*gomcprotocol.Client3E] {
+	return iot_points.RunOpts[*gomcprotocol.Client3E]{
+		Shared:         &x.SharedNode,
+		Reconnect:      x.ReconnectNode,
+		OpLocks:        &mcOpLocks,
+		Logger:         x.RuleConfig.Logger,
+		Prefix:         "[MC]",
+		RetryOnTimeout: true,
+	}
+}
+
+// renderPoints renders ${msg.xx}/${metadata.xx} templates in point fields.
+func renderPoints(ctx types.RuleContext, msg types.RuleMsg, pts []iot_points.Point) []iot_points.Point {
+	env := base.NodeUtils.GetEvnAndMetadata(ctx, msg)
+	rendered := make([]iot_points.Point, len(pts))
+	for i := range pts {
+		rendered[i] = iot_points.RenderPoint(pts[i], env)
+	}
+	return rendered
 }
