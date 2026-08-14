@@ -109,7 +109,7 @@ func (x *ReadNode) New() types.Node {
 			Slot:    1,
 			Timeout: 5,
 			Points: []iot_points.Point{
-				{Name: "point1", Addr: "DB1.DBD0", Type: "FLOAT32"},
+				{Name: "point1", Addr: "DB1.DBD0", Type: "REAL"},
 			},
 		},
 	}
@@ -265,7 +265,7 @@ func (x *WriteNode) New() types.Node {
 			Slot:    1,
 			Timeout: 5,
 			Points: []iot_points.Point{
-				{Name: "point1", Addr: "DB1.DBD0", Type: "FLOAT32", Value: "${msg.value}"},
+				{Name: "point1", Addr: "DB1.DBD0", Type: "REAL", Value: "${msg.value}"},
 			},
 		},
 	}
