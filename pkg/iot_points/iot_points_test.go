@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/rulego/rulego/api/types"
 	"github.com/stretchr/testify/assert"
@@ -104,4 +105,42 @@ func TestIsTimeoutErr(t *testing.T) {
 			assert.Equal(t, c.want, IsTimeoutErr(c.err))
 		})
 	}
+}
+
+// TestOpLocks_TryLockTimeout: 锁被占有时,带超时获取应快速失败并可释放重取。
+func TestOpLocks_TryLockTimeout(t *testing.T) {
+	var locks OpLocks
+	key := "conn1"
+
+	rel, ok := locks.TryLockTimeout(key, 0)
+	assert.True(t, ok)
+	_, busy := locks.TryLockTimeout(key, 0)
+	assert.False(t, busy, "已持锁时立即获取应失败")
+	rel()
+
+	rel2, ok2 := locks.TryLockTimeout(key, 50*time.Millisecond)
+	assert.True(t, ok2)
+	rel2()
+
+	// 持锁期间限时等待应超时失败
+	rel3, _ := locks.TryLockTimeout(key, 0)
+	start := time.Now()
+	_, busy2 := locks.TryLockTimeout(key, 30*time.Millisecond)
+	assert.False(t, busy2)
+	assert.GreaterOrEqual(t, time.Since(start), 25*time.Millisecond, "应等待满超时时长")
+	rel3()
+}
+
+// TestOpLocks_TryLockTimeoutWaitsUntilReleased: 等待期间锁被释放,应在时限内拿到。
+func TestOpLocks_TryLockTimeoutWaitsUntilReleased(t *testing.T) {
+	var locks OpLocks
+	key := "conn2"
+	rel, _ := locks.TryLockTimeout(key, 0)
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		rel()
+	}()
+	rel2, ok := locks.TryLockTimeout(key, 2*time.Second)
+	assert.True(t, ok, "释放后应获取成功")
+	rel2()
 }

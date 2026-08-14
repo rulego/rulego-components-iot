@@ -16,7 +16,10 @@
 
 package iot_points
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // OpLocks associates an operation lock per connection instance (keyed by pointer or interface value),
 // serializing concurrent read/write on shared connections.
@@ -28,6 +31,24 @@ type OpLocks struct {
 func (o *OpLocks) Lock(key any) *sync.Mutex {
 	v, _ := o.m.LoadOrStore(key, &sync.Mutex{})
 	return v.(*sync.Mutex)
+}
+
+// TryLockTimeout tries to acquire the lock for the given connection key within
+// wait. The zero wait fails immediately. The returned release function must be
+// called; ok is false when the lock stayed busy, so callers can fail fast
+// instead of queueing unboundedly behind a stuck operation.
+func (o *OpLocks) TryLockTimeout(key any, wait time.Duration) (release func(), ok bool) {
+	mu := o.Lock(key)
+	deadline := time.Now().Add(wait)
+	for {
+		if mu.TryLock() {
+			return mu.Unlock, true
+		}
+		if wait == 0 || !time.Now().Before(deadline) {
+			return func() {}, false
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // Delete removes the lock entry for the given connection key (call on reconnect/destroy to avoid leaks).
