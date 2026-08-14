@@ -278,6 +278,14 @@ func readGet(client snmpGetter, p Point) (Data, error) {
 	return pduToData(p.Name, resp.Variables[0]), nil
 }
 
+// maxWalkResults caps Data entries per walk point. A mis-scoped root (e.g.
+// "walk:1") can span tens of thousands of OIDs; the cap fails the point loudly
+// instead of flooding msg.Data and holding the op lock for minutes.
+const maxWalkResults = 2000
+
+// errWalkTooLarge aborts the walk callback once the result cap is reached.
+var errWalkTooLarge = errors.New("walk result cap exceeded")
+
 // readWalk traverses OID subtree. Returns ErrNoWalkResults when the root does not exist or yields
 // no leaves, so the caller can mark the point bad instead of silently dropping it.
 func readWalk(client oidWalker, p Point) ([]Data, error) {
@@ -286,9 +294,15 @@ func readWalk(client oidWalker, p Point) ([]Data, error) {
 	}
 	out := make([]Data, 0)
 	err := client.Walk(p.OID, func(d gosnmp.SnmpPDU) error {
+		if len(out) >= maxWalkResults {
+			return errWalkTooLarge
+		}
 		out = append(out, pduToData(p.Name, d))
 		return nil
 	})
+	if errors.Is(err, errWalkTooLarge) {
+		return out, fmt.Errorf("walk %s exceeded cap of %d oids; narrow the subtree", p.OID, maxWalkResults)
+	}
 	if err != nil {
 		return out, err
 	}

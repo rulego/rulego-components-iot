@@ -3,6 +3,7 @@ package snmpclient
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gosnmp/gosnmp"
@@ -219,6 +220,7 @@ func TestReadGetBatch_ExactlyChunkSize(t *testing.T) {
 // 否则回一个 PDU 模拟成功的遍历。
 type fakeWalker struct {
 	onCall func(call int) error
+	pdus   int // PDUs emitted per successful call (0 -> 1)
 	calls  int
 }
 
@@ -229,7 +231,16 @@ func (f *fakeWalker) Walk(rootOid string, fn gosnmp.WalkFunc) error {
 			return err
 		}
 	}
-	return fn(gosnmp.SnmpPDU{Name: "." + rootOid + ".1", Type: gosnmp.Integer, Value: 42})
+	n := f.pdus
+	if n == 0 {
+		n = 1
+	}
+	for i := 0; i < n; i++ {
+		if err := fn(gosnmp.SnmpPDU{Name: fmt.Sprintf(".%s.%d", rootOid, i), Type: gosnmp.Integer, Value: i}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // walk 超时后,剩余点位(walk 和 get)直接标 bad:get 不再收集去批量读,
@@ -286,4 +297,25 @@ func TestWalkPoints_NonTimeoutErrorContinues(t *testing.T) {
 	assert.Equal(t, 1, failCount)
 	assert.Equal(t, "bad", perPoint[0][0].Quality)
 	assert.Equal(t, "good", perPoint[1][0].Quality)
+}
+
+// TestReadWalk_ResultCap: walk 超过上限必须中止并报错,不能把几万条结果灌进 msg.Data。
+func TestReadWalk_ResultCap(t *testing.T) {
+	f := &fakeWalker{pdus: maxWalkResults + 500}
+	out, err := readWalk(f, Point{Name: "big", OID: "1.3.6.1", Op: "walk"})
+
+	assert.NotNil(t, err)
+	assert.True(t, strings.Contains(err.Error(), "exceeded cap"), "错误应说明超上限: %v", err)
+	assert.Equal(t, maxWalkResults, len(out), "结果应恰好停在上限")
+	assert.Equal(t, 1, f.calls)
+}
+
+// TestReadWalk_WithinCap: 上限以内的正常 walk 不受影响。
+func TestReadWalk_WithinCap(t *testing.T) {
+	f := &fakeWalker{pdus: 100}
+	out, err := readWalk(f, Point{Name: "ok", OID: "1.3.6.1.2.1.2.2", Op: "walk"})
+
+	assert.Nil(t, err)
+	assert.Equal(t, 100, len(out))
+	assert.Equal(t, 99, out[99].Value)
 }

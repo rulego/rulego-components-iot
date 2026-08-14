@@ -369,7 +369,7 @@ func (x *OpcUa) Start() error {
 	if x.cronTask != nil {
 		x.cronTask.Stop()
 	}
-	x.cronTask = cron.New(cron.WithChain(cron.Recover(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))
+	x.cronTask = cron.New(cron.WithChain(cron.Recover(cron.DefaultLogger), cron.SkipIfStillRunning(cron.DefaultLogger)), cron.WithLogger(cron.DefaultLogger))
 	eid, err := x.cronTask.AddFunc(x.Config.Interval, func() {
 		if x.Router != nil {
 			_ = x.readNodes(x.Router)
@@ -411,11 +411,16 @@ func (x *OpcUa) readNodes(router endpointApi.Router) error {
 		x.Printf("read nodes error %v ", err)
 		x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
 		if newClient, cerr := x.initClient(); cerr == nil {
+			// Refresh only swaps the reference; the old client's transport and
+			// read loop must be closed explicitly or every reconnect leaks them.
+			_ = client.Close(context.Background())
 			x.SharedNode.Refresh(newClient)
+			x.SharedNode.SetStatus(types.StatusConnected, "")
 		}
 		return err
 	}
 	points := opcuaClient.ToPointsData(pts, data, resp)
+	x.SharedNode.SetStatus(types.StatusConnected, "")
 	exchange := &endpointApi.Exchange{
 		In: &RequestMessage{points: points},
 		Out: &ResponseMessage{

@@ -2,7 +2,10 @@ package serial
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -365,4 +368,40 @@ func TestSerialHexDelivery(t *testing.T) {
 		assert.Equal(t, expected, mockPort.TxBuffer.Bytes())
 		node.Destroy()
 	})
+}
+
+// TestSafeSerialPort_TransactSerializes: 并发 Transact 必须互斥执行,
+// 防止半双工串口上 B 的写入落在 A 的写与读响应之间。
+func TestSafeSerialPort_TransactSerializes(t *testing.T) {
+	p := &SafeSerialPort{}
+	var inside int32
+	var maxInside int32
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = p.Transact(func() error {
+				cur := atomic.AddInt32(&inside, 1)
+				if cur > atomic.LoadInt32(&maxInside) {
+					atomic.StoreInt32(&maxInside, cur)
+				}
+				time.Sleep(5 * time.Millisecond)
+				atomic.AddInt32(&inside, -1)
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	assert.True(t, atomic.LoadInt32(&maxInside) == 1, "Transact 未互斥: 并发进入 %d 次", maxInside)
+}
+
+// TestSafeSerialPort_TransactPropagatesError: 事务内错误必须原样返回。
+func TestSafeSerialPort_TransactPropagatesError(t *testing.T) {
+	p := &SafeSerialPort{}
+	wantErr := errors.New("boom")
+	err := p.Transact(func() error { return wantErr })
+	assert.True(t, err == wantErr)
+	// 出错后锁必须释放,后续事务可继续
+	assert.Nil(t, p.Transact(func() error { return nil }))
 }

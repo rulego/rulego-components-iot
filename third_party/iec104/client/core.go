@@ -103,6 +103,9 @@ func (c *Client) Connect() error {
 	}
 
 	if err := wg.WaitTimeout(c.settings.Cfg104.ConnectTimeout0); err != nil {
+		// client104 is already started and keeps reconnecting in the background;
+		// stop it or every failed dial leaks its goroutines.
+		_ = c.Close()
 		return fmt.Errorf("connection timeout of %f seconds", c.settings.Cfg104.ConnectTimeout0.Seconds())
 	}
 	return nil

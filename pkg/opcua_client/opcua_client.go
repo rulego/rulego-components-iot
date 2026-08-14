@@ -401,7 +401,13 @@ func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, 
 			return nil, nil, err
 		}
 		allIds = append(allIds, &ua.ReadValueID{NodeID: id})
-		data = append(data, Data{NodeId: id.String(), DisplayName: safeDisplayName(client, id, ctx)})
+		data = append(data, Data{NodeId: id.String()})
+	}
+
+	// Resolve display names in one batched attribute read: fetching them point
+	// by point costs one extra round trip per point.
+	for i, name := range readDisplayNames(client, allIds, ctx) {
+		data[i].DisplayName = name
 	}
 
 	req := &ua.ReadRequest{
@@ -439,21 +445,39 @@ func Read(client *opcua.Client, nodeIds []string, logger types.Logger) ([]Data, 
 	return data, resp, nil
 }
 
-// safeDisplayName returns the node's DisplayName text, or "" if the attribute cannot be read or
-// the server returns an unexpected variant type. gopcua's DisplayName performs an unchecked type
-// assertion (v.Value().(*ua.LocalizedText)) that panics on a nil/unexpected value, so recover
-// here to keep a single bad node from crashing the acquisition process.
-func safeDisplayName(client *opcua.Client, id *ua.NodeID, ctx context.Context) (text string) {
-	defer func() {
-		if r := recover(); r != nil {
-			text = ""
-		}
-	}()
-	lt, err := client.Node(id).DisplayName(ctx)
-	if err != nil || lt == nil {
-		return ""
+// readDisplayNames fetches the DisplayName attribute of every node in one
+// batched read. Failures are non-fatal: the affected names stay empty and
+// ToPointsData falls back to the configured Name/Addr.
+func readDisplayNames(client *opcua.Client, ids []*ua.ReadValueID, ctx context.Context) []string {
+	names := make([]string, len(ids))
+	nameIDs := make([]*ua.ReadValueID, len(ids))
+	for i, id := range ids {
+		nameIDs[i] = &ua.ReadValueID{NodeID: id.NodeID, AttributeID: ua.AttributeIDDisplayName}
 	}
-	return lt.Text
+	resp, err := client.Read(ctx, &ua.ReadRequest{
+		MaxAge:             1000,
+		NodesToRead:        nameIDs,
+		TimestampsToReturn: ua.TimestampsToReturnNeither,
+	})
+	if err != nil {
+		return names
+	}
+	for i, r := range resp.Results {
+		if i >= len(names) || r == nil || r.Status != ua.StatusOK || r.Value == nil {
+			continue
+		}
+		// A non-compliant server may return an unexpected variant type; the
+		// unchecked assertions below stay guarded so one bad node cannot panic.
+		switch lt := r.Value.Value().(type) {
+		case *ua.LocalizedText:
+			names[i] = lt.Text
+		case ua.LocalizedText:
+			names[i] = lt.Text
+		case string:
+			names[i] = lt
+		}
+	}
+	return names
 }
 
 // ToPointsData converts Read results to unified iot_points.Data list. Shared by read node and acquisition endpoint.

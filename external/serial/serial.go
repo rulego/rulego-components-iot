@@ -189,7 +189,18 @@ type SafeSerialPort struct {
 	Port   ISerialPort
 	Config SharedSerialConfig
 	isOpen bool
+	// txMu serializes multi-step exchanges (write then read response) so a
+	// concurrent request cannot interleave on the half-duplex line.
+	txMu sync.Mutex
 	sync.Mutex
+}
+
+// Transact runs fn while holding the port's transaction lock, keeping a
+// write-then-read exchange atomic against other Transact users.
+func (s *SafeSerialPort) Transact(fn func() error) error {
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	return fn()
 }
 
 // Write writes data to the serial port.
@@ -494,7 +505,12 @@ func (x *SerialInNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 		return
 	}
 
-	data, err := readData(client, x.Config.ReadConfig)
+	var data []byte
+	err = client.Transact(func() error {
+		var rerr error
+		data, rerr = readData(client, x.Config.ReadConfig)
+		return rerr
+	})
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
@@ -622,7 +638,10 @@ func (x *SerialOutNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	}
 
 	if len(data) > 0 {
-		_, err = client.Write(data)
+		err = client.Transact(func() error {
+			_, err := client.Write(data)
+			return err
+		})
 		if err != nil {
 			ctx.TellFailure(msg, err)
 			return
@@ -733,16 +752,19 @@ func (x *SerialRequestNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 	if x.Config.AddChar != "" {
 		data = append(data, []byte(x.Config.AddChar)...)
 	}
-	if len(data) > 0 {
-		_, err = client.Write(data)
-		if err != nil {
-			ctx.TellFailure(msg, err)
-			return
+	var respData []byte
+	// Hold the transaction lock across write and response read so a concurrent
+	// request cannot interleave its write between them.
+	err = client.Transact(func() error {
+		if len(data) > 0 {
+			if _, werr := client.Write(data); werr != nil {
+				return werr
+			}
 		}
-	}
-
-	// Read with total timeout
-	respData, err := readData(client, x.Config.ReadConfig)
+		var rerr error
+		respData, rerr = readData(client, x.Config.ReadConfig)
+		return rerr
+	})
 	if err != nil {
 		ctx.TellFailure(msg, err)
 		return
