@@ -186,6 +186,11 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			return
 		}
 		lastErr = err
+		// UDP is connectionless: reconnecting cannot fix a silent agent.
+		if iot_points.IsTimeoutErr(err) {
+			ctx.TellFailure(msg, err)
+			return
+		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, err)
 			x.SharedNode.SetStatus(types.StatusReconnecting, err.Error())
@@ -331,6 +336,11 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			return
 		} else {
 			lastErr = werr
+		}
+		// UDP is connectionless: reconnecting cannot fix a silent agent.
+		if iot_points.IsTimeoutErr(werr) {
+			ctx.TellFailure(msg, werr)
+			return
 		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)

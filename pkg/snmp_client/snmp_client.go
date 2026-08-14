@@ -94,13 +94,15 @@ func (h *Holder) NewClient() (*gosnmp.GoSNMP, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Retries stays at 1: each retry waits a full Timeout, which multiplies with
+	// the node-layer reconnect rounds into minutes against a silent agent.
 	g := &gosnmp.GoSNMP{
 		Target:    target,
 		Port:      uint16(port),
 		Community: h.Config.GetCommunity(),
 		Version:   version,
 		Timeout:   time.Duration(timeout) * time.Second,
-		Retries:   3,
+		Retries:   1,
 		MaxOids:   60,
 	}
 	if version == gosnmp.Version3 {
@@ -201,31 +203,11 @@ func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]D
 	// Per-point slots keep output ordered by point index even though get points are
 	// read out of order in batches, and walk points expand to several Data each.
 	perPoint := make([][]Data, len(points))
-	failCount := 0
-	var lastErr error
 
 	// Walk points stay one request each: a subtree traversal cannot be packed with others.
 	// Get points are collected and batched below.
-	var getIdx []int
-	for i, p := range points {
-		if strings.ToLower(strings.TrimSpace(p.Op)) == "walk" {
-			ds, err := readWalk(client, p)
-			if err != nil {
-				perPoint[i] = []Data{{Name: p.Name, Address: p.OID, Quality: "bad", Type: "walk", Timestamp: time.Now()}}
-				failCount++
-				lastErr = err
-				if logger != nil {
-					logger.Errorf("[SNMP] walk %s error: %v", p.OID, err)
-				}
-			} else {
-				perPoint[i] = ds
-			}
-			continue
-		}
-		getIdx = append(getIdx, i)
-	}
-
-	if len(getIdx) > 0 {
+	getIdx, failCount, lastErr, timedOut := walkPoints(client, points, perPoint, logger)
+	if !timedOut && len(getIdx) > 0 {
 		n, err := readGetBatch(client, getIdx, points, perPoint, logger)
 		failCount += n
 		if err != nil {
@@ -242,6 +224,43 @@ func ReadPoints(client *gosnmp.GoSNMP, points []Point, logger types.Logger) ([]D
 		return results, fmt.Errorf("all %d points failed (possible connection error): %w", failCount, lastErr)
 	}
 	return results, nil
+}
+
+// oidWalker is the walk subset *gosnmp.GoSNMP provides; an interface so the
+// walk timeout path is testable without a live agent.
+type oidWalker interface {
+	Walk(rootOid string, fn gosnmp.WalkFunc) error
+}
+
+// walkPoints walks op=walk points one request each and collects get-mode indexes
+// for batching. A walk timeout means the agent is silent: the remaining points
+// (walk and get alike) are marked bad and nothing is collected for the batch,
+// instead of waiting one more window per point.
+func walkPoints(client oidWalker, points []Point, perPoint [][]Data, logger types.Logger) (getIdx []int, failCount int, lastErr error, timedOut bool) {
+	for i, p := range points {
+		if timedOut {
+			perPoint[i] = []Data{{Name: p.Name, Address: p.OID, Quality: "bad", Timestamp: time.Now()}}
+			failCount++
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(p.Op)) != "walk" {
+			getIdx = append(getIdx, i)
+			continue
+		}
+		ds, err := readWalk(client, p)
+		if err != nil {
+			perPoint[i] = []Data{{Name: p.Name, Address: p.OID, Quality: "bad", Type: "walk", Timestamp: time.Now()}}
+			failCount++
+			lastErr = err
+			if logger != nil {
+				logger.Errorf("[SNMP] walk %s error: %v", p.OID, err)
+			}
+			timedOut = iot_points.IsTimeoutErr(err)
+			continue
+		}
+		perPoint[i] = ds
+	}
+	return getIdx, failCount, lastErr, timedOut
 }
 
 // readGet precisely reads single OID
@@ -261,7 +280,7 @@ func readGet(client snmpGetter, p Point) (Data, error) {
 
 // readWalk traverses OID subtree. Returns ErrNoWalkResults when the root does not exist or yields
 // no leaves, so the caller can mark the point bad instead of silently dropping it.
-func readWalk(client *gosnmp.GoSNMP, p Point) ([]Data, error) {
+func readWalk(client oidWalker, p Point) ([]Data, error) {
 	if strings.TrimSpace(p.OID) == "" {
 		return nil, errors.New("empty OID")
 	}

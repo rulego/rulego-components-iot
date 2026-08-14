@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gosnmp/gosnmp"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 )
 
@@ -56,6 +57,18 @@ func readGetBatch(client snmpGetter, idx []int, points []Point, out [][]Data, lo
 
 		resp, err := client.Get(oids)
 		if err != nil || resp == nil {
+			// A timeout means the agent is silent; per-point reads and later
+			// chunks would each wait another full window for the same silence.
+			if iot_points.IsTimeoutErr(err) {
+				if logger != nil {
+					logger.Warnf("[SNMP] batch get of %d oids timed out, skipping per-point fallback: %v", len(oids), err)
+				}
+				for _, i := range idx[start:] {
+					out[i] = []Data{{Name: points[i].Name, Address: points[i].OID, Quality: "bad", Timestamp: time.Now()}}
+					failCount++
+				}
+				return failCount, err
+			}
 			// Connection hiccup or oversized PDU: retry this chunk point by point.
 			if logger != nil {
 				logger.Warnf("[SNMP] batch get of %d oids failed, falling back to per-point: %v", len(oids), err)

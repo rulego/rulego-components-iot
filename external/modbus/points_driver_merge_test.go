@@ -17,6 +17,7 @@
 package modbus
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -508,4 +509,21 @@ func TestBatchRequestCount_20Points(t *testing.T) {
 	}
 	t.Logf("20 contiguous points: per-point=%d requests, batch=%d requests (%dx fewer)",
 		perPointReqs, batchReqs, perPointReqs/batchReqs)
+}
+
+// TestFailOrFallbackBlock_TimeoutMarksAll: 超时类错误整块标失败,不再逐点重读
+// (逐点只会对同一沉默设备各再等一个完整超时窗口)。
+func TestFailOrFallbackBlock_TimeoutMarksAll(t *testing.T) {
+	d := &driver{}
+	blk := []readPlan{
+		{index: 0, point: iot_points.Point{Name: "a", Addr: "40001", Type: iot_points.TypeUint16}, typ: iot_points.TypeUint16},
+		{index: 1, point: iot_points.Point{Name: "b", Addr: "40002", Type: iot_points.TypeUint16}, typ: iot_points.TypeUint16},
+	}
+	out := make([]iot_points.Data, 2)
+	d.failOrFallbackBlock(blk, out, &ModbusConnErr{Err: errors.New("read tcp: i/o timeout")})
+
+	for i, p := range blk {
+		assert.Equal(t, p.point.Name, out[i].Name, "第 %d 条槽位错位", i)
+		assert.NotEmpty(t, out[i].Error, "超时时整块都应带错误")
+	}
 }

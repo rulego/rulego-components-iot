@@ -59,21 +59,38 @@ func newDriver(client *gomcprotocol.Client3E) *driver {
 
 // ReadPoints reads point by point. Single-point failure marks Error; all failure returns error.
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
-	out := make([]iot_points.Data, 0, len(points))
-	failCount := 0
-	for _, p := range points {
-		dd, err := d.readPoint(p)
-		if err != nil {
-			out = append(out, iot_points.Data{Name: p.Name, Error: err.Error()})
-			failCount++
-		} else {
-			out = append(out, dd)
-		}
-	}
+	out, failCount := readEachPoint(points, d.readPoint)
 	if len(points) > 0 && failCount == len(points) {
 		return nil, fmt.Errorf("all %d mc points failed", failCount)
 	}
 	return out, nil
+}
+
+// readEachPoint reads via read one point at a time; a timeout marks the
+// remaining points failed instead of waiting one more window per point.
+// Separated so the short-circuit is testable without a PLC.
+func readEachPoint(points []iot_points.Point, read func(iot_points.Point) (iot_points.Data, error)) ([]iot_points.Data, int) {
+	out := make([]iot_points.Data, 0, len(points))
+	failCount := 0
+	for i, p := range points {
+		dd, err := read(p)
+		if err != nil {
+			out = append(out, iot_points.Data{Name: p.Name, Error: err.Error()})
+			failCount++
+			// Timeout: the PLC is silent, mark the rest failed instead of
+			// waiting one more window per point.
+			if iot_points.IsTimeoutErr(err) {
+				for _, rest := range points[i+1:] {
+					out = append(out, iot_points.Data{Name: rest.Name, Error: err.Error()})
+					failCount++
+				}
+				break
+			}
+		} else {
+			out = append(out, dd)
+		}
+	}
+	return out, failCount
 }
 
 // WritePoints writes point by point. Any failure returns error immediately.

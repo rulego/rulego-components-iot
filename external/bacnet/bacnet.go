@@ -152,6 +152,11 @@ func (x *ReadNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			return
 		}
 		lastErr = rerr
+		// BACnet/IP is UDP: reconnecting cannot fix a silent device.
+		if iot_points.IsTimeoutErr(rerr) {
+			ctx.TellFailure(msg, rerr)
+			return
+		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("read failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, rerr)
 			x.SharedNode.SetStatus(types.StatusReconnecting, rerr.Error())
@@ -280,6 +285,11 @@ func (x *WriteNode) OnMsg(ctx types.RuleContext, msg types.RuleMsg) {
 			return
 		}
 		lastErr = werr
+		// BACnet/IP is UDP: reconnecting cannot fix a silent device.
+		if iot_points.IsTimeoutErr(werr) {
+			ctx.TellFailure(msg, werr)
+			return
+		}
 		if retry < iot_points.DefaultMaxRetries {
 			x.warnf("write failed (retry %d/%d): %v, reconnecting...", retry+1, iot_points.DefaultMaxRetries, lastErr)
 			x.SharedNode.SetStatus(types.StatusReconnecting, lastErr.Error())

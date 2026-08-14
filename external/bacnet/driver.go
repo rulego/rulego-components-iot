@@ -43,9 +43,16 @@ func newDriver(client *bacnetclient.Client, logger types.Logger, priority uint8)
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	// Multi-point: one ReadPropertyMultiple request grouped by object, with per-point fallback.
 	if len(points) > 1 {
-		if data, err := d.readViaRPM(points); err == nil {
+		data, err := d.readViaRPM(points)
+		if err == nil {
 			return data, nil
-		} else if d.logger != nil {
+		}
+		// Timeout means the device is silent; per-point reads would each wait
+		// another full window for the same silence.
+		if iot_points.IsTimeoutErr(err) {
+			return nil, err
+		}
+		if d.logger != nil {
 			d.logger.Warnf("[BACnet] ReadPropertyMultiple failed (%v), falling back to per-point ReadProperty", err)
 		}
 	}
@@ -58,7 +65,7 @@ func (d *driver) readEach(points []iot_points.Point) ([]iot_points.Data, error) 
 	failCount := 0
 	var lastErr error
 	now := time.Now().UnixNano()
-	for _, p := range points {
+	for i, p := range points {
 		a, err := ParsePointAddr(p.Addr)
 		if err != nil {
 			out = append(out, iot_points.Data{Name: p.Name, Error: err.Error()})
@@ -73,6 +80,15 @@ func (d *driver) readEach(points []iot_points.Point) ([]iot_points.Data, error) 
 			lastErr = err
 			if d.logger != nil {
 				d.logger.Errorf("[BACnet] read %s: %v", p.Addr, err)
+			}
+			// Timeout: the device is silent, mark the rest failed instead of
+			// waiting one more window per point.
+			if iot_points.IsTimeoutErr(err) {
+				for _, rest := range points[i+1:] {
+					out = append(out, iot_points.Data{Name: rest.Name, Error: err.Error()})
+					failCount++
+				}
+				break
 			}
 			continue
 		}

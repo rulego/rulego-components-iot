@@ -19,6 +19,9 @@ type fakePLC struct {
 	// failDBRange fails multi-byte DB reads, simulating a PLC that refuses a span
 	// (e.g. it crosses a protected offset) while single points still read.
 	failDBRange int
+	// timeoutErr, when set, fails every read with this timeout-class error,
+	// simulating an unreachable PLC.
+	timeoutErr error
 }
 
 func newFakePLC() *fakePLC {
@@ -28,6 +31,9 @@ func newFakePLC() *fakePLC {
 func (f *fakePLC) serve(src []byte, start, size int, buf []byte) error {
 	f.reads++
 	f.sizes = append(f.sizes, size)
+	if f.timeoutErr != nil {
+		return f.timeoutErr
+	}
 	if start < 0 || start+size > len(src) {
 		return errors.New("address out of range")
 	}
@@ -152,6 +158,29 @@ func TestReadBlocks_FallsBackOnBlockFailure(t *testing.T) {
 	assert.Equal(t, 0, fail, "回退逐点后应全部成功")
 	for i := range pts {
 		assert.Equal(t, "good", out[i].Quality, "点位 %s", pts[i].Name)
+	}
+}
+
+// 块读超时(PLC 不应答)时不逐点兜底:逐点只会各等一个超时窗口。整块标 bad,只发一次请求。
+func TestReadBlocks_TimeoutSkipsPerPointFallback(t *testing.T) {
+	f := newFakePLC()
+	fillDB(f, 1, 64)
+	f.timeoutErr = errors.New("read tcp 10.0.0.2:102: i/o timeout")
+
+	pts := []Point{
+		{Name: "a", Area: "DB", DbNumber: 1, Address: 0, Type: "INT"},
+		{Name: "b", Area: "DB", DbNumber: 1, Address: 2, Type: "INT"},
+		{Name: "c", Area: "DB", DbNumber: 1, Address: 4, Type: "INT"},
+	}
+	out := make([]Data, len(pts))
+	fail, lastErr := readBlocks(f, pts, out, 240, nil)
+
+	assert.Equal(t, 3, fail)
+	assert.NotNil(t, lastErr)
+	assert.Equal(t, 1, f.reads, "超时应跳过逐点兜底,只发一次块读请求")
+	for i := range pts {
+		assert.Equal(t, "bad", out[i].Quality, "点位 %s", pts[i].Name)
+		assert.Equal(t, pts[i].Name, out[i].Name)
 	}
 }
 

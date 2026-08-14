@@ -18,6 +18,7 @@ package mc
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"math"
 	"net"
@@ -560,4 +561,48 @@ func TestMcReadFailureNoPLC(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for mc read failure callback")
 	}
+}
+
+// TestReadEachPoint_TimeoutMarksRest: 第 k 个点位超时后,剩余点位直接标失败,
+// 不再各等一个超时窗口;输出条数必须与输入一致。
+func TestReadEachPoint_TimeoutMarksRest(t *testing.T) {
+	pts := []iot_points.Point{
+		{Name: "a", Addr: "D100"},
+		{Name: "b", Addr: "D200"},
+		{Name: "c", Addr: "D300"},
+	}
+	calls := 0
+	got, fail := readEachPoint(pts, func(p iot_points.Point) (iot_points.Data, error) {
+		calls++
+		if p.Addr == "D200" {
+			return iot_points.Data{}, errors.New("read tcp 192.168.1.10:5007: i/o timeout")
+		}
+		return iot_points.Data{Name: p.Name, Value: calls}, nil
+	})
+
+	assert.Equal(t, 2, calls, "超时后不应继续读后续点位")
+	assert.Equal(t, 3, len(got))
+	assert.Equal(t, 2, fail)
+	assert.Equal(t, "", got[0].Error)
+	assert.Equal(t, "a", got[0].Name)
+	assert.True(t, got[1].Error != "")
+	assert.Equal(t, "b", got[1].Name)
+	assert.True(t, got[2].Error != "")
+	assert.Equal(t, "c", got[2].Name)
+}
+
+// TestReadEachPoint_NonTimeoutErrorContinues: 非超时错误不短路,后续点位照常读。
+func TestReadEachPoint_NonTimeoutErrorContinues(t *testing.T) {
+	pts := []iot_points.Point{{Name: "a", Addr: "D100"}, {Name: "b", Addr: "D200"}}
+	got, fail := readEachPoint(pts, func(p iot_points.Point) (iot_points.Data, error) {
+		if p.Addr == "D100" {
+			return iot_points.Data{}, errors.New("end code 0x0001")
+		}
+		return iot_points.Data{Name: p.Name, Value: 7}, nil
+	})
+
+	assert.Equal(t, 1, fail)
+	assert.True(t, got[0].Error != "")
+	assert.Equal(t, "", got[1].Error)
+	assert.Equal(t, 7, got[1].Value)
 }

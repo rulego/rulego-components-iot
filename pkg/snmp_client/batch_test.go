@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gosnmp/gosnmp"
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -18,6 +19,9 @@ type fakeAgent struct {
 	// failWhenLargerThan makes Get fail for multi-OID requests, simulating an agent
 	// that rejects big PDUs (tooBig) so the per-point fallback can be exercised.
 	failWhenLargerThan int
+	// timeoutErr, when set, makes every Get fail with this timeout-class error —
+	// simulating an agent that never answers at all.
+	timeoutErr error
 	// omit lists OIDs the agent silently drops from the response.
 	omit map[string]bool
 	// reorder returns variables in reverse request order (agents are not required
@@ -32,6 +36,9 @@ func newFakeAgent() *fakeAgent {
 func (f *fakeAgent) Get(oids []string) (*gosnmp.SnmpPacket, error) {
 	f.calls++
 	f.sizes = append(f.sizes, len(oids))
+	if f.timeoutErr != nil {
+		return nil, f.timeoutErr
+	}
 	if f.failWhenLargerThan > 0 && len(oids) > f.failWhenLargerThan {
 		return nil, errors.New("tooBig")
 	}
@@ -134,6 +141,22 @@ func TestReadGetBatch_FallsBackPerPoint(t *testing.T) {
 	}
 }
 
+// 批量请求超时(agent 全程不应答)时必须跳过逐点兜底:逐点只会对着同样的沉默
+// 再各等一个完整超时窗口。整批标 bad,只发一次请求;多 chunk 时后续 chunk 也不再发。
+func TestReadGetBatch_TimeoutSkipsPerPointFallback(t *testing.T) {
+	pts, f := getPoints(30) // 30 > maxOIDsPerGet, 会切成两个 chunk
+	f.timeoutErr = errors.New("request timeout (after 0 retries)")
+	data, fail := runBatch(f, pts)
+
+	assert.Equal(t, 30, len(data))
+	assert.Equal(t, 30, fail)
+	assert.Equal(t, 1, f.calls, "超时应跳过逐点兜底和后续 chunk,只发一次批量请求")
+	for i := range pts {
+		assert.Equal(t, "bad", data[i].Quality)
+		assert.Equal(t, pts[i].Name, data[i].Name, "超时标 bad 时槽位仍须属于原点位")
+	}
+}
+
 // agent 漏返某个 OID 时,该点位标 bad,不能留空洞让后面的值顶上来。
 func TestReadGetBatch_MissingOIDMarkedBad(t *testing.T) {
 	pts, f := getPoints(4)
@@ -190,4 +213,77 @@ func TestReadGetBatch_ExactlyChunkSize(t *testing.T) {
 	assert.Equal(t, maxOIDsPerGet, len(data))
 	assert.Equal(t, 1, f.calls)
 	assert.Equal(t, []int{maxOIDsPerGet}, f.sizes)
+}
+
+// fakeWalker counts Walk calls; onCall(call) 非 nil 时该次 walk 以该错误失败,
+// 否则回一个 PDU 模拟成功的遍历。
+type fakeWalker struct {
+	onCall func(call int) error
+	calls  int
+}
+
+func (f *fakeWalker) Walk(rootOid string, fn gosnmp.WalkFunc) error {
+	f.calls++
+	if f.onCall != nil {
+		if err := f.onCall(f.calls); err != nil {
+			return err
+		}
+	}
+	return fn(gosnmp.SnmpPDU{Name: "." + rootOid + ".1", Type: gosnmp.Integer, Value: 42})
+}
+
+// walk 超时后,剩余点位(walk 和 get)直接标 bad:get 不再收集去批量读,
+// 后续 walk 也不再各等一个完整超时窗口。
+func TestWalkPoints_TimeoutMarksRest(t *testing.T) {
+	pts := []Point{
+		{Name: "w0", OID: "1.3.6.1.2.1.2.2", Op: "walk"},
+		{Name: "w1", OID: "1.3.6.1.2.1.4", Op: "walk"},
+		{Name: "w2", OID: "1.3.6.1.2.1.6", Op: "walk"},
+		{Name: "g0", OID: "1.3.6.1.2.1.1.5.0"},
+	}
+	f := &fakeWalker{onCall: func(call int) error {
+		if call == 2 {
+			return errors.New("request timeout (after 0 retries)")
+		}
+		return nil
+	}}
+	perPoint := make([][]Data, len(pts))
+	getIdx, failCount, lastErr, timedOut := walkPoints(f, pts, perPoint, nil)
+
+	assert.Equal(t, 2, f.calls, "超时后不应继续 walk 后续点位")
+	assert.True(t, timedOut)
+	assert.Empty(t, getIdx, "超时后 get 点位不应再收集去批量读")
+	assert.Equal(t, 3, failCount)
+	assert.True(t, iot_points.IsTimeoutErr(lastErr))
+	assert.Equal(t, "good", perPoint[0][0].Quality)
+	for i := 1; i < 3; i++ {
+		assert.Equal(t, "bad", perPoint[i][0].Quality, "第 %d 个 walk 点位", i)
+		assert.Equal(t, pts[i].Name, perPoint[i][0].Name)
+	}
+	assert.Equal(t, "bad", perPoint[3][0].Quality)
+	assert.Equal(t, pts[3].Name, perPoint[3][0].Name)
+}
+
+// 非超时的 walk 错误不短路:后续 walk 照常执行,get 点位照常收集。
+func TestWalkPoints_NonTimeoutErrorContinues(t *testing.T) {
+	pts := []Point{
+		{Name: "w0", OID: "1.3.6.1.2.1.2.2", Op: "walk"},
+		{Name: "w1", OID: "1.3.6.1.2.1.4", Op: "walk"},
+		{Name: "g0", OID: "1.3.6.1.2.1.1.5.0"},
+	}
+	f := &fakeWalker{onCall: func(call int) error {
+		if call == 1 {
+			return errors.New("walk returned no results")
+		}
+		return nil
+	}}
+	perPoint := make([][]Data, len(pts))
+	getIdx, failCount, _, timedOut := walkPoints(f, pts, perPoint, nil)
+
+	assert.False(t, timedOut)
+	assert.Equal(t, 2, f.calls)
+	assert.Equal(t, []int{2}, getIdx, "get 点位应照常收集")
+	assert.Equal(t, 1, failCount)
+	assert.Equal(t, "bad", perPoint[0][0].Quality)
+	assert.Equal(t, "good", perPoint[1][0].Quality)
 }

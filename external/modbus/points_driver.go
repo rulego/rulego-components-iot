@@ -185,7 +185,7 @@ func (d *driver) readBlock(blk []readPlan, out []iot_points.Data) {
 	if blk[0].kind == modiconCoil || blk[0].kind == modiconDI {
 		bits, err := d.readBits(blk[0].addr, quantity, blk[0].kind)
 		if err != nil || len(bits) < int(quantity) {
-			d.fallbackBlock(blk, out)
+			d.failOrFallbackBlock(blk, out, err)
 			return
 		}
 		for _, p := range blk {
@@ -195,7 +195,7 @@ func (d *driver) readBlock(blk []readPlan, out []iot_points.Data) {
 	}
 	words, err := d.client.ReadRegisters(blk[0].addr, quantity, blk[0].regType)
 	if err != nil || len(words) < int(quantity) {
-		d.fallbackBlock(blk, out)
+		d.failOrFallbackBlock(blk, out, err)
 		return
 	}
 	lowWordFirst := d.client.lowWordFirst()
@@ -211,6 +211,20 @@ func (d *driver) readBits(addr, quantity uint16, kind string) ([]bool, error) {
 		return d.client.ReadDiscreteInputs(addr, quantity)
 	}
 	return d.client.ReadCoils(addr, quantity)
+}
+
+// failOrFallbackBlock handles a failed block read: timeouts mark the whole
+// block failed (the device is silent and per-point reads would each retry the
+// same dead connection), other errors fall back to per-point reads to save the
+// neighbours.
+func (d *driver) failOrFallbackBlock(blk []readPlan, out []iot_points.Data, err error) {
+	if iot_points.IsTimeoutErr(err) {
+		for _, p := range blk {
+			out[p.index] = iot_points.Data{Name: p.point.Name, Error: err.Error()}
+		}
+		return
+	}
+	d.fallbackBlock(blk, out)
 }
 
 // fallbackBlock re-reads a failed block point by point.

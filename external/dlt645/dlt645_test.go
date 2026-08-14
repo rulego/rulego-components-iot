@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -641,4 +642,42 @@ func TestReadNode_NoServer(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for dlt645 failure callback")
 	}
+}
+
+// timeoutConn swallows writes and fails every read with a deadline error,
+// simulating a silent meter.
+type timeoutConn struct {
+	writes int
+}
+
+func (c *timeoutConn) Read(b []byte) (int, error) {
+	return 0, &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+}
+func (c *timeoutConn) Write(b []byte) (int, error) {
+	c.writes++
+	return len(b), nil
+}
+func (c *timeoutConn) Close() error                       { return nil }
+func (c *timeoutConn) LocalAddr() net.Addr                { return nil }
+func (c *timeoutConn) RemoteAddr() net.Addr               { return nil }
+func (c *timeoutConn) SetDeadline(t time.Time) error      { return nil }
+func (c *timeoutConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *timeoutConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// TestReadPoints_TimeoutStopsReading: 第一个点位读超时后整表判失败,
+// 不再对后续点位各等一个超时窗口。
+func TestReadPoints_TimeoutStopsReading(t *testing.T) {
+	conn := &timeoutConn{}
+	d := newDriver(conn, "000000000001", 100*time.Millisecond)
+	pts := []iot_points.Point{
+		{Name: "energy", Addr: "00-01-00-00"},
+		{Name: "ua", Addr: "02-01-01-00"},
+		{Name: "ia", Addr: "02-02-01-00"},
+	}
+	got, err := d.ReadPoints(pts)
+
+	assert.NotNil(t, err)
+	assert.True(t, strings.Contains(err.Error(), "all 3 dlt645 points failed"))
+	assert.Equal(t, 1, conn.writes, "超时后不应继续读后续点位")
+	_ = got
 }

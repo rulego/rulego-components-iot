@@ -116,17 +116,26 @@ func ReadPoints(client *gologix.Client, points []Point, logger types.Logger) ([]
 	if client == nil {
 		return nil, errors.New("eip client is nil")
 	}
+	return readTags(points, func(tag, typ string) (interface{}, error) {
+		return readTag(client, tag, typ)
+	}, logger)
+}
+
+// readTags reads each point via read; a timeout marks the remaining points bad
+// instead of waiting one more window per tag. Separated from ReadPoints so the
+// short-circuit is testable without a controller.
+func readTags(points []Point, read func(tag, typ string) (interface{}, error), logger types.Logger) ([]Data, error) {
 	results := make([]Data, 0, len(points))
 	failCount := 0
 	var lastErr error
-	for _, p := range points {
+	for i, p := range points {
 		d := Data{
 			Name:      p.Name,
 			Address:   p.Tag,
 			Type:      strings.ToUpper(strings.TrimSpace(p.Type)),
 			Timestamp: time.Now(),
 		}
-		val, err := readTag(client, p.Tag, p.Type)
+		val, err := read(p.Tag, p.Type)
 		if err != nil {
 			d.Quality = "bad"
 			failCount++
@@ -139,6 +148,21 @@ func ReadPoints(client *gologix.Client, points []Point, logger types.Logger) ([]
 			d.Value = val
 		}
 		results = append(results, d)
+		// Timeout: the controller is silent, mark the rest bad instead of
+		// waiting one more window per tag.
+		if err != nil && iot_points.IsTimeoutErr(err) {
+			for _, rest := range points[i+1:] {
+				results = append(results, Data{
+					Name:      rest.Name,
+					Address:   rest.Tag,
+					Type:      strings.ToUpper(strings.TrimSpace(rest.Type)),
+					Quality:   "bad",
+					Timestamp: time.Now(),
+				})
+				failCount++
+			}
+			break
+		}
 	}
 	// All points failed: suspected connection-level error, return error
 	if len(points) > 0 && failCount == len(points) {

@@ -17,6 +17,10 @@
 package iot_points
 
 import (
+	"context"
+	"errors"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/rulego/rulego/utils/cast"
@@ -44,6 +48,25 @@ func BackoffFor(attempt int) time.Duration {
 	default:
 		return 2 * time.Second
 	}
+}
+
+// IsTimeoutErr reports whether err is a timeout-class failure: the peer did not
+// answer before the deadline. Callers use it to skip per-point fallbacks and
+// reconnect retries that would each burn another full timeout window.
+func IsTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	// Protocol libraries report timeouts as flat strings with no %w chain.
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "timeout") || strings.Contains(s, "deadline exceeded")
 }
 
 // Common data type enumeration (protocol-independent). Each driver maps to protocol native types.

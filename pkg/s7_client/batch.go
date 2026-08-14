@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 )
 
@@ -86,6 +87,15 @@ func readBlock(client s7Reader, blk []readPlan, out []Data, logger types.Logger)
 	}
 	buf := make([]byte, end-start)
 	if err := readArea(client, area, blk[0].point.DbNumber, start, len(buf), buf); err != nil {
+		// Timeout means the PLC is unreachable; per-point reads would each wait
+		// another full window for the same silence.
+		if iot_points.IsTimeoutErr(err) {
+			for _, p := range blk {
+				out[p.index] = badData(p.point, err.Error())
+				failCount++
+			}
+			return failCount, err
+		}
 		if logger != nil {
 			logger.Warnf("[S7] block read %s[%d..%d] failed, falling back to per-point: %v",
 				blk[0].point.Area, start, end, err)
@@ -114,11 +124,20 @@ func readBlock(client s7Reader, blk []readPlan, out []Data, logger types.Logger)
 
 // readEachInBlock retries a failed block point by point.
 func readEachInBlock(client s7Reader, blk []readPlan, out []Data, logger types.Logger) (failCount int, lastErr error) {
-	for _, p := range blk {
+	for i, p := range blk {
 		n, err := readSingle(client, p, out, logger)
 		failCount += n
 		if err != nil {
 			lastErr = err
+			// Timeout: mark the rest failed instead of waiting one more
+			// window per point.
+			if iot_points.IsTimeoutErr(err) {
+				for _, rest := range blk[i+1:] {
+					out[rest.index] = badData(rest.point, err.Error())
+					failCount++
+				}
+				break
+			}
 		}
 	}
 	return failCount, lastErr

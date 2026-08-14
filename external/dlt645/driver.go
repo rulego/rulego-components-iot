@@ -49,11 +49,20 @@ func newDriver(conn net.Conn, addr string, timeout time.Duration) *driver {
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	out := make([]iot_points.Data, 0, len(points))
 	failCount := 0
-	for _, p := range points {
+	for i, p := range points {
 		value, err := d.readPoint(p)
 		if err != nil {
 			out = append(out, iot_points.Data{Name: p.Name, Error: err.Error()})
 			failCount++
+			// Timeout: the meter is silent, mark the rest failed instead of
+			// waiting one more window per point.
+			if iot_points.IsTimeoutErr(err) {
+				for _, rest := range points[i+1:] {
+					out = append(out, iot_points.Data{Name: rest.Name, Error: err.Error()})
+					failCount++
+				}
+				break
+			}
 			continue
 		}
 		out = append(out, iot_points.Data{

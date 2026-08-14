@@ -17,7 +17,10 @@
 package iot_points
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
 	"testing"
 
 	"github.com/rulego/rulego/api/types"
@@ -76,4 +79,29 @@ func TestResolvePoints(t *testing.T) {
 	pts5, err := ResolvePoints(config, newMsg("[]"), sentinel)
 	assert.Nil(t, err)
 	assert.Equal(t, "config", pts5[0].Name)
+}
+
+// TestIsTimeoutErr 超时类错误需跨形态识别：协议库扁平错误串、%w 包装链、net/context deadline。
+func TestIsTimeoutErr(t *testing.T) {
+	gosnmpTimeout := errors.New("request timeout (after 0 retries)")
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"gosnmp request timeout", gosnmpTimeout, true},
+		{"net i/o timeout", errors.New("read udp 10.0.0.1:54123->10.0.0.2:161: i/o timeout"), true},
+		{"wrapped chain", fmt.Errorf("all 1 points failed: %w", gosnmpTimeout), true},
+		{"context deadline", context.DeadlineExceeded, true},
+		{"os deadline", os.ErrDeadlineExceeded, true},
+		{"pdu error", errors.New("tooBig"), false},
+		{"end code error", errors.New("end code 0x0001"), false},
+		{"connection refused", errors.New("read tcp: connection refused"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, IsTimeoutErr(c.err))
+		})
+	}
 }

@@ -17,7 +17,9 @@
 package bacnet
 
 import (
+	"net"
 	"reflect"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -262,5 +264,51 @@ func TestDriverWriteViaMock(t *testing.T) {
 	}
 	if got := writes["19:2:85"]; got != uint64(2) {
 		t.Errorf("multistate write = %v, want 2", got)
+	}
+}
+
+// TestDriverReadTimeoutSkipsFallback: The device is completely unresponsive (the UDP socket swallows requests and never replies),
+// RPM times out and returns an error immediately, no longer falling back to point-by-point ReadProperty
+// (point-by-point would just wait another full timeout window against the same silence).
+func TestDriverReadTimeoutSkipsFallback(t *testing.T) {
+	silent, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer silent.Close()
+
+	var got int32
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1500)
+		for {
+			if _, _, err := silent.ReadFrom(buf); err != nil {
+				return
+			}
+			atomic.AddInt32(&got, 1)
+		}
+	}()
+
+	c, err := bacnetclient.NewClient(silent.LocalAddr().String(), 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer c.Close()
+	d := newDriver(c, nil, 0)
+
+	pts := []iot_points.Point{
+		{Name: "a", Addr: "analog-input:0"},
+		{Name: "b", Addr: "analog-input:1"},
+		{Name: "c", Addr: "analog-input:2"},
+	}
+	_, err = d.ReadPoints(pts)
+	if err == nil {
+		t.Fatal("want timeout error against silent device")
+	}
+	_ = silent.Close()
+	<-done
+	if n := atomic.LoadInt32(&got); n != 1 {
+		t.Errorf("got %d requests, want 1 (RPM only, no per-point fallback)", n)
 	}
 }
