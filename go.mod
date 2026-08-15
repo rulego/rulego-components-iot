@@ -22,7 +22,6 @@ require (
 	github.com/spf13/cast v1.6.0
 	github.com/stretchr/testify v1.11.1
 	github.com/taosdata/driver-go/v3 v3.8.2
-	github.com/wendy512/go-iecp5 v1.2.6
 	go.bug.st/serial v1.6.4
 )
 

@@ -3,7 +3,7 @@ package server
 import (
 	"time"
 
-	"github.com/wendy512/go-iecp5/asdu"
+	"github.com/rulego/rulego-components-iot/third_party/go-iecp5/asdu"
 )
 
 type CommandHandler interface {

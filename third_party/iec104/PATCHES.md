@@ -16,7 +16,7 @@ happens-before，竞态消除。行为不变（handler 仅在连接成功后被�
 
 ## 注意事项
 
-- Go 的 replace 指令只在主模块生效：本仓库的测试/CI 使用补丁版，
-  **下游依赖方（如 rulego-server）仍会拉取未打补丁的上游版本**。
+- 库本体已 vendor 到 ../go-iecp5（含 server WaitGroup 竞态修复，见其 VENDOR.md），
+  本目录与其一并构成完整补丁，仓库与下游均生效，不再依赖上游发版。
 - 根治需要上游修复：建议向 https://github.com/wendy512/iec104 提交 issue/PR
   （即本目录 client/core.go 的改动），上游合并发版后可删除本 vendored 副本与 replace。

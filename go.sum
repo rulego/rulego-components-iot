@@ -138,10 +138,6 @@ github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b/go.mod h1:AMHIeh1KJ7
 github.com/rogpeppe/go-internal v1.6.1/go.mod h1:xXDCJY+GAPziupqXw64V24skbSoqbTEfhy4qGm1nDQc=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
-github.com/rulego/rulego v0.37.1-0.20260806084530-f1e71cd989e3 h1:skXg8M2eFHUplGptt0IDoDRlhfKkm4mmPl4AovprcIU=
-github.com/rulego/rulego v0.37.1-0.20260806084530-f1e71cd989e3/go.mod h1:C+5ohZtTIBNB4l1UY3aVLX+OKAXOHbryRn0I3+no8cs=
-github.com/rulego/rulego v0.37.1-0.20260806101013-60200a6d87e3 h1:g5FRb5KUqSqrtiNPvylp9jTAL5r7bkN0Z02THLllMt8=
-github.com/rulego/rulego v0.37.1-0.20260806101013-60200a6d87e3/go.mod h1:C+5ohZtTIBNB4l1UY3aVLX+OKAXOHbryRn0I3+no8cs=
 github.com/rulego/rulego v0.37.1-0.20260806102237-d3aa2f14bec2 h1:WLuJeoJofVvY29su8VoY3fN+Y6wGMbuwOE6FyzA4e9o=
 github.com/rulego/rulego v0.37.1-0.20260806102237-d3aa2f14bec2/go.mod h1:C+5ohZtTIBNB4l1UY3aVLX+OKAXOHbryRn0I3+no8cs=
 github.com/simonvetter/modbus v1.6.4 h1:E03lBz/JftDza/+Ue+vxwkNZ/WW1xiqyFCUQ4NhqHn0=
@@ -164,8 +160,6 @@ github.com/vmihailenco/msgpack/v5 v5.4.1 h1:cQriyiUvjTwOHg8QZaPihLWeRAAVoCpE00IU
 github.com/vmihailenco/msgpack/v5 v5.4.1/go.mod h1:GaZTsDaehaPpQVyxrf5mtQlH+pc21PIudVV/E3rRQok=
 github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
 github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
-github.com/wendy512/go-iecp5 v1.2.6 h1:EEYVd4PtDcKxRUBss8Hsm9pRj7YlQK8IEpbOf4qCP3E=
-github.com/wendy512/go-iecp5 v1.2.6/go.mod h1:d5koVsFZF0IV2JYznykSLJy6d29mHvXlNqm6GvvJQ0k=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=

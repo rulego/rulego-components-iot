@@ -1,6 +1,6 @@
 package client
 
-import "github.com/wendy512/go-iecp5/asdu"
+import "github.com/rulego/rulego-components-iot/third_party/go-iecp5/asdu"
 
 const (
 	SinglePoint                            DataType = iota // Single point information

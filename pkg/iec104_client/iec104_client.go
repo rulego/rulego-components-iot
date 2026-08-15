@@ -32,7 +32,7 @@ import (
 	"time"
 
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
-	"github.com/wendy512/go-iecp5/asdu"
+	"github.com/rulego/rulego-components-iot/third_party/go-iecp5/asdu"
 	iec104client "github.com/rulego/rulego-components-iot/third_party/iec104/client"
 )
 
