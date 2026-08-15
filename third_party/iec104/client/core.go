@@ -85,9 +85,9 @@ func (c *Client) Connect() error {
 
 	wg := &waitgroup.WaitGroup{}
 	wg.Add(1)
-// Mark if this is the first time
+	// Mark if this is the first time
 	var firstConnect atomic.Bool
-// Connection status event. PATCH: must be set before Start (fixes data race, see PATCHES.md)
+	// Connection status event. PATCH: must be set before Start (fixes data race, see PATCHES.md)
 	c.client104.SetOnConnectHandler(func(cs *cs104.Client) {
 		if firstConnect.CompareAndSwap(false, true) {
 			wg.Done()
