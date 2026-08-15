@@ -560,7 +560,6 @@ func (r *RetryableModbusClient) applyRuntimeConfig() {
 }
 
 // ModbusNode imperative modbus node (single point Cmd/Address/Quantity).
-// Deprecated: use x/modbusRead / x/modbusWrite (point table + Modicon address, unified iot_points contract).
 // Success: route to Success chain, result stored in msg.Data
 // Failure: route to Failure chain
 type ModbusNode struct {
