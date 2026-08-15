@@ -484,7 +484,7 @@ func (x *SerialInNode) New() types.Node {
 func (x *SerialInNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
-		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
+		_ = x.SharedNode.InitWithCloseSoftFail(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
 			return x.initClient(x.Config.SharedSerialConfig)
 		}, func(client *SafeSerialPort) error {
 			if client != nil {
@@ -579,7 +579,7 @@ func (x *SerialOutNode) New() types.Node {
 func (x *SerialOutNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
-		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
+		_ = x.SharedNode.InitWithCloseSoftFail(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
 			return x.initClient(x.Config.SharedSerialConfig)
 		}, func(client *SafeSerialPort) error {
 			if client != nil {
@@ -694,7 +694,7 @@ func (x *SerialRequestNode) New() types.Node {
 func (x *SerialRequestNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
-		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
+		_ = x.SharedNode.InitWithCloseSoftFail(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
 			return x.initClient(x.Config.SharedSerialConfig)
 		}, func(client *SafeSerialPort) error {
 			if client != nil {
@@ -827,7 +827,7 @@ func (x *SerialControlNode) New() types.Node {
 func (x *SerialControlNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
 	err := maps.Map2Struct(configuration, &x.Config)
 	if err == nil {
-		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
+		_ = x.SharedNode.InitWithCloseSoftFail(ruleConfig, x.Type(), x.Config.Port, ruleConfig.NodeClientInitNow, func() (*SafeSerialPort, error) {
 			return x.initClient(x.Config.SharedSerialConfig)
 		}, func(client *SafeSerialPort) error {
 			if client != nil {

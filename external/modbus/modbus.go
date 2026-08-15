@@ -640,8 +640,9 @@ func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configura
 		// Initialize current UnitId
 		x.setUnitId(nil, x.Config.UnitId)
 
-		// Initialize client
-		err = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
+		// Initialize client. Soft-fail keeps a dead device from failing chain load;
+		// the shared node records the cooldown and retries on the next message.
+		_ = x.SharedNode.InitWithCloseSoftFail(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
 			return x.initClient()
 		}, func(client *modbus.ModbusClient) error {
 			if client != nil {

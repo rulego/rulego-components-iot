@@ -165,3 +165,18 @@ func TestModbusNodeOnMsgMissingClient(t *testing.T) {
 		t.Fatal("timeout waiting for modbus missing client callback")
 	}
 }
+
+// TestModbusNodeInitSoftFail: 设备不可达时 Init 必须返回 nil(不阻塞链保存/加载),
+// 连接由 SharedNode 冷却后懒重试。NodeClientInitNow=true 立即建连的场景。
+func TestModbusNodeInitSoftFail(t *testing.T) {
+	cfg := types.NewConfig()
+	cfg.NodeClientInitNow = true
+	node := &ModbusNode{}
+	err := node.Init(cfg, types.Configuration{
+		"server":  "tcp://127.0.0.1:1",
+		"cmd":     "03",
+		"address": "0",
+	})
+	assert.Nil(t, err, "Init 不应因设备不可达而失败")
+	node.Destroy()
+}

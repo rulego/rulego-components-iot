@@ -405,3 +405,17 @@ func TestSafeSerialPort_TransactPropagatesError(t *testing.T) {
 	// 出错后锁必须释放,后续事务可继续
 	assert.Nil(t, p.Transact(func() error { return nil }))
 }
+
+// TestSerialInitSoftFail: 串口不可用时 Init 必须返回 nil(不阻塞链保存/加载),
+// 连接由 SharedNode 冷却后懒重试。NodeClientInitNow=true 立即建连的场景。
+func TestSerialInitSoftFail(t *testing.T) {
+	serialOpener = func(name string, mode *serial.Mode) (ISerialPort, error) {
+		return nil, errors.New("port busy")
+	}
+	cfg := types.NewConfig()
+	cfg.NodeClientInitNow = true
+	node := &SerialOutNode{}
+	err := node.Init(cfg, types.Configuration{"port": "COM_SOFTFAIL"})
+	assert.Nil(t, err, "Init 不应因串口不可用而失败")
+	node.Destroy()
+}
