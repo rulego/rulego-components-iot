@@ -46,10 +46,20 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 	if err != nil {
 		return nil, err
 	}
-	// point name -> configured OID: walk result actual OID appends to Name when differs from config
+	return buildReadDatas(datas, points, cp), nil
+}
+
+// buildReadDatas maps client results to unified Data. A walk result appends its
+// actual OID to Name when it differs from the configured OID; every value of a
+// walk subtree passes the point's scale/offset conversion.
+func buildReadDatas(datas []snmpclient.Data, points []iot_points.Point, cp []snmpclient.Point) []iot_points.Data {
 	oidByName := make(map[string]string, len(cp))
 	for _, c := range cp {
 		oidByName[c.Name] = c.OID
+	}
+	pointByName := make(map[string]iot_points.Point, len(points))
+	for _, p := range points {
+		pointByName[p.Name] = p
 	}
 	out := make([]iot_points.Data, 0, len(datas))
 	for _, dd := range datas {
@@ -59,16 +69,16 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 		}
 		name := dd.Name
 		// actual OID (leading dot removed) appends to point name when differs from config
-		if dd.Address != "" && strings.TrimPrefix(dd.Address, ".") != oidByName[dd.Name] {
-			name = dd.Name + "." + dd.Address
+		if actual := strings.TrimPrefix(dd.Address, "."); actual != "" && actual != oidByName[dd.Name] {
+			name = dd.Name + "." + actual
 		}
 		out = append(out, iot_points.Data{
 			Name:      name,
-			Value:     dd.Value,
+			Value:     iot_points.ScaleValue(dd.Value, pointByName[dd.Name]),
 			Timestamp: dd.Timestamp.UnixNano(),
 		})
 	}
-	return out, nil
+	return out
 }
 
 func (d *driver) WritePoints(points []iot_points.Point) error {

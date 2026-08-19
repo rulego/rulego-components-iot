@@ -25,11 +25,11 @@ import (
 
 	iec104client "github.com/rulego/rulego-components-iot/pkg/iec104_client"
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
+	"github.com/rulego/rulego-components-iot/third_party/go-iecp5/asdu"
+	iec104server "github.com/rulego/rulego-components-iot/third_party/iec104/server"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/test"
 	"github.com/rulego/rulego/test/assert"
-	"github.com/rulego/rulego-components-iot/third_party/go-iecp5/asdu"
-	iec104server "github.com/rulego/rulego-components-iot/third_party/iec104/server"
 )
 
 const testCA = 1
@@ -248,6 +248,28 @@ func TestDriverReadPoints(t *testing.T) {
 	assert.Equal(t, true, byName["single_point"].Value)
 	assert.Equal(t, 123.5, byName["short_float"].Value)
 	assert.True(t, byName["single_point"].Timestamp > 0, "timestamp should be unix nano")
+}
+
+// TestDriverReadPointsScale driver applies point scale/offset to numeric values (bool passes through)
+func TestDriverReadPointsScale(t *testing.T) {
+	port, cleanup := startMockServer(t)
+	defer cleanup()
+	client := newTestClient(t, port)
+	defer client.Close()
+
+	data, err := newDriver(client).ReadPoints([]iot_points.Point{
+		{Name: "single_point", Addr: "100", Scale: 10},
+		{Name: "short_float", Addr: "700", Scale: 10, Offset: 5},
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 2, len(data))
+
+	byName := make(map[string]iot_points.Data, len(data))
+	for _, d := range data {
+		byName[d.Name] = d
+	}
+	assert.Equal(t, true, byName["single_point"].Value)
+	assert.Equal(t, 1240.0, byName["short_float"].Value) // 123.5*10+5
 }
 
 // TestDriverReadPointsBadAddr ReadPoints returns error when point IOA is invalid

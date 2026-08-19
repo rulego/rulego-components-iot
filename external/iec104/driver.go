@@ -42,7 +42,8 @@ func newDriver(client *iec104client.Client) *driver {
 func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error) {
 	out := make([]iot_points.Data, 0, len(points))
 	cp := make([]iec104client.Point, 0, len(points))
-	slots := make([]int, 0, len(points)) // cp stores index of each point in out
+	orig := make([]iot_points.Point, 0, len(points)) // carries scale/offset (absent from iec104client.Point), aligned with cp
+	slots := make([]int, 0, len(points))             // cp stores index of each point in out
 	for _, p := range points {
 		ip, err := toIec104Point(p)
 		if err != nil {
@@ -50,6 +51,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 			continue
 		}
 		cp = append(cp, ip)
+		orig = append(orig, p)
 		slots = append(slots, len(out))
 		out = append(out, iot_points.Data{Name: p.Name})
 	}
@@ -72,7 +74,7 @@ func (d *driver) ReadPoints(points []iot_points.Point) ([]iot_points.Data, error
 			slot.Error = "no data from substation (quality=bad)"
 			continue
 		}
-		slot.Value = dd.Value
+		slot.Value = iot_points.ScaleValue(dd.Value, orig[j])
 		slot.Timestamp = dd.Timestamp.UnixNano()
 	}
 	return out, nil

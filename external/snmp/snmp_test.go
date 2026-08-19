@@ -22,6 +22,7 @@ import (
 
 	"github.com/gosnmp/gosnmp"
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
+	snmpclient "github.com/rulego/rulego-components-iot/pkg/snmp_client"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/components/base"
 	"github.com/rulego/rulego/test"
@@ -58,6 +59,38 @@ func TestToSnmpClientPoint(t *testing.T) {
 	cp2 := toSnmpClientPoint(p2)
 	assert.Equal(t, "walk", cp2.Op)
 	assert.Equal(t, "1.3.6.1.2.1.2.2", cp2.OID)
+}
+
+// TestBuildReadDatas walk OID name suffix, scale/offset conversion (walk values
+// included), non-numeric passthrough, bad point error.
+func TestBuildReadDatas(t *testing.T) {
+	now := time.Now()
+	points := []iot_points.Point{
+		{Name: "temp", Addr: "1.3.6.1.4.1.1.1", Scale: 0.1, Offset: -40},
+		{Name: "sysName", Addr: "1.3.6.1.2.1.1.5.0", Scale: 10},
+		{Name: "ifInOctets", Addr: "walk:1.3.6.1.2.1.2.2.1.10", Scale: 2},
+	}
+	cp := []snmpclient.Point{
+		{Name: "temp", OID: "1.3.6.1.4.1.1.1", Op: "get"},
+		{Name: "sysName", OID: "1.3.6.1.2.1.1.5.0", Op: "get"},
+		{Name: "ifInOctets", OID: "1.3.6.1.2.1.2.2.1.10", Op: "walk"},
+	}
+	out := buildReadDatas([]snmpclient.Data{
+		{Name: "temp", Address: "1.3.6.1.4.1.1.1", Value: 235, Quality: "good", Timestamp: now},
+		{Name: "sysName", Address: "1.3.6.1.2.1.1.5.0", Value: "router-01", Quality: "good", Timestamp: now},
+		{Name: "ifInOctets", Address: ".1.3.6.1.2.1.2.2.1.10.1", Value: 1000, Quality: "good", Timestamp: now},
+		{Name: "ifInOctets", Address: ".1.3.6.1.2.1.2.2.1.10.2", Value: "n/a", Quality: "good", Timestamp: now},
+		{Name: "temp", Address: "1.3.6.1.4.1.1.9", Value: nil, Quality: "bad", Timestamp: now},
+	}, points, cp)
+
+	assert.Equal(t, 5, len(out))
+	assert.Equal(t, -16.5, out[0].Value) // 235*0.1-40
+	assert.Equal(t, "router-01", out[1].Value)
+	assert.Equal(t, "ifInOctets.1.3.6.1.2.1.2.2.1.10.1", out[2].Name)
+	assert.Equal(t, 2000.0, out[2].Value) // 1000*2
+	assert.Equal(t, "n/a", out[3].Value)
+	assert.Equal(t, "read failed (quality=bad)", out[4].Error)
+	assert.True(t, out[0].Timestamp > 0)
 }
 
 // TestConfigPropImpl ConfigProp interface implementation
