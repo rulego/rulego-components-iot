@@ -3,9 +3,11 @@ package modbus
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/simonvetter/modbus"
 )
 
@@ -117,4 +119,39 @@ func ParseParity(s string) (Parity, error) {
 		return p, nil
 	}
 	return ParityNone, fmt.Errorf("modbus: unknown parity %q, want N/E/O (or 0/1/2)", s)
+}
+
+// decodeConfig decodes node configuration exactly like maps.Map2Struct, plus letter
+// parity. The stock mapstructure decoder only parses numbers into uint-kind fields and
+// never calls UnmarshalJSON, so the letter form written by MarshalJSON (and submitted
+// verbatim by the editor form) would fail Init with
+// "cannot parse 'rtuConfig.parity' as uint: ... parsing \"N\"". The DecoderConfig must
+// stay in sync with maps.Map2Struct or the two paths decode differently.
+func decodeConfig(input any, out any) error {
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		DecodeHook: mapstructure.ComposeDecodeHookFunc(
+			mapstructure.StringToTimeDurationHookFunc(),
+			parityHookFunc(),
+		),
+		WeaklyTypedInput: true,
+		ZeroFields:       true,
+		TagName:          "json",
+		Result:           out,
+	})
+	if err != nil {
+		return err
+	}
+	return decoder.Decode(input)
+}
+
+// parityHookFunc routes string input targeted at Parity through ParseParity;
+// every other type combination passes through untouched.
+func parityHookFunc() mapstructure.DecodeHookFunc {
+	parityType := reflect.TypeOf(Parity(0))
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if to != parityType || from.Kind() != reflect.String {
+			return data, nil
+		}
+		return ParseParity(data.(string))
+	}
 }

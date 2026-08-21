@@ -29,7 +29,6 @@ import (
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/components/base"
-	"github.com/rulego/rulego/utils/maps"
 	"github.com/simonvetter/modbus"
 )
 
@@ -196,7 +195,7 @@ func (x *ReadPointsNode) Type() string {
 }
 
 func (x *ReadPointsNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
-	err := maps.Map2Struct(configuration, &x.Config)
+	err := decodeConfig(configuration, &x.Config)
 	x.setUnitId(nil, x.Config.UnitId)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
 		return x.initClient()
@@ -288,7 +287,7 @@ func (x *WritePointsNode) Type() string {
 }
 
 func (x *WritePointsNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
-	err := maps.Map2Struct(configuration, &x.Config)
+	err := decodeConfig(configuration, &x.Config)
 	x.setUnitId(nil, x.Config.UnitId)
 	_ = x.SharedNode.InitWithClose(ruleConfig, x.Type(), x.Config.Server, ruleConfig.NodeClientInitNow, func() (*modbus.ModbusClient, error) {
 		return x.initClient()

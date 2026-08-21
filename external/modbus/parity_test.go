@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/rulego/rulego/api/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -132,4 +133,62 @@ func TestRtuConfig_AcceptsBothParityForms(t *testing.T) {
 	assert.Nil(t, json.Unmarshal([]byte(`{"speed":19200,"dataBits":8,"parity":1,"stopBits":1}`), &withNumber))
 	assert.Equal(t, ParityEven, withLetter.Parity)
 	assert.Equal(t, withLetter, withNumber, "both forms must yield the same config")
+}
+
+// Node configuration does not go through encoding/json: Init decodes the DSL map with
+// mapstructure, which never calls UnmarshalJSON. The tests below pin that path —
+// decodeConfig must accept every form the JSON path accepts, or saved chains stop loading.
+func TestDecodeConfig_ParityForms(t *testing.T) {
+	cases := []struct {
+		in   any
+		want Parity
+	}{
+		{"N", ParityNone},
+		{"e", ParityEven},
+		{" odd ", ParityOdd},
+		{"2", ParityOdd},        // numeric string from form input
+		{float64(1), ParityEven}, // JSON numbers land as float64 in the config map
+	}
+	for _, c := range cases {
+		var cfg RtuConfig
+		assert.Nil(t, decodeConfig(map[string]any{"speed": float64(19200), "parity": c.in}, &cfg), c.in)
+		assert.Equal(t, c.want, cfg.Parity, c.in)
+	}
+
+	var cfg RtuConfig
+	err := decodeConfig(map[string]any{"parity": "X"}, &cfg)
+	assert.NotNil(t, err)
+	assert.Contains(t, err.Error(), "parity")
+}
+
+// The save round-trip: the editor receives the default config as JSON (letters, via
+// MarshalJSON) and submits it back verbatim as the node configuration map — including
+// rtuConfig under TCP, where the form only hides the section. Init must decode it.
+func TestInit_DecodesEditorDefaultConfig(t *testing.T) {
+	modbusNode := (&ModbusNode{}).New().(*ModbusNode)
+	readNode := (&ReadPointsNode{}).New().(*ReadPointsNode)
+	writeNode := (&WritePointsNode{}).New().(*WritePointsNode)
+
+	for name, node := range map[string]types.Node{
+		"x/modbus":      modbusNode,
+		"x/modbusRead":  readNode,
+		"x/modbusWrite": writeNode,
+	} {
+		var cfg any
+		switch n := node.(type) {
+		case *ModbusNode:
+			cfg = &n.Config
+		case *ReadPointsNode:
+			cfg = &n.Config
+		case *WritePointsNode:
+			cfg = &n.Config
+		}
+		b, err := json.Marshal(cfg)
+		assert.Nil(t, err, name)
+		assert.Contains(t, string(b), `"parity":"N"`, name+": letters are the marshaled form")
+
+		var configuration types.Configuration
+		assert.Nil(t, json.Unmarshal(b, &configuration), name)
+		assert.Nil(t, node.Init(types.NewConfig(), configuration), name)
+	}
 }

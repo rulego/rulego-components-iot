@@ -12,6 +12,7 @@ require (
 	github.com/influxdata/influxdb-client-go/v2 v2.14.0
 	github.com/influxdata/line-protocol v0.0.0-20200327222509-2487e7298839
 	github.com/lib/pq v1.10.9
+	github.com/mitchellh/mapstructure v1.5.0
 	github.com/moge800/gomcprotocol v1.0.0
 	github.com/openGemini/opengemini-client-go v0.9.2
 	github.com/prometheus/prometheus v0.305.2
@@ -51,7 +52,6 @@ require (
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/libgox/gocollections v0.1.1 // indirect
 	github.com/libgox/unicodex v0.1.0 // indirect
-	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect

@@ -31,7 +31,6 @@ import (
 	"github.com/rulego/rulego-components-iot/pkg/iot_points"
 	"github.com/rulego/rulego/api/types"
 	"github.com/rulego/rulego/components/base"
-	"github.com/rulego/rulego/utils/maps"
 	"github.com/rulego/rulego/utils/str"
 	"github.com/simonvetter/modbus"
 )
@@ -634,7 +633,7 @@ func (x *ModbusNode) New() types.Node {
 
 // Init initializes component
 func (x *ModbusNode) Init(ruleConfig types.Config, configuration types.Configuration) error {
-	err := maps.Map2Struct(configuration, &x.Config)
+	err := decodeConfig(configuration, &x.Config)
 	if err == nil {
 		// Initialize current UnitId
 		x.setUnitId(nil, x.Config.UnitId)
